@@ -1,0 +1,15 @@
+# One generalist worker, one model: the smallest pool (a baseline for both pool designs).
+name: single
+workers:
+  - id: gen_luna
+    model: luna
+    tools: [web_search, read_url, read_file, view_image, run_python]
+    max_tool_calls: 20
+    system_prompt: |
+      You are a generalist worker. You find information on the web, read files and documents, look at images,
+      and compute with Python, and you report results with their evidence.
+roles:
+  - id: generalist
+    description: Searches the web, reads web pages, files and images, and computes with Python.
+    executor: gen_luna
+    probe_workers: [gen_luna]

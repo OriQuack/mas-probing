@@ -1,0 +1,9 @@
+# Condition B: orchestrator-only review. The orchestrator-side model predicts each probe worker's answers to the
+# same questions (one prediction per probe slot C would fill), then the shared analyze -> verify -> rewrite.
+name: B_self_review
+kind: self_review
+questions: [understanding, assumptions, failure, plan]
+samples_per_worker: 1
+max_verifications: 2
+verify_max_tool_calls: 10
+budget: {max_llm_calls: 60, max_cost_usd: 1.0, max_worker_calls: 8}

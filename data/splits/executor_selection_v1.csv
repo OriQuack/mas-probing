@@ -1,0 +1,13 @@
+task_id,level,modality,file_ext
+cffe0e32-c9a6-4c52-9877-78ceb4aaa9fb,1,document,docx
+42576abe-0deb-4869-8c63-225c2d75a95a,1,none,
+bda648d7-d618-4883-88f4-3466eabd860e,1,none,
+b7f857e4-d8aa-4387-af2a-0e844df5b9d8,2,image,png
+114d5fd0-e2ae-4b6d-a65a-870da2d19c08,2,none,
+3ff6b7a9-a5bd-4412-ad92-0cd0d45c0fee,2,none,
+65638e28-7f37-4fa7-b7b9-8c19bb609879,2,none,
+708b99c5-e4a7-49cb-a5cf-933c8d46470d,2,none,
+ded28325-3447-4c56-860f-e497d6fb3577,2,none,
+4d51c4bf-4b0e-4f3d-897b-3f6687a7d9f2,2,spreadsheet,xlsx
+de9887f5-ead8-4727-876f-5a4078f8598c,3,none,
+9b54f9d9-35ee-4a14-b62f-d130ea00317f,3,other,zip

@@ -1,0 +1,3 @@
+# Condition A: the orchestrator's draft instruction is executed as is.
+name: A_none
+kind: none

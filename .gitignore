@@ -1,0 +1,22 @@
+# Secrets
+.env
+
+# Run artifacts (logs, traces, checkpoints, caches)
+logs/
+outputs/
+tmp/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store

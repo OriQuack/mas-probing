@@ -1,0 +1,26 @@
+# Runtime deps of min_pilot (no camel/OWL). Exact versions are frozen after install in requirements.lock.
+requests
+python-dotenv
+pyyaml
+pillow
+# web tools
+html2text
+beautifulsoup4
+lxml
+ddgs
+playwright
+# documents
+pymupdf
+python-docx
+python-pptx
+openpyxl
+xlrd
+# GAIA data + model-written code (run_python uses this env's interpreter inside the sandbox)
+pandas
+pyarrow
+numpy
+scipy
+sympy
+matplotlib
+# tests
+pytest

@@ -1,0 +1,285 @@
+"""All prompts of min_pilot, in one place (versioned with PROMPTS_VERSION, recorded per run).
+
+Written for this framework; nothing is taken from OWL's prompts. The answer-format rule is GAIA's own
+(from the GAIA paper's system prompt).
+"""
+
+from __future__ import annotations
+
+PROMPTS_VERSION = "v1"
+
+GAIA_ANSWER_FORMAT = (
+    "The final answer should be a number OR as few words as possible OR a comma separated list of numbers and/or "
+    "strings. If you are asked for a number, don't use commas to write your number, nor units such as $ or "
+    "percent sign unless specified otherwise. If you are asked for a string, don't use articles nor abbreviations "
+    "(e.g. for cities), and write digits in plain text unless specified otherwise. If you are asked for a comma "
+    "separated list, apply the above rules depending on whether each element is a number or a string.")
+
+TOOL_LINES = {
+    "web_search": "web_search: search the web (Google results)",
+    "read_url": "read_url: read a web page or online document as text (optionally an archived snapshot by date)",
+    "read_file": "read_file: read a file in the working directory (documents, spreadsheets, zips, text)",
+    "view_image": "view_image: look at an image file or image URL",
+    "run_python": "run_python: run Python in the working directory (no network)",
+}
+
+# -- original task --------------------------------------------------------------------------------
+def original_task_text(question: str, attachment: str | None) -> str:
+    if not attachment:
+        return question
+    return f"{question}\n\nAttached file: {attachment}"
+
+
+# -- orchestrator ---------------------------------------------------------------------------------
+def orchestrator_system(roles: list[dict], max_delegations: int) -> str:
+    lines = "\n".join(f"- {r['id']}: {r['description']} Tools: {', '.join(r['tools'])}." for r in roles)
+    return f"""You are the orchestrator of a team of workers solving one task. You cannot use tools or open files \
+yourself; you work by delegating subtasks to workers and reading their reports.
+
+Workers:
+{lines}
+
+Each turn, reply with one action:
+- delegate: set `worker_id` and `instruction`. The worker receives the original task and your instruction, \
+nothing else: it does not see earlier reports or instructions. Put into the instruction everything it needs \
+from earlier results (values, URLs, file paths). Make the instruction specific: what to do and its scope, the \
+interpretation and conditions that matter, and what to report.
+- finish: set `answer` to the final answer, when the task is solved or when you must give your best answer.
+
+Delegate one subtask at a time; you see each report before deciding the next step. Reports can be wrong or \
+incomplete; have important claims checked when in doubt. You can delegate at most {max_delegations} times.
+
+Answer format: {GAIA_ANSWER_FORMAT} Put only the answer in `answer`, without explanation."""
+
+
+ORCHESTRATOR_ACTION_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "rationale": {"type": "string", "description": "Brief reason for this action."},
+        "action": {"type": "string", "enum": ["delegate", "finish"]},
+        "worker_id": {"type": "string"},
+        "instruction": {"type": "string"},
+        "answer": {"type": "string"},
+    },
+    "required": ["rationale", "action"],
+}
+
+
+def orchestrator_task_message(original_task: str) -> str:
+    return f"Task:\n{original_task}"
+
+
+def report_message(role_id: str, index: int, report: str, sent_instruction: str | None) -> str:
+    head = f"Report from {role_id} (delegation {index + 1}):"
+    if sent_instruction is not None:
+        head = (f"Your instruction was revised in a pre-delegation review. Instruction actually sent to {role_id}:\n"
+                f"<<<\n{sent_instruction}\n>>>\n\n" + head)
+    return f"{head}\n{report}"
+
+
+FORCE_FINISH = ("You have reached the maximum number of delegations. Reply with action `finish` and your best "
+                "final answer now.")
+
+
+def invalid_action_message(problem: str) -> str:
+    return f"Your last action was invalid: {problem} Reply with a valid action."
+
+
+# -- workers --------------------------------------------------------------------------------------
+def worker_system(system_prompt: str, tools: tuple[str, ...]) -> str:
+    tool_lines = "\n".join(f"- {TOOL_LINES[t]}" for t in tools)
+    return f"""{system_prompt}
+
+You are one worker in a team; an orchestrator delegates subtasks to you. Each request contains the original task \
+(the whole problem the team is solving, for context) and your instruction (your part). Do your part as \
+instructed.
+
+Your tools:
+{tool_lines}
+Files are referenced by paths relative to the working directory; task attachments are under attachments/.
+
+Your final message (without a tool call) is your report, and it is all the orchestrator sees. Include the result \
+with its evidence or source (URL, file, computation), what you assumed or could not verify, anything that failed \
+and why, and the paths of files you created."""
+
+
+def worker_request(original_task: str, instruction: str) -> str:
+    return f"Original task:\n<<<\n{original_task}\n>>>\n\nYour instruction:\n<<<\n{instruction}\n>>>"
+
+
+TOOL_LIMIT_REACHED = ("You have reached your tool-call limit for this request. Do not call tools any more; write "
+                      "your report now with what you have, and say what is unfinished.")
+IMAGES_FOLLOW = "Images returned by your tool calls:"
+
+
+# -- probing (C) and simulated probing (B) ------------------------------------------------------
+PROBE_QUESTION_TEXT = {
+    "understanding": "Understanding: What do you understand this subtask asks you to do? State its scope, targets "
+                     "and direction.",
+    "assumptions": "Assumptions: What are you assuming? For each important assumption, what would change if it "
+                   "were different?",
+    "failure": "Failure: What could fail while you work on it, and how would you respond?",
+    "plan": "Plan: In what steps and with what methods would you carry out the whole subtask?",
+}
+
+
+def probe_questions_block(questions: tuple[str, ...]) -> str:
+    return "\n".join(f"{i}. {PROBE_QUESTION_TEXT[q]}" for i, q in enumerate(questions, 1))
+
+
+def probe_instruction(draft: str, questions: tuple[str, ...], tools_allowed: bool, max_tool_calls: int) -> str:
+    tools = (f" You may use your tools only for quick checks that help you answer (at most {max_tool_calls} calls)."
+             if tools_allowed else " Do not use tools; answer from the instruction and what you know about your tools.")
+    return f"""The orchestrator is about to give you the subtask instruction below. Before it is executed, it wants \
+to know how you read it. Do NOT carry out the subtask.{tools}
+
+Subtask instruction:
+<<<
+{draft}
+>>>
+
+Answer each question about this subtask:
+{probe_questions_block(questions)}
+Be concrete and brief."""
+
+
+def followup_message(question: str) -> str:
+    return f"Follow-up question from the orchestrator (still do NOT carry out the subtask):\n{question}"
+
+
+def simulate_system() -> str:
+    return ("You are the orchestrator of a team of workers. Before delegating a subtask, you review your instruction "
+            "by predicting, carefully and critically, how the receiving worker would read it.")
+
+
+def simulate_request(original_task: str, draft: str, worker: dict, questions: tuple[str, ...]) -> str:
+    return f"""Worker profile:
+- role: {worker['role']} ({worker['description']})
+- model: {worker['model']}
+- tools: {', '.join(worker['tools'])}
+- the worker sees only the original task, the instruction and its own tools
+
+Original task:
+<<<
+{original_task}
+>>>
+
+Subtask instruction you are about to send:
+<<<
+{draft}
+>>>
+
+Write the answers this worker would most plausibly give to the questions below, in the worker's voice. Do not \
+idealise the worker: include the misreadings, unstated assumptions, missing conditions and failure modes that are \
+plausible for it.
+{probe_questions_block(questions)}"""
+
+
+def analyze_system() -> str:
+    return ("You are the orchestrator of a team of workers. You review a subtask instruction before delegating it. "
+            "You cannot use tools yourself; facts can only be checked by delegating checks to workers.")
+
+
+def analyze_request(original_task: str, draft: str, target: dict, responses: list[dict], source: str,
+                    max_verifications: int, roles: list[dict], followups_allowed: int) -> str:
+    resp = "\n\n".join(f"[{r['id']}] ({r['who']})\n{r['text']}" for r in responses)
+    roles_txt = "\n".join(f"- {r['id']}: {r['description']} Tools: {', '.join(r['tools'])}." for r in roles)
+    origin = ("given by the worker(s) who would receive it" if source == "probe"
+              else "that you predicted for the worker who would receive it")
+    follow = (f"\nYou may ask up to {followups_allowed} follow-up questions in total to the workers who answered "
+              "(refer to an answer by its id), when an answer is unclear in a way that matters."
+              if followups_allowed else "\nDo not ask follow-up questions (leave `followups` empty).")
+    return f"""Original task:
+<<<
+{original_task}
+>>>
+
+Subtask instruction to be sent to {target['role']}:
+<<<
+{draft}
+>>>
+
+Answers to review questions about this instruction, {origin}:
+{resp}
+
+Find issues in the instruction: places where its scope, targets or direction can be misunderstood; important \
+unstated assumptions or wrong premises; likely failures with no stated handling; missing or wrongly ordered steps. \
+Differences between answers point to ambiguity, but neither agreement nor disagreement decides what is correct: \
+judge against the original task. For each issue choose a decision:
+- resolved_from_task: the original task or the instruction itself settles it; give the resolution.
+- needs_verification: a fact must be checked first (in the files or on the web).
+- not_relevant: it does not affect the result.
+For issues that need verification you may request up to {max_verifications} checks, each delegated to one of these \
+workers (it receives the original task and your check instruction; keep checks short and specific):
+{roles_txt}{follow}
+If there are no issues, return an empty list."""
+
+
+ANALYZE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "issues": {"type": "array", "items": {"type": "object", "properties": {
+            "id": {"type": "string"},
+            "kind": {"type": "string", "enum": ["understanding", "assumption", "failure", "plan"]},
+            "summary": {"type": "string"},
+            "evidence": {"type": "string", "description": "Which answers (ids) show it, and how."},
+            "decision": {"type": "string", "enum": ["resolved_from_task", "needs_verification", "not_relevant"]},
+            "resolution": {"type": "string"},
+        }, "required": ["id", "kind", "summary", "evidence", "decision", "resolution"]}},
+        "followups": {"type": "array", "items": {"type": "object", "properties": {
+            "response_id": {"type": "string"}, "question": {"type": "string"}},
+            "required": ["response_id", "question"]}},
+        "verifications": {"type": "array", "items": {"type": "object", "properties": {
+            "issue_id": {"type": "string"}, "worker_id": {"type": "string"}, "instruction": {"type": "string"}},
+            "required": ["issue_id", "worker_id", "instruction"]}},
+    },
+    "required": ["issues", "followups", "verifications"],
+}
+
+
+def verify_instruction(check: str) -> str:
+    return ("This is a short check requested before the main subtask is delegated. Do only this check and report "
+            f"what you found, with evidence.\n\nCheck:\n{check}")
+
+
+def rewrite_request(original_task: str, draft: str, issues: list[dict], verifications: list[dict]) -> str:
+    import json
+
+    ver = "\n\n".join(f"[{v['issue_id']}] check by {v['worker_id']}: {v['instruction']}\nResult:\n{v['report']}"
+                      for v in verifications) or "(none)"
+    return f"""Original task:
+<<<
+{original_task}
+>>>
+
+Current subtask instruction:
+<<<
+{draft}
+>>>
+
+Issues found in the review:
+{json.dumps(issues, ensure_ascii=False, indent=1)}
+
+Verification results:
+{ver}
+
+Write the final version of the subtask instruction, once. Rules:
+- Keep the subtask's goal and scope unless an issue shows that the instruction contradicts the original task.
+- Turn resolved issues into explicit criteria, conditions or steps.
+- State verified facts explicitly; the worker will not see this review.
+- Do not state unverified claims as facts or requirements; instead tell the worker to check them first and how to \
+proceed depending on the result.
+- Write a self-contained instruction (the worker sees only the original task and this instruction); do not paste \
+the review. Where it helps, use the parts "Task:", "Criteria:", "Checks:", "Report:".
+- If no issue requires a change, return the current instruction unchanged and set `unchanged` to true."""
+
+
+REWRITE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "instruction": {"type": "string"},
+        "changes": {"type": "array", "items": {"type": "string"}},
+        "unchanged": {"type": "boolean"},
+    },
+    "required": ["instruction", "changes", "unchanged"],
+}

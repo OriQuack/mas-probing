@@ -1,0 +1,12 @@
+# Condition C: real worker probes (no tools while answering, separate conversations), then the shared
+# analyze -> follow-ups -> verify -> rewrite. Same budget caps as B.
+name: C_probe
+kind: probe
+questions: [understanding, assumptions, failure, plan]
+samples_per_worker: 1
+probe_tools: false
+max_followups: 2
+max_verifications: 2
+verify_max_tool_calls: 10
+connect_probe_to_execution: false
+budget: {max_llm_calls: 60, max_cost_usd: 1.0, max_worker_calls: 8}

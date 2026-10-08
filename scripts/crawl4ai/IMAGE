@@ -1,0 +1,7 @@
+# Crawl4AI page reader pinned (copied from the previous pilot). serve.sh refuses a SIF whose sha256 differs; clients accept a
+# service only if its endpoint identity and /health version match these values (crawl4ai_service.py).
+# Pulled with: apptainer pull crawl4ai-0.9.4.sif docker://unclecode/crawl4ai@<docker_digest>
+tag=unclecode/crawl4ai:0.9.4
+docker_digest=sha256:9021b3cb5c6f12570bbcd5395638495e0a06969b3148e377b953d174af2ebc9b
+sif_sha256=4734ef93447bad97c2033c877f6d4b0b5def888730270f1a450393d00f7d9ecf
+version=0.9.4
