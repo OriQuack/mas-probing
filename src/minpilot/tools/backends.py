@@ -320,6 +320,57 @@ class WaybackBackend:
     def __init__(self, cfg: ToolConfig):
         self.cfg = cfg
 
+    @staticmethod
+    def end_of(date: str) -> str:
+        """The last second of the period a YYYY / YYYYMM / YYYYMMDD date names, as YYYYMMDDhhmmss."""
+        import calendar
+
+        y = int(date[:4])
+        if len(date) == 4:
+            return f"{y}1231235959"
+        m = int(date[4:6])
+        if len(date) == 6:
+            return f"{y}{m:02d}{calendar.monthrange(y, m)[1]:02d}235959"
+        return f"{date[:8]}235959"
+
+    def on_or_before(self, url: str, date: str) -> tuple[str, str] | None:
+        """The latest snapshot at or before the end of `date` (tools v4, K8), or None. The fast redirect finds the
+        closest snapshot; if that one is not later than the date it is also the latest one before it (a later
+        snapshot before the date would be closer). Otherwise the CDX API lists the last capture up to the date."""
+        end = self.end_of(date)
+        found = self.closest(url, end)
+        if found is None:
+            return None  # never archived
+        if found[1] <= end:
+            return found
+        return self._last_cdx(url, end)
+
+    def _last_cdx(self, url: str, end: str) -> tuple[str, str] | None:
+        last_error = None
+        for _ in range(2):  # the CDX API is slow and sometimes answers 503: one retry
+            try:
+                r = requests.get(
+                    "https://web.archive.org/cdx/search/cdx",
+                    params={"url": url, "to": end, "limit": -1, "fastLatest": "true", "output": "json",
+                            "filter": "statuscode:200", "fl": "timestamp,original"},
+                    timeout=max(self.cfg.http_timeout_s, 45))
+            except requests.RequestException as e:
+                last_error = BackendError(f"wayback cdx: {e!r}")
+                continue
+            if r.status_code >= 500:
+                last_error = BackendError(f"wayback cdx: HTTP {r.status_code}")
+                continue
+            _raise_for_status(self.name, r)
+            try:
+                rows = r.json() if r.text.strip() else []
+            except ValueError as e:
+                raise BackendError(f"wayback cdx: bad response {r.text[:200]!r}") from e
+            if len(rows) < 2:
+                return None
+            ts, original = rows[-1]
+            return f"https://web.archive.org/web/{ts}/{original}", ts
+        raise last_error
+
     def closest(self, url: str, date: str) -> tuple[str, str] | None:
         """(snapshot_url, timestamp YYYYMMDDhhmmss) or None if never archived."""
         try:

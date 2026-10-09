@@ -6,14 +6,15 @@ protocol: the objectivity rules are kept; the run description, actors and fields
 
 ## How a min_pilot run works (read first)
 
-- The **orchestrator** (`luna-high`, no tools) sees the task. Each turn it returns a JSON action: `delegate` (a
-  role and an instruction) or `finish` (the final answer). It sees each report before its next action.
+- The **orchestrator** (`luna-high`, no tools) sees the task. Each turn it returns a JSON action: `delegate` (an
+  instruction; in the multi-role `role_routing` pool also a role) or `finish` (the final answer). It sees each report before its next action.
 - A **worker** (`luna-high`, tools; `luna` at effort none before 2026-10-09) receives only the original task and the instruction. It runs a tool loop (at most
   20 tool calls, then a forced report turn) and returns a free-text report. Workers keep no memory between
   delegations, so anything a worker needs from earlier reports must be in the instruction.
-- Roles (`role_routing` pool): `web_researcher` → `web_luna` (web_search, read_url, read_url_text, find_in_url,
-  run_python); `file_analyst` → `file_luna` (read_file, view_image, run_python). The `redundant` and `single`
-  pools have one `generalist` role with all tools. From tools v3 (2026-10-09), `read_url(url, question)` is a
+- Pools: `single` (the default since 2026-10-09, P6) has one `generalist` worker with all tools and no
+  routing. `role_routing`: `web_researcher` → `web_luna` (web_search, read_url, read_url_text, find_in_url,
+  run_python); `file_analyst` → `file_luna` (read_file, view_image, run_python). The `redundant` pool also has
+  one `generalist` role. From tools v3 (2026-10-09), `read_url(url, question)` is a
   **page reader**: a model (`luna-high`) reads the whole page and answers the worker's question; it sees only the page
   text and the question. Its calls appear as "page-reader call" in transcripts. If the reader's answer misstates
   text that is plainly on the page, the first error is the tool's: label `tool_bug` (implementation-induced) and

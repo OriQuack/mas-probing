@@ -47,33 +47,46 @@ TOOL_SCHEMAS: dict[str, dict] = {
     "read_url": {
         "description": ("Ask a question about a web page or an online document (HTML, PDF, DOCX, XLSX, ...). A reader "
                         "model reads the whole text and answers from it; it sees only the text and your question, "
-                        "so make the question self-contained. Give `date` (YYYYMMDD) to read the archived snapshot "
-                        "(Wayback Machine) closest to that date instead of the live page. For the raw text use "
+                        "so make the question self-contained. Give `date` (YYYYMMDD) to read an archived snapshot "
+                        "(Wayback Machine) instead of the live page: by default the latest one on or before that "
+                        "date (`date_rule`: on_or_before | closest). For the raw text use "
                         "read_url_text; to locate a string use find_in_url."),
         "parameters": {"type": "object", "properties": {
             "url": {"type": "string", "description": "http(s) URL."},
             "question": {"type": "string", "description": "What to find out from the page."},
-            "date": {"type": "string", "description": "Optional YYYYMMDD date for an archived snapshot."}},
+            "date": {"type": "string", "description": "Optional YYYYMMDD (or YYYYMM, YYYY) date for an archived "
+                                                     "snapshot."},
+            "date_rule": {"type": "string", "enum": ["on_or_before", "closest"],
+                          "description": "With `date`: the latest snapshot on or before that date (default), or the "
+                                         "closest one, which may be later."}},
             "required": ["url", "question"]},
     },
     "read_url_text": {
         "description": ("Read a web page or an online document as raw text. Long content is split into pages; "
-                        "request later pages with `page`. `date` (YYYYMMDD) reads the archived snapshot closest to "
-                        "that date."),
+                        "request later pages with `page`. `date` (YYYYMMDD) reads an archived snapshot, as in "
+                        "read_url."),
         "parameters": {"type": "object", "properties": {
             "url": {"type": "string", "description": "http(s) URL."},
             "page": {"type": "integer", "description": "Page of the extracted text, starting at 1."},
-            "date": {"type": "string", "description": "Optional YYYYMMDD date for an archived snapshot."}},
+            "date": {"type": "string", "description": "Optional YYYYMMDD (or YYYYMM, YYYY) date for an archived "
+                                                     "snapshot."},
+            "date_rule": {"type": "string", "enum": ["on_or_before", "closest"],
+                          "description": "With `date`: the latest snapshot on or before that date (default), or the "
+                                         "closest one, which may be later."}},
             "required": ["url"]},
     },
     "find_in_url": {
         "description": ("Find every occurrence of a string in a web page or an online document (case-insensitive). "
                         "Returns each match with the text around it and the read_url_text page it is on. `date` "
-                        "(YYYYMMDD) searches the archived snapshot closest to that date."),
+                        "(YYYYMMDD) searches an archived snapshot, as in read_url."),
         "parameters": {"type": "object", "properties": {
             "url": {"type": "string", "description": "http(s) URL."},
             "text": {"type": "string", "description": "The string to find."},
-            "date": {"type": "string", "description": "Optional YYYYMMDD date for an archived snapshot."}},
+            "date": {"type": "string", "description": "Optional YYYYMMDD (or YYYYMM, YYYY) date for an archived "
+                                                     "snapshot."},
+            "date_rule": {"type": "string", "enum": ["on_or_before", "closest"],
+                          "description": "With `date`: the latest snapshot on or before that date (default), or the "
+                                         "closest one, which may be later."}},
             "required": ["url", "text"]},
     },
     "read_file": {
@@ -180,14 +193,17 @@ class Toolbox:
     def _t_web_search(self, query: str):
         return self.web.web_search(str(query), allowed=self.attachment_names())
 
-    def _t_read_url(self, url: str, question: str, date: str | None = None):
-        return self.web.read_url(str(url), str(question), date=date, allowed=self.attachment_names())
+    def _t_read_url(self, url: str, question: str, date: str | None = None, date_rule: str | None = None):
+        return self.web.read_url(str(url), str(question), date=date, allowed=self.attachment_names(),
+                                 date_rule=date_rule or "on_or_before")
 
-    def _t_read_url_text(self, url: str, page: int = 1, date: str | None = None):
-        return self.web.read_url_text(str(url), page=page, date=date, allowed=self.attachment_names())
+    def _t_read_url_text(self, url: str, page: int = 1, date: str | None = None, date_rule: str | None = None):
+        return self.web.read_url_text(str(url), page=page, date=date, allowed=self.attachment_names(),
+                                      date_rule=date_rule or "on_or_before")
 
-    def _t_find_in_url(self, url: str, text: str, date: str | None = None):
-        return self.web.find_in_url(str(url), str(text), date=date, allowed=self.attachment_names())
+    def _t_find_in_url(self, url: str, text: str, date: str | None = None, date_rule: str | None = None):
+        return self.web.find_in_url(str(url), str(text), date=date, allowed=self.attachment_names(),
+                                    date_rule=date_rule or "on_or_before")
 
     def _confine(self, path: str) -> Path | None:
         p = Path(str(path)).expanduser()

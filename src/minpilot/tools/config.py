@@ -55,9 +55,12 @@ class ToolConfig:
     # v2 (2026-10-08): docx order, error statuses, blocklist fixes (docs/decisions.md K6).
     # v3 (2026-10-09): read_url(url, question) = question-based page reader (AOrchestra's, reader.py);
     #     raw pages move to read_url_text; new find_in_url (decisions K17, K7).
-    tools_version: str = "v3"
+    # v4 (2026-10-09): `date_rule` on_or_before (default) | closest for archived snapshots (K8); failed reads say
+    #     why and permanent failures are not retried within a run (K9); role-neutral sandbox network message
+    #     (K11); language-independent anti-bot markers (K14).
+    tools_version: str = "v4"
     blocklist_version: str = BLOCKLIST_VERSION
-    cache_path: Path = REPO_ROOT / "outputs" / "cache" / "tools_v3.sqlite"
+    cache_path: Path = REPO_ROOT / "outputs" / "cache" / "tools_v4.sqlite"
     # Page readers, in fallback order (names: crawl4ai, direct, playwright).
     reader_chain: tuple[str, ...] = ("crawl4ai", "direct", "playwright")
     crawl4ai_endpoint: Path = field(default_factory=_crawl4ai_endpoint)

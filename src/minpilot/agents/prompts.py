@@ -12,7 +12,10 @@ from __future__ import annotations
 
 # v2 (2026-10-09): the answer rules come from the benchmark; `answer` holds only the answer (no explanation,
 #     conditions, caveats or confidence unless the task asks); worker tool lines for tools v3 (decisions F16, K17)
-PROMPTS_VERSION = "v2"
+# v3 (2026-10-09): worker tool line for read_url names the on-or-before snapshot rule (tools v4, K8)
+# v4 (2026-10-09): with one role (the `single` pool, now the default) the orchestrator prompt and action schema
+#     have no worker list and no `worker_id`; the multi-role prompt is unchanged (decision P6)
+PROMPTS_VERSION = "v4"
 # r2 (2026-10-08): the task's premises are given; issues never turn the subtask into "is the task answerable?"
 # r3 (2026-10-09): the rewrite prompt names the executing worker's role and tools (review: a rewrite must stay
 #     doable by the fixed executor)
@@ -24,7 +27,7 @@ REFINER_PROMPTS_VERSION = "r4"
 TOOL_LINES = {
     "web_search": "web_search: search the web (Google results)",
     "read_url": ("read_url: ask a question about a web page or online document; a reader model answers from its full "
-                 "text (optionally an archived snapshot by date)"),
+                 "text (optionally an archived snapshot: by default the latest on or before a date)"),
     "read_url_text": "read_url_text: read a web page or online document as raw text, page by page",
     "find_in_url": "find_in_url: find a string in a web page or online document, with the text around it",
     "read_file": "read_file: read a file in the working directory (documents, spreadsheets, zips, text)",
@@ -41,15 +44,27 @@ def original_task_text(question: str, attachment: str | None) -> str:
 
 # -- orchestrator ---------------------------------------------------------------------------------
 def orchestrator_system(roles: list[dict], max_delegations: int, answer_format: str) -> str:
-    lines = "\n".join(f"- {r['id']}: {r['description']} Tools: {', '.join(r['tools'])}." for r in roles)
-    return f"""You are the orchestrator of a team of workers solving one task. You cannot use tools or open files \
+    """With one role (the default `single` pool) the orchestrator only writes instructions: no worker list and
+    no `worker_id` to choose (decision P6)."""
+    if len(roles) == 1:
+        r = roles[0]
+        intro = f"""You are the orchestrator of a system solving one task. You cannot use tools or open files \
+yourself; you work by delegating subtasks to a worker and reading its reports.
+
+The worker ({r['id']}): {r['description']} Tools: {', '.join(r['tools'])}."""
+        delegate = "set `instruction`"
+    else:
+        lines = "\n".join(f"- {r['id']}: {r['description']} Tools: {', '.join(r['tools'])}." for r in roles)
+        intro = f"""You are the orchestrator of a team of workers solving one task. You cannot use tools or open files \
 yourself; you work by delegating subtasks to workers and reading their reports.
 
 Workers:
-{lines}
+{lines}"""
+        delegate = "set `worker_id` and `instruction`"
+    return f"""{intro}
 
 Each turn, reply with one action:
-- delegate: set `worker_id` and `instruction`. The worker receives the original task and your instruction, \
+- delegate: {delegate}. The worker receives the original task and your instruction, \
 nothing else: it does not see earlier reports or instructions. Put into the instruction everything it needs \
 from earlier results (values, URLs, file paths). Make the instruction specific: what to do and its scope, the \
 interpretation and conditions that matter, and what to report.
@@ -74,6 +89,13 @@ ORCHESTRATOR_ACTION_SCHEMA = {
     },
     "required": ["rationale", "action"],
 }
+
+
+def orchestrator_action_schema(n_roles: int) -> dict:
+    if n_roles > 1:
+        return ORCHESTRATOR_ACTION_SCHEMA
+    props = {k: v for k, v in ORCHESTRATOR_ACTION_SCHEMA["properties"].items() if k != "worker_id"}
+    return {**ORCHESTRATOR_ACTION_SCHEMA, "properties": props}
 
 
 def orchestrator_task_message(original_task: str) -> str:

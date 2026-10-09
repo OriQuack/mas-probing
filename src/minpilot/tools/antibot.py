@@ -9,6 +9,10 @@ Egyptian mythology or about Cloudflare itself is not flagged. Applied to every r
 returned or cached (web.py `_read`) and to cache hits; any reason here counts as a failed read and the next
 reader is tried. (Copied unchanged from the previous pilot; min_pilot has no interactive browser.)
 Reasons: `anti_bot_challenge`, `rate_limit_page`, `load_failure_page` (all in FAILED_READ_REASONS).
+
+Tools v4 (K14): the phrases above are English only; a short page that links or loads a known block / challenge
+endpoint is also a challenge, whatever its language (seen: Google's Korean "enablejs" redirect stub returned by
+the direct reader as content, 65638e28).
 """
 
 from __future__ import annotations
@@ -45,6 +49,11 @@ _LOAD_FAILURE = re.compile(
 _TITLES = re.compile(r"(?i)^\s*(just a moment\.*|attention required!?.*cloudflare.*|making sure you'?re not a bot!?"
                      r"|verification required!?|security check|captcha|human verification|access denied"
                      r"|client challenge|too many requests|429 too many requests)\s*$")
+# Language-independent: block / challenge endpoints of common services (Google, DataDome, Imperva, PerimeterX,
+# hCaptcha, reCAPTCHA) as they appear in the links or scripts of an interstitial.
+_ENDPOINTS = re.compile(
+    r"(?i)/httpservice/retry/enablejs|google\.[a-z.]+/sorry/|/sorry/index\?|[?&]emsg=SG_REL"
+    r"|captcha-delivery\.com|_Incapsula_Resource|px-captcha|hcaptcha\.com/|google\.com/recaptcha/")
 FAILED_READ_REASONS = frozenset({"anti_bot_challenge", "rate_limit_page", "load_failure_page"})
 
 
@@ -55,7 +64,7 @@ def challenge_reason(text: str, title: str = "") -> str | None:
     if _TITLES.match(title or ""):
         return "anti_bot_challenge"
     head = body[:MAX_CHALLENGE_CHARS * 2]
-    if _PHRASES.search(head):
+    if _PHRASES.search(head) or _ENDPOINTS.search(head):
         return "anti_bot_challenge"
     if _RATE_LIMIT.search(head):
         return "rate_limit_page"

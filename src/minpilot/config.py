@@ -71,8 +71,12 @@ class PoolConfig:
 class RefinerConfig:
     name: str
     kind: str = "none"                       # none | self_review | probe
-    # Probing (C) and simulated probing (B): which questions, how many answers per probe worker.
+    # Probing (C) and simulated probing (B): which questions, who answers, how many answers per probe worker.
     questions: tuple[str, ...] = PROBE_QUESTIONS
+    # Who answers (decision P5): "pool" = the role's registered probe_workers; "executor" = the role's executor
+    # only; or a list of worker ids of the pool ("executor" allowed as an entry). The pool, the executor and the
+    # checkpoint stay the same, so e.g. Luna x2 and Luna + Gemini are compared from the same checkpoint.
+    probe_workers: str | tuple[str, ...] = "pool"
     samples_per_worker: int = 1              # repeated probes of the same worker (role routing: >1 for variation)
     probe_tools: bool = False                # may probe workers use tools (on a scratch copy) while answering
     probe_max_tool_calls: int = 6
@@ -91,6 +95,22 @@ class RefinerConfig:
         bad = [q for q in self.questions if q not in PROBE_QUESTIONS]
         if bad:
             raise ValueError(f"unknown probe questions {bad}; known: {PROBE_QUESTIONS}")
+        if isinstance(self.probe_workers, str) and self.probe_workers not in ("pool", "executor"):
+            raise ValueError(f"probe_workers must be 'pool', 'executor' or a list, not {self.probe_workers!r}")
+
+    def probe_workers_for(self, role: "RoleSpec", pool: "PoolConfig") -> tuple[str, ...]:
+        """The workers that answer probes for `role` under this condition (validated against the pool)."""
+        if self.probe_workers == "pool":
+            return role.probe_workers
+        if self.probe_workers == "executor":
+            return (role.executor,)
+        out = tuple(role.executor if w == "executor" else w for w in self.probe_workers)
+        for w in out:
+            if w not in pool.workers:
+                raise ValueError(f"refiner {self.name}: probe worker {w!r} is not in pool {pool.name}")
+            if pool.workers[w].tools != pool.workers[role.executor].tools:
+                raise ValueError(f"refiner {self.name}: probe worker {w!r} has other tools than the executor (P4)")
+        return out
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -143,6 +163,8 @@ def load_refiner(path_or_name: str | Path) -> RefinerConfig:
     d = yaml.safe_load(_resolve(path_or_name, "refiners").read_text())
     if "questions" in d:
         d["questions"] = tuple(d["questions"])
+    if isinstance(d.get("probe_workers"), list):
+        d["probe_workers"] = tuple(d["probe_workers"])
     if "budget" in d:
         d["budget"] = Limits.from_dict(d["budget"])
     return RefinerConfig(**d)
@@ -151,6 +173,8 @@ def load_refiner(path_or_name: str | Path) -> RefinerConfig:
 def refiner_from_dict(d: dict) -> RefinerConfig:
     d = dict(d)
     d["questions"] = tuple(d.get("questions", PROBE_QUESTIONS))
+    if isinstance(d.get("probe_workers"), list):
+        d["probe_workers"] = tuple(d["probe_workers"])
     d["budget"] = Limits.from_dict(d.get("budget"))
     return RefinerConfig(**d)
 

@@ -25,8 +25,9 @@ from pathlib import Path
 from minpilot.tools import blocklist
 from minpilot.tools.documents import safe_dir
 
-NETWORK_DENIED = ("Network access is not permitted from code in this environment; read web pages with the "
-                  "web tools (read_url).")
+# Role-neutral (tools v4, K11): file workers have no web tools, so the message must not point them to one.
+NETWORK_DENIED = ("Network access is not permitted from code in this environment. Web content is available only "
+                  "through web tools, to workers that have them; if you have none, report that web access is needed.")
 # Read-only for model code (plus the Python installation, added at runtime).
 READ_ROOTS = ("/usr", "/lib", "/lib64", "/bin", "/sbin", "/etc", "/sys", "/run", "/opt", "/proc/self",
               "/proc/cpuinfo", "/proc/meminfo", "/proc/stat")

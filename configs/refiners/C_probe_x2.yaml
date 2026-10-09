@@ -1,9 +1,11 @@
-# Homogeneous repeated probes (review 2026-10-09): two answers from the same worker (same model, prompt and
-# tools). With the `single` pool it is the homogeneous counterpart of `redundant` (luna + gemini): same number of
-# answers, no model heterogeneity. Its B counterpart is B_self_review_x2 (two predictions).
+# Homogeneous repeated probes (review 2026-10-09; P5): two answers from the role's executor only (same model,
+# prompt and tools). Restored from the same `redundant` checkpoint as C_probe, it is the homogeneous counterpart
+# of C_probe's Luna + Gemini answers: same pool, executor, checkpoint and number of answers, no model
+# heterogeneity. Its B counterpart is B_self_review_x2 (two predictions for the executor).
 name: C_probe_x2
 kind: probe
 questions: [understanding, assumptions, failure, plan]
+probe_workers: executor
 samples_per_worker: 2
 probe_tools: false
 max_followups: 0

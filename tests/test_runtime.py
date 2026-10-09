@@ -427,3 +427,139 @@ def test_online_images_are_cached(tmp_path, monkeypatch):
     a = tb.call("view_image", {"path": "https://example.org/i.png"}, ("view_image",))
     b = tb.call("view_image", {"path": "https://example.org/i.png"}, ("view_image",))
     assert len(calls) == 1 and a.images == b.images
+
+
+# -- E3: planned runs without a run.json count in their own arm -------------------------------------
+def test_missing_planned_runs_count_in_their_arm(tmp_path):
+    import pandas as pd
+
+    sr = _score_module()
+    ck1, ck2 = str(tmp_path / "ck1"), str(tmp_path / "ck2")
+    rest = {"mode": "restore", "pool": "redundant", "override_source": None}
+    rows = [{**rest, "task_id": "t1", "condition": "A_none", "label": "A_none_r0", "checkpoint": ck1, "correct": True},
+            {**rest, "task_id": "t1", "condition": "C_probe", "label": "C_probe_r0", "checkpoint": ck1,
+             "correct": True},
+            {**rest, "task_id": "t2", "condition": "A_none", "label": "A_none_r0", "checkpoint": ck2, "correct": True},
+            {"mode": "fresh", "pool": "role_routing", "override_source": None, "task_id": "t1",
+             "condition": "A_none", "label": "base_r0", "checkpoint": None, "correct": True}]
+    plan = [{"task_id": "t1", "label": "base_r0", "mode": "fresh", "pool": "role_routing", "condition": "A_none",
+             "checkpoint": "", "override_source": ""},
+            {"task_id": "t1", "label": "base_r1", "mode": "fresh", "pool": "role_routing", "condition": "A_none",
+             "checkpoint": "", "override_source": ""}]
+    for t, ck in (("t1", ck1), ("t2", ck2)):
+        for c in ("A_none", "C_probe"):
+            plan.append({"task_id": t, "label": f"{c}_r0", "mode": "restore", "pool": "redundant", "condition": c,
+                         "checkpoint": ck, "override_source": ""})
+    miss = sr.missing_rows(rows, plan, excluded=set())
+    assert {(m["label"], m["task_id"]) for m in miss} == {("base_r1", "t1"), ("C_probe_r0", "t2")}
+    allrows = rows + miss
+    fresh = [r for r in allrows if sr.arm_of(r) == "fresh|role_routing|A_none|override=none"]
+    assert sr.per_task(fresh) == {"t1": 0.5}           # one correct + one missing = 50%, not 100%
+    res = sr.compare(pd.DataFrame(allrows), "A_none", "C_probe")["redundant"]
+    assert res["checkpoints"] == 2 and res["x"] == 1.0 and res["y"] == 0.5  # the missing C run is a failure
+    # a deliberately excluded run is not re-added as missing
+    excl = {sr.run_key("t1", "base_r1", None)}
+    assert [m["label"] for m in sr.missing_rows(rows, plan, excl)] == ["C_probe_r0"]
+
+
+def test_restore_batches_plan_arms_and_rotate_conditions(tmp_path):
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("run_batch", REPO_ROOT / "scripts" / "run_batch.py")
+    rb = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(rb)
+    cks = []
+    for i in range(2):
+        ck = tmp_path / f"run{i}" / "checkpoints" / "d0"
+        ck.mkdir(parents=True)
+        (ck / "state.json").write_text(json.dumps({"task_id": f"t{i}", "config": {"pool": {"name": "redundant"}}}))
+        cks.append(str(ck))
+    (tmp_path / "cks.txt").write_text("\n".join(cks))
+
+    class A:
+        checkpoints, refiners, reps, rep_offset, only = str(tmp_path / "cks.txt"), ["A_none", "C_probe"], 2, 0, None
+    plan = rb.restore_plan(A)
+    assert len(plan) == 8 and all(p["mode"] == "restore" and p["pool"] == "redundant" for p in plan)
+    firsts = [plan[i]["condition"] for i in range(0, 8, 2)]
+    assert firsts == ["A_none", "C_probe", "C_probe", "A_none"]  # order rotates per (rep, checkpoint)
+    assert {p["label"] for p in plan} == {"A_none_r0", "C_probe_r0", "A_none_r1", "C_probe_r1"}
+
+
+# -- tools v4: K8 on-or-before snapshots, K9 failure causes, K11, K14 ---------------------------------
+def test_wayback_on_or_before_uses_cdx_only_when_closest_is_later(tmp_path):
+    from minpilot.tools.backends import WaybackBackend
+    from minpilot.tools.config import ToolConfig
+
+    assert WaybackBackend.end_of("2021") == "20211231235959"
+    assert WaybackBackend.end_of("202102") == "20210228235959"
+    assert WaybackBackend.end_of("20210101") == "20210101235959"
+    wb = WaybackBackend(ToolConfig(cache_path=tmp_path / "c.sqlite"))
+    calls = []
+    wb.closest = lambda url, d: ("https://web.archive.org/web/20201212000000/x", "20201212000000")
+    wb._last_cdx = lambda url, end: calls.append(end)
+    assert wb.on_or_before("x", "20210101")[1] == "20201212000000" and calls == []
+    wb.closest = lambda url, d: ("https://web.archive.org/web/20210105000000/x", "20210105000000")
+    wb._last_cdx = lambda url, end: calls.append(end) or ("https://web.archive.org/web/20201230000000/x",
+                                                           "20201230000000")
+    assert wb.on_or_before("x", "20210101")[1] == "20201230000000" and calls == ["20210101235959"]
+
+
+def test_read_url_text_date_rule_is_passed_and_cached_separately(tmp_path):
+    seen = []
+
+    class FakeWayback:
+        def on_or_before(self, url, date):
+            seen.append(("on_or_before", date))
+            return f"https://web.archive.org/web/20201230000000/{url}", "20201230000000"
+
+        def closest(self, url, date):
+            seen.append(("closest", date))
+            return f"https://web.archive.org/web/20210105000000/{url}", "20210105000000"
+
+    web = fake_web(tmp_path)
+    web.wayback = FakeWayback()
+    a, _ = web.read_url_text("https://example.org/p", date="20210101")
+    b, _ = web.read_url_text("https://example.org/p", date="20210101", date_rule="closest")
+    assert "taken on 2020-12-30" in a and "taken on 2021-01-05" in b
+    assert seen == [("on_or_before", "20210101"), ("closest", "20210101")]
+    assert "date_rule must be" in web.read_url_text("https://example.org/p", date="2021", date_rule="x")[0]
+
+
+def test_failed_reads_state_the_cause_and_permanent_failures_are_not_retried(tmp_path):
+    from minpilot.tools.backends import BackendError
+
+    class Failing:
+        name, paid = "direct", False
+
+        def __init__(self, error):
+            self.error, self.n = error, 0
+
+        def available(self):
+            return True
+
+        def fetch(self, url):
+            self.n += 1
+            raise BackendError(self.error)
+
+    web = fake_web(tmp_path)
+    web.read_backends = [Failing("direct HTTP 403: Forbidden")]
+    text, rec = web.read_url_text("https://example.org/x")
+    assert "access denied" in text and "Retrying will not help" in text and rec["failure_cause"] == "access_denied"
+    text2, rec2 = web.read_url_text("https://example.org/x")
+    assert web.read_backends[0].n == 1 and rec2["failed_earlier"] and "already failed" in text2
+    assert web.state_dict()["failed_urls"] == {"https://example.org/x": "access_denied"}
+    web.read_backends = [Failing("direct: ReadTimeout('timed out')")]  # transient: tried again next time
+    for _ in range(2):
+        text, rec = web.read_url_text("https://example.org/slow")
+    assert web.read_backends[0].n == 2 and "may work later" in text and rec["failure_cause"] == "timeout"
+
+
+def test_sandbox_network_message_is_role_neutral_and_non_english_stub_is_a_challenge():
+    from minpilot.tools.antibot import challenge_reason
+    from minpilot.tools.sandbox import NETWORK_DENIED
+
+    assert "read_url" not in NETWORK_DENIED and "report that web access is needed" in NETWORK_DENIED
+    stub = ("몇 초 안에 이동하지 않는 경우 [여기](/httpservice/retry/enablejs?sei=abc)를 클릭하세요.\n\nGoogle 검색에 "
+            "액세스하는 데 문제가 있으면 [여기를 클릭](/search?q=x&emsg=SG_REL&sei=abc)하거나 의견을 보내 주세요.")
+    assert challenge_reason(stub, "Google Search") == "anti_bot_challenge"
+    assert challenge_reason("An article about how Google's /sorry/ pages work. " * 200, "Blog") is None

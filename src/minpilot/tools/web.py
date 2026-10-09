@@ -35,6 +35,74 @@ from minpilot.tools.config import ToolConfig
 BLOCKED_QUERY_MESSAGE = ("Error: searching for benchmark datasets, leaderboards or their answers is not permitted in "
                          "this environment. Search for the information itself.")
 BLOCKED_MESSAGE = "Error: access to this page is not permitted in this environment. Use a different source."
+DATE_RULES = ("on_or_before", "closest")
+
+# Why every reader failed (tools v4, K9): the worker is told the cause, and a cause that will not change within the
+# run (PERMANENT) is remembered, so a repeated read of that URL fails at once instead of re-running every reader.
+FAILURE_TEXT = {
+    "anti_bot_challenge": "the site answered with an anti-bot or human-verification page",
+    "rate_limit_page": "the site answered with a rate-limit notice",
+    "load_failure_page": "the page only loads with interactive JavaScript",
+    "needs_javascript": "the page only loads with interactive JavaScript",
+    "access_denied": "access denied (HTTP 401/403; login, paywall or blocking)",
+    "not_found": "page not found (HTTP 404/410)",
+    "too_large": "the file is too large to download",
+    "unparseable": "the document could not be converted to text",
+    "empty": "the page has no readable text",
+    "rate_limited": "the site is rate-limiting requests (HTTP 429)",
+    "server_error": "the site returned a server error (HTTP 5xx)",
+    "timeout": "the site did not respond in time",
+    "unavailable": "the page readers are unavailable",
+    "unknown": "the readers failed for an unknown reason",
+}
+PERMANENT_FAILURES = frozenset({"anti_bot_challenge", "rate_limit_page", "load_failure_page", "needs_javascript",
+                                "access_denied", "not_found", "too_large", "unparseable", "empty"})
+_CAUSE_ORDER = ("anti_bot_challenge", "rate_limit_page", "access_denied", "not_found", "load_failure_page",
+                "needs_javascript", "too_large", "unparseable", "rate_limited", "timeout", "server_error", "empty",
+                "unavailable", "unknown")
+
+
+def attempt_cause(error: str) -> str:
+    e = str(error or "")
+    if e in FAILURE_TEXT:
+        return e
+    low = e.lower()
+    if re.search(r"http (401|403)\b", low):
+        return "access_denied"
+    if re.search(r"http (404|410)\b", low):
+        return "not_found"
+    if "429" in low or "rate_limited" in low:
+        return "rate_limited"
+    if re.search(r"http 5\d\d\b", low):
+        return "server_error"
+    if "timeout" in low or "timed out" in low:
+        return "timeout"
+    if "javascript" in low:
+        return "needs_javascript"
+    if "larger than" in low:
+        return "too_large"
+    if "could not parse" in low or "unsupported" in low:
+        return "unparseable"
+    if "empty page" in low:
+        return "empty"
+    if "not running" in low or "no_credits_or_key" in low or "connectionerror" in low:
+        return "unavailable"
+    return "unknown"
+
+
+def failure_cause(attempts: list[dict]) -> str:
+    causes = {attempt_cause(a.get("error")) for a in attempts if not a.get("ok")}
+    return next((c for c in _CAUSE_ORDER if c in causes), "unknown")
+
+
+def failure_message(cause: str, earlier: bool = False) -> str:
+    text = FAILURE_TEXT.get(cause, FAILURE_TEXT["unknown"])
+    if cause in PERMANENT_FAILURES:
+        hint = ("Retrying will not help; use a different source (another site, or an archived copy with `date`).")
+    else:
+        hint = "It may work later; otherwise use a different source."
+    when = " (it already failed earlier in this run)" if earlier else ""
+    return f"Error: could not retrieve this page{when}: {text}. {hint}"
 _WAYBACK_SNAPSHOT = re.compile(r"^https?://web\.archive\.org/web/(\d{8,14})(?:[a-z_]*)/(.+)$")
 
 
@@ -59,6 +127,7 @@ class WebTools:
         self.wayback = wayback or WaybackBackend(self.cfg)
         self.pinned_search: str | None = None
         self.blocked_urls: set[str] = set()
+        self.failed_urls: dict[str, str] = {}  # URL key -> permanent failure cause (K9; part of the checkpoint)
         self.reader = None  # tools.reader.PageReader, set by the harness (it needs the run's model client)
         self._lock = threading.Lock()
 
@@ -69,15 +138,17 @@ class WebTools:
         other = copy.copy(self)
         other._lock = threading.Lock()
         other.blocked_urls = set(self.blocked_urls)
+        other.failed_urls = dict(self.failed_urls)
         return other
 
     def state_dict(self) -> dict:
         return {"pinned_search": self.pinned_search, "cache": str(self.cache.path.resolve()),
-                "blocked_urls": sorted(self.blocked_urls)}
+                "blocked_urls": sorted(self.blocked_urls), "failed_urls": dict(sorted(self.failed_urls.items()))}
 
     def load_state_dict(self, state: dict) -> None:
         self.pinned_search = state.get("pinned_search")
         self.blocked_urls = set(state.get("blocked_urls", []))
+        self.failed_urls = dict(state.get("failed_urls", {}))
 
     # -- sticky blocking (blocklist v5): once any rule blocks a URL, it stays blocked for the rest of the run ---
     @staticmethod
@@ -121,11 +192,11 @@ class WebTools:
             rec["error"] = repr(e)
             return f"Error: search failed ({type(e).__name__}).", rec
 
-    def read_url_text(self, url: str, page: int = 1, date: str | None = None,
-                      allowed: tuple[str, ...] = ()) -> tuple[str, dict]:
+    def read_url_text(self, url: str, page: int = 1, date: str | None = None, allowed: tuple[str, ...] = (),
+                      date_rule: str = "on_or_before") -> tuple[str, dict]:
         rec = self._new_record()
         try:
-            doc = self._fetch_doc(url, date, rec, allowed)
+            doc = self._fetch_doc(url, date, rec, allowed, date_rule)
             if isinstance(doc, str):
                 return doc, rec
             return paged(doc, page, self.cfg.page_chars, "read_url_text", doc["url"]), rec
@@ -133,8 +204,8 @@ class WebTools:
             rec["error"] = repr(e)
             return f"Error: reading the page failed ({type(e).__name__}: {e}).", rec
 
-    def read_url(self, url: str, question: str, date: str | None = None,
-                 allowed: tuple[str, ...] = ()) -> tuple[str, dict]:
+    def read_url(self, url: str, question: str, date: str | None = None, allowed: tuple[str, ...] = (),
+                 date_rule: str = "on_or_before") -> tuple[str, dict]:
         """The question-based reader (tools v3). Budget and infrastructure errors of the reader model propagate
         (they end the run like any other model call); everything else comes back to the worker as text."""
         rec = self._new_record()
@@ -147,7 +218,7 @@ class WebTools:
             rec["error"] = "no_reader"
             return "Error: the page reader is not available.", rec
         try:
-            doc = self._fetch_doc(url, date, rec, allowed)
+            doc = self._fetch_doc(url, date, rec, allowed, date_rule)
         except Exception as e:
             rec["error"] = repr(e)
             return f"Error: reading the page failed ({type(e).__name__}: {e}).", rec
@@ -165,8 +236,8 @@ class WebTools:
                                    f"{parts}, and saw only the text and the question):", "", answer]
         return "\n".join(lines), rec
 
-    def find_in_url(self, url: str, text: str, date: str | None = None,
-                    allowed: tuple[str, ...] = ()) -> tuple[str, dict]:
+    def find_in_url(self, url: str, text: str, date: str | None = None, allowed: tuple[str, ...] = (),
+                    date_rule: str = "on_or_before") -> tuple[str, dict]:
         rec = self._new_record()
         try:
             needle = " ".join(str(text or "").split())
@@ -174,7 +245,7 @@ class WebTools:
             if not needle:
                 rec["error"] = "invalid_arguments: empty text"
                 return "Error: give the `text` to find.", rec
-            doc = self._fetch_doc(url, date, rec, allowed)
+            doc = self._fetch_doc(url, date, rec, allowed, date_rule)
             if isinstance(doc, str):
                 return doc, rec
             return find_text(doc, needle, self.cfg), rec
@@ -182,7 +253,8 @@ class WebTools:
             rec["error"] = repr(e)
             return f"Error: searching the page failed ({type(e).__name__}: {e}).", rec
 
-    def _fetch_doc(self, url: str, date: str | None, rec: dict, allowed: tuple[str, ...]) -> dict | str:
+    def _fetch_doc(self, url: str, date: str | None, rec: dict, allowed: tuple[str, ...],
+                   date_rule: str = "on_or_before") -> dict | str:
         """The page as a cached document dict, or the error text the agent sees (rec is updated either way)."""
         url = str(url or "").strip()
         if not re.match(r"^https?://", url):
@@ -193,14 +265,18 @@ class WebTools:
             date = str(date).strip()
             if not re.fullmatch(r"\d{4}(\d{2}(\d{2})?)?", date):
                 return "Error: date must be in YYYYMMDD format."
-            snap = self._snapshot(url, date, rec)
+            date_rule = date_rule or "on_or_before"
+            if date_rule not in DATE_RULES:
+                return f"Error: date_rule must be one of {', '.join(DATE_RULES)}."
+            rec["date_rule"] = date_rule
+            snap = self._snapshot(url, date, rec, date_rule)
             if isinstance(snap, str):
                 return snap
             url = snap["snapshot_url"]
         doc = self._read(url, rec, allowed)
         if doc is None:
             rec["error"] = "all_readers_failed"
-            return "Error: could not retrieve this page. Try a different source."
+            return failure_message(rec.get("failure_cause", "unknown"), rec.get("failed_earlier", False))
         if doc.get("blocked"):
             return BLOCKED_MESSAGE
         return {**doc, "url": doc.get("url") or url}
@@ -211,24 +287,28 @@ class WebTools:
         return {"cache_hit": False, "backend": None, "attempts": [], "fallback": False, "blocked": None,
                 "credits": {}}
 
-    def _snapshot(self, url: str, date: str, rec: dict) -> dict | str:
+    def _snapshot(self, url: str, date: str, rec: dict, rule: str = "on_or_before") -> dict | str:
         if reason := blocklist.url_block_reason(url):
             rec["blocked"] = reason
             return BLOCKED_MESSAGE
-        key = json.dumps([url, date])
+        key = json.dumps([url, date, rule])
         snap = self.cache.get("wayback", key)
         rec["wayback_cache_hit"] = snap is not None
         if snap is None:
             RATE_LIMITER.wait("wayback", self.cfg.min_interval_s.get("wayback", 0))
             t0 = time.monotonic()
             try:
-                found = self.wayback.closest(url, date)
+                found = (self.wayback.on_or_before(url, date) if rule == "on_or_before"
+                         else self.wayback.closest(url, date))
             except BackendError as e:
                 rec["attempts"].append({"backend": "wayback", "ok": False, "error": str(e)[:300]})
                 rec["error"] = "wayback_unavailable"
                 return "Error: the Wayback Machine is unavailable right now. Try again later."
             rec["attempts"].append({"backend": "wayback", "ok": True, "latency_s": round(time.monotonic() - t0, 2)})
             if found is None:
+                if rule == "on_or_before":
+                    return (f"No archived snapshot of {url} on or before {date} was found (date_rule='closest' "
+                            f"finds the nearest one, which may be later).")
                 return f"No archived snapshot of {url} was found."
             snap = self.cache.put("wayback", key, {"snapshot_url": found[0], "timestamp": found[1]}, "wayback")
         return snap
@@ -343,6 +423,9 @@ class WebTools:
         cached = self.cache.get("page", url)
         if cached is not None:
             rec.update(cache_hit=True, backend=cached.get("backend"))
+        elif (earlier := self.failed_urls.get(self._url_key(url))) is not None:
+            rec.update(failure_cause=earlier, failed_earlier=True)  # K9: no new attempt for a permanent failure
+            return None
         else:
             fetch_url = _WAYBACK_SNAPSHOT.sub(r"https://web.archive.org/web/\1id_/\2", url)
             for i, backend in enumerate(self.read_backends):
@@ -361,6 +444,10 @@ class WebTools:
                 cached = self.cache.put("page", url, value, backend.name)
                 break
             else:
+                cause = rec["failure_cause"] = failure_cause(rec["attempts"])
+                if cause in PERMANENT_FAILURES:
+                    with self._lock:
+                        self.failed_urls[self._url_key(url)] = cause
                 return None
         if cached.get("blocked"):
             self._block_reason(url, cached["blocked"])
@@ -370,6 +457,9 @@ class WebTools:
                                  self.question, allowed=allowed)
         if reason in antibot.FAILED_READ_REASONS:
             rec["attempts"].append({"backend": "cache", "ok": False, "error": reason})
+            rec["failure_cause"] = reason
+            with self._lock:
+                self.failed_urls[self._url_key(url)] = reason
             return None
         if reason:
             self._block_reason(url, reason)

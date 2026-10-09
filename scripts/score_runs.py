@@ -5,8 +5,12 @@
                                [--exclude runs.txt] [--compare A_none C_probe [--compare A_none B_self_review]]
 
 Primary metric: `correct` on the extracted answer (eval/answer.py, version recorded); `correct_raw` alongside.
-Runs with status other than ok count as wrong; `--expected` (task_id,label rows) adds planned runs that have no
-run.json as `missing` (also wrong). `--exclude` lists run dirs to drop (e.g. contaminated runs), one per line.
+Runs with status other than ok count as wrong. `--expected` is a session's planned.csv (run_batch.py): every
+planned run without a run.json is added as `missing` (wrong) **in its own arm** (mode, pool, condition,
+checkpoint from the plan; decision E3), so it stays in that arm's denominator and in paired comparisons. A plan
+row matches a run by (task_id, label, checkpoint). Old plans with only task_id,label take mode/pool/condition from
+the session's batch_args.json (fresh batches). `--exclude` lists run dirs to drop (e.g. contaminated runs), one
+per line: they leave the denominator on purpose and are **not** re-added as missing.
 
 Grouping (review 2026-10-09, F6): runs are grouped by **arm** = (mode, pool, condition, override source), not
 by label, so reps labelled C_r0, C_r1, ... count as one condition. Within an arm: per-task success rate over
@@ -37,6 +41,42 @@ from minpilot.eval.answer import EXTRACTION_VERSION, extract_final_answer  # noq
 from minpilot.eval.gaia_scorer import question_scorer  # noqa: E402
 
 REP = re.compile(r"_r(\d+)$")
+
+
+def run_key(task_id: str, label, checkpoint) -> tuple:
+    return (task_id, label or "", str(Path(checkpoint).resolve()) if checkpoint else "")
+
+
+def load_plan(path: Path) -> list[dict]:
+    """Planned runs with their arms. Old plans (task_id,label only) get the arm from batch_args.json (fresh)."""
+    plan = pd.read_csv(path, dtype=str, keep_default_na=False).to_dict("records")
+    if plan and "condition" not in plan[0]:
+        args_file = Path(path).parent / "batch_args.json"
+        if not args_file.exists():
+            raise SystemExit(f"{path}: no arm columns and no batch_args.json; cannot place missing runs in an arm")
+        from minpilot.config import load_pool, load_refiner
+
+        args = json.loads(args_file.read_text())
+        arm = {"mode": "fresh", "pool": load_pool(args["pool"]).name,
+               "condition": load_refiner(args["refiner"]).name, "checkpoint": "", "override_source": ""}
+        plan = [{**arm, **p} for p in plan]
+    return plan
+
+
+def missing_rows(rows: list[dict], plan: list[dict], excluded: set[tuple]) -> list[dict]:
+    """Planned runs with no scored run and not deliberately excluded, as failures of their own arm."""
+    have = {run_key(r["task_id"], r.get("label"), r.get("checkpoint")) for r in rows}
+    out = []
+    for p in plan:
+        key = run_key(p["task_id"], p.get("label"), p.get("checkpoint"))
+        if key in have or key in excluded:
+            continue
+        ck = key[2] or None
+        out.append({"task_id": p["task_id"], "label": p.get("label"), "status": "missing", "mode": p.get("mode"),
+                    "pool": p.get("pool") or None, "condition": p.get("condition") or None, "checkpoint": ck,
+                    "pair_id": ck, "override_source": p.get("override_source") or None,
+                    "correct": False, "correct_raw": False})
+    return out
 
 
 def arm_of(r: dict) -> str:
@@ -87,12 +127,15 @@ def main() -> None:
     excluded = set()
     if a.exclude:
         excluded = {str(Path(x.strip()).resolve()) for x in Path(a.exclude).read_text().splitlines() if x.strip()}
-    rows = []
+    rows, excluded_keys = [], set()
     for p in map(Path, a.paths):
         for rj in ([p / "run.json"] if (p / "run.json").exists() else sorted(p.rglob("run.json"))):
-            if "checkpoints" in rj.parts or "scratch" in rj.parts or str(rj.parent.resolve()) in excluded:
+            if "checkpoints" in rj.parts or "scratch" in rj.parts:
                 continue
             info = json.loads(rj.read_text())
+            if str(rj.parent.resolve()) in excluded:
+                excluded_keys.add(run_key(info["task_id"], info.get("label"), info.get("restored_from")))
+                continue
             raw = info.get("final_answer")
             ans = extract_final_answer(raw)
             ok = info.get("status") == "ok"
@@ -114,14 +157,10 @@ def main() -> None:
                 "cost_usd": c.get("cost_usd"), "tool_usd_cold": c.get("tool_usd_cold"),
                 "unknown_cost_calls": c.get("unknown_cost_calls"), "n_delegations": info.get("n_delegations")})
     if a.expected:
-        have = {(r["task_id"], r["label"]) for r in rows}
-        with open(a.expected) as f:
-            for e in pd.read_csv(f).to_dict("records"):
-                key = (e["task_id"], e.get("label"))
-                if key not in have:
-                    rows.append({"task_id": e["task_id"], "label": e.get("label"), "status": "missing",
-                                 "mode": "fresh", "pool": None, "condition": None, "override_source": None,
-                                 "correct": False, "correct_raw": False})
+        miss = missing_rows(rows, load_plan(Path(a.expected)), excluded_keys)
+        rows += miss
+        print(f"planned runs without a run.json (scored as failures of their arm): {len(miss)}; "
+              f"excluded on purpose: {len(excluded_keys)}")
     out = Path(a.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     df = pd.DataFrame(rows)

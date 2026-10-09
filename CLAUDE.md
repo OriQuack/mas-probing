@@ -20,7 +20,8 @@ Stage (2026-10-09): the 2026-10-08 baseline (tools v2, prompts v1, refiner promp
 **superseded** by the user's revisions of 2026-10-09: refiner prompts r4 (R14), prompts v2 (F16, answer rules from
 the benchmark), tools v3 (K17: AOrchestra's question-based reader in `read_url`; `read_url_text`, `find_in_url`).
 Old checkpoints cannot be restored under them. Next (E5): inspect the validation pass `outputs/sessions/v3-check-*`,
-freeze, record the new baseline (12 × 3) with checkpoints; open items in `docs/decisions.md` (F14, K8–K14, R3);
+freeze, record the new baseline on `data/splits/baseline_v1.csv` (50 tasks, L1:L2:L3 = 8:25:17, contains the 12 dev
+tasks; E6) × 1 rep with checkpoints, on the `single` pool (P6, prompts v4); open items in `docs/decisions.md` (F14, K8–K14, R3);
 more exploration tasks for Exp 1 headroom.
 
 ## Do not bring OWL back
@@ -34,7 +35,7 @@ scorer, splits) may be copied; record the copy in `docs/reuse_from_pilot.md`.
 
 ```
 minimal framework.md     framework spec (user's; authoritative for the framework)
-configs/pools/           worker pools: role_routing, redundant, single (workers + roles)
+configs/pools/           worker pools: single (default, P6), role_routing, redundant (workers + roles)
 configs/refiners/        conditions: A_none, B_self_review, C_probe (main contrast: same steps after collection);
                          variants C_probe_followup, C_probe_tools, C_probe_connected, C_probe_connected_norewrite,
                          C_probe_x2 / B_self_review_x2
@@ -49,7 +50,7 @@ src/minpilot/
                          sandbox.py, backends/cache/blocklist/antibot/documents
   data/gaia.py, eval/    GAIA loading (no answers), GAIA's answer rules (ANSWER_FORMAT), scorer, extraction rule
 scripts/                 run_task.py, score_runs.py, crawl4ai/, slurm/
-data/splits/             pre-registered task lists (copied from the previous pilot; never redraw)
+data/splits/             pre-registered task lists (copied from the previous pilot, + baseline_v1; never redraw)
 docs/                    decisions.md, reuse_from_pilot.md, failure_codebook.md, labelling_protocol.md,
                          review_2026-10-09.md (implementation review and responses), cluster/slurm.md
 envs/doh_minpilot/       requirements.txt, setup.sh, requirements.lock
@@ -60,9 +61,10 @@ outputs/, logs/          gitignored run artifacts
 ## Framework in one paragraph
 
 One orchestrator (`luna-high`: no tools, JSON actions) runs a dynamic loop: each turn it either delegates one
-subtask to a **role**, or finishes with the answer (the benchmark's answer rules are passed in; the answer is
-stored as given, with no re-output step). A role maps to a fixed **executor** worker and to its
-**probe workers**. `call_worker(worker_id, original_task, instruction) -> report` is the only way work gets done.
+subtask (an instruction) to a **role**, or finishes with the answer (the benchmark's answer rules are passed in; the
+answer is stored as given, with no re-output step). A role maps to a fixed **executor** worker and to its
+**probe workers**. The default pool `single` has one role (a generalist worker with all tools), so the orchestrator
+only writes instructions and chooses no role (P6); `role_routing` (web / file roles) is kept for a robustness check. `call_worker(worker_id, original_task, instruction) -> report` is the only way work gets done.
 A worker (`luna-high`, effort high, with tools) gets the original task and the instruction only, runs a tool loop and
 returns a free-text report; it keeps no state between calls. Web workers read pages through `read_url(url,
 question)` (a fixed `luna-high` page reader that sees only the page and the question; its calls count toward the
@@ -84,11 +86,13 @@ conda activate doh_minpilot                      # build: bash envs/doh_minpilot
 python -m pytest                                 # offline suite (needs Landlock + GAIA data for zero skips)
 bash scripts/crawl4ai/ensure.sh                  # page reader; or reuse a running one:
 export CRAWL4AI_ENDPOINT=/home/dohyun/mas-uncertainty/pilot/outputs/servers/crawl4ai.json
-python scripts/run_task.py fresh --task-id <exploration id> --pool role_routing --refiner A_none --label base_r0
+python scripts/run_task.py fresh --task-id <exploration id> --pool single --refiner A_none --label base_r0
 python scripts/run_task.py restore --checkpoint outputs/runs/<t>/<run>/checkpoints/d0 --refiner C_probe --label C_r0
 python scripts/run_task.py restore --checkpoint ... --query-file q.txt --source post_hoc    # Exp 1 override
 python scripts/score_runs.py [outputs/runs/...]                                             # -> outputs/scores/
 python scripts/run_batch.py --tasks data/splits/executor_selection_v1.csv --reps 3 --session outputs/sessions/<name>
+python scripts/run_batch.py --checkpoints cks.txt --refiners A_none B_self_review C_probe --reps 3 \
+    --session outputs/sessions/<name>              # paired restores; planned.csv records every run's arm
 python scripts/score_runs.py <session>/runs --out <session>/scores.csv --expected <session>/planned.csv \
     [--compare A_none C_probe] [--exclude contaminated.txt]   # arms by condition; paired bootstrap on checkpoints
 python scripts/audit_contamination.py <session>                                             # current blocklist

@@ -162,6 +162,8 @@ class Run:
         self.orchestrator = Orchestrator(self.client(cfg.orchestrator_model), self.role_list(), cfg.max_delegations,
                                          answer_format=ANSWER_FORMAT)
         self.refiner = make_refiner(cfg.refiner)
+        for role in cfg.pool.roles.values():  # fail at start, not at the first delegation
+            cfg.refiner.probe_workers_for(role, cfg.pool)
         self.messages: list[dict] = []
         self.delegations: list[dict] = []
         self.handled = 0                    # delegations handled by this process (refine_at="first")
@@ -359,7 +361,8 @@ class Run:
 
     def _delegate(self, action: Action, k: int, override: tuple[str | None, str | None]) -> None:
         role = self.cfg.pool.roles[action.worker_id]
-        req = RefineRequest(self.original_task, action.instruction, role.id, role.executor, role.probe_workers)
+        req = RefineRequest(self.original_task, action.instruction, role.id, role.executor,
+                            self.cfg.refiner.probe_workers_for(role, self.cfg.pool))
         result: RefineResult
         if override[0] is not None:
             result = RefineResult(override[0], override[0] != action.instruction, "override",

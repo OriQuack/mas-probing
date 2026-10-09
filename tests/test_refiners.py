@@ -240,3 +240,27 @@ def test_r4_analysis_allows_premise_issues_and_rewrite_keeps_the_goal(tmp_path, 
     assert "correct the instruction where it conflicts with the original task" in rewrite_text
     assert "into an assessment of whether the problem holds" in rewrite_text
     assert "most plausible intended reading" not in rewrite_text
+
+
+def test_probe_workers_chosen_by_the_condition_on_the_same_pool(tmp_path, task):
+    """P5: on the `redundant` pool, C_probe asks Luna + Gemini once each; C_probe_x2 asks the executor twice
+    (it used to ask every candidate twice: 4 answers)."""
+    def answers(refiner, name):
+        llm = ScriptedLLM(base_script(worker=lambda b: "answer"))
+        run = make_run(tmp_path, task, llm, pool="redundant", refiner=refiner, name=name)
+        run.run_fresh()
+        return [(r["worker_id"], r["sample"]) for r in refine_log(run)["responses"]]
+
+    assert answers("C_probe", "c") == [("gen_luna", 0), ("gen_gemini", 0)]
+    assert answers("C_probe_x2", "x2") == [("gen_luna", 0), ("gen_luna", 1)]
+
+
+def test_probe_worker_lists_are_validated_against_the_pool(tmp_path, task):
+    from minpilot.config import load_pool
+
+    cfg = RefinerConfig(name="C_bad", kind="probe", probe_workers=("executor", "nobody"))
+    pool = load_pool("redundant")
+    with pytest.raises(ValueError, match="not in pool"):
+        cfg.probe_workers_for(pool.roles["generalist"], pool)
+    ok = RefinerConfig(name="C_list", kind="probe", probe_workers=("gen_gemini", "executor"))
+    assert ok.probe_workers_for(pool.roles["generalist"], pool) == ("gen_gemini", "gen_luna")

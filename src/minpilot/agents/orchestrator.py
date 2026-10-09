@@ -41,7 +41,7 @@ class Orchestrator:
         self.max_delegations = max_delegations
         self.answer_format = answer_format  # the benchmark's answer rules
         self.max_invalid = max_invalid
-        self.format = json_schema_format("orchestrator_action", prompts.ORCHESTRATOR_ACTION_SCHEMA)
+        self.format = json_schema_format("orchestrator_action", prompts.orchestrator_action_schema(len(roles)))
         self.last_invalid: list[str] = []
 
     def initial_messages(self, original_task: str) -> list[dict]:
@@ -75,7 +75,8 @@ class Orchestrator:
         if kind == "delegate":
             if must_finish:
                 return "no delegations are left; you must `finish`.", None
-            wid = (d.get("worker_id") or "").strip()
+            # one role: nothing to choose (the schema has no worker_id); the role is filled in here
+            wid = next(iter(self.roles)) if len(self.roles) == 1 else (d.get("worker_id") or "").strip()
             if wid not in self.roles:
                 return f"unknown worker_id {wid!r}; choose one of {sorted(self.roles)}.", None
             if not (d.get("instruction") or "").strip():

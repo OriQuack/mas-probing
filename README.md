@@ -27,8 +27,9 @@ orchestrator (no tools) ── delegate(role, instruction) ──► [checkpoint
 - `call_worker(worker_id, original_task, instruction) -> report` is the only interface to workers.
 - `InstructionRefiner.refine(original_task, draft, target worker, probe workers) -> instruction` is the method
   module: probe → compare → decide/verify issues → rewrite.
-- Worker pools: `role_routing` (each role's own worker is probed), `redundant` (several candidate workers are
-  probed, the executor is fixed), `single`.
+- Worker pools: `single` (default: one generalist worker with all tools; the orchestrator only writes
+  instructions), `role_routing` (web / file roles the orchestrator chooses; a robustness check), `redundant`
+  (several candidate workers are probed, the executor is fixed).
 
 ## Setup
 
@@ -37,7 +38,7 @@ bash envs/doh_minpilot/setup.sh && conda activate doh_minpilot
 cp .env.example .env                     # OPENROUTER_API_KEY, SERPER_API_KEY
 bash scripts/crawl4ai/ensure.sh          # local page reader (pinned Crawl4AI image, Apptainer)
 python -m pytest
-python scripts/run_task.py fresh --task-id <id> --pool role_routing --refiner A_none
+python scripts/run_task.py fresh --task-id <id> --pool single --refiner A_none
 ```
 
 GAIA 2023 validation is expected at `~/data2/datasets/GAIA/2023/validation/`.
