@@ -15,8 +15,11 @@ PROVIDERS = {"openai": "OpenAI", "google-ai-studio": "Google AI Studio"}
 
 
 def kind_of(body: dict) -> str:
-    """Which caller sent this request: orchestrator | analyze | rewrite | simulate | worker:<model>."""
+    """Which caller sent this request: orchestrator | analyze | rewrite | simulate | reader | worker."""
     rf = (body.get("response_format") or {}).get("json_schema", {}).get("name")
+    first = body["messages"][0].get("content")
+    if isinstance(first, list) and str(first[0].get("text", "")).startswith("Please read the source content"):
+        return "reader"
     if rf == "orchestrator_action":
         return "orchestrator"
     if rf == "review_analysis":

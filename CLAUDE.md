@@ -15,11 +15,13 @@ modes, by varying one component at a time, and later ported to other frameworks.
   that kind, add it there (ID, choice, alternative, where).
 - `docs/reuse_from_pilot.md` lists what was copied from `../pilot` and the OWL-specific choices left out.
 
-Stage (2026-10-08, night): live-tested on 3 tasks, bugs fixed (tools v2, blocklist v6, refiner prompts r2), and
-the **baseline (A, `role_routing`) recorded on the 12 pilot tasks × 3 and labelled**:
-`outputs/sessions/pilot-base-v2-20261008T160736Z/` (+ `pilot-base-v2-supp-*` for de9887f5). Read
-`outputs/sessions/REPORT_20261008.md` first. Next: the user's decisions on the open items in `docs/decisions.md`
-(F14 zero-delegation tasks, F16, K7–K14, R3), more exploration tasks for Exp 1 headroom, then Exp 1 restores.
+Stage (2026-10-09): the 2026-10-08 baseline (tools v2, prompts v1, refiner prompts r2;
+`outputs/sessions/pilot-base-v2-20261008T160736Z/`, report `outputs/sessions/REPORT_20261008.md`) is
+**superseded** by the user's revisions of 2026-10-09: refiner prompts r4 (R14), prompts v2 (F16, answer rules from
+the benchmark), tools v3 (K17: AOrchestra's question-based reader in `read_url`; `read_url_text`, `find_in_url`).
+Old checkpoints cannot be restored under them. Next (E5): inspect the validation pass `outputs/sessions/v3-check-*`,
+freeze, record the new baseline (12 × 3) with checkpoints; open items in `docs/decisions.md` (F14, K8–K14, R3);
+more exploration tasks for Exp 1 headroom.
 
 ## Do not bring OWL back
 
@@ -43,8 +45,9 @@ src/minpilot/
   refine/                base.py (InstructionRefiner interface, NoRefiner), review.py (B and C)
   llm/                   specs.py (model keys), client.py (OpenRouter over HTTP, budget, validation)
   runtime/trace.py       records (llm/tool/events), stage tags, budget scopes
-  tools/                 toolbox.py (worker tools), web.py, sandbox.py, backends/cache/blocklist/antibot/documents
-  data/gaia.py, eval/    GAIA loading (no answers), scorer, extraction rule
+  tools/                 toolbox.py (worker tools), web.py, reader.py (read_url's page reader, from AOrchestra),
+                         sandbox.py, backends/cache/blocklist/antibot/documents
+  data/gaia.py, eval/    GAIA loading (no answers), GAIA's answer rules (ANSWER_FORMAT), scorer, extraction rule
 scripts/                 run_task.py, score_runs.py, crawl4ai/, slurm/
 data/splits/             pre-registered task lists (copied from the previous pilot; never redraw)
 docs/                    decisions.md, reuse_from_pilot.md, failure_codebook.md, labelling_protocol.md,
@@ -57,10 +60,13 @@ outputs/, logs/          gitignored run artifacts
 ## Framework in one paragraph
 
 One orchestrator (`luna-high`: no tools, JSON actions) runs a dynamic loop: each turn it either delegates one
-subtask to a **role**, or finishes with the GAIA answer. A role maps to a fixed **executor** worker and to its
+subtask to a **role**, or finishes with the answer (the benchmark's answer rules are passed in; the answer is
+stored as given, with no re-output step). A role maps to a fixed **executor** worker and to its
 **probe workers**. `call_worker(worker_id, original_task, instruction) -> report` is the only way work gets done.
-A worker (`luna`, effort none, with tools) gets the original task and the instruction only, runs a tool loop and
-returns a free-text report; it keeps no state between calls. Before a selected delegation (`refine_at:
+A worker (`luna-high`, effort high, with tools) gets the original task and the instruction only, runs a tool loop and
+returns a free-text report; it keeps no state between calls. Web workers read pages through `read_url(url,
+question)` (a fixed `luna-high` page reader that sees only the page and the question; its calls count toward the
+budgets), with `read_url_text` and `find_in_url` for raw text. Before a selected delegation (`refine_at:
 first|all|none`), the harness passes the draft to the **InstructionRefiner** (the method module).
 - A: none.
 - B: the orchestrator-side model predicts the probe answers itself.
@@ -98,7 +104,8 @@ Run dirs: `outputs/runs/<task_id>/<stamp>_<label>/`, which hold:
 - `refine/d<k>.json`;
 - `scratch/`.
 
-Every record carries a `stage` tag (`orchestrator`, `execution`, `refine.review|probe|followup|analyze|verify|rewrite`).
+Every record carries a `stage` tag (`orchestrator`, `execution`, `refine.review|probe|followup|analyze|verify|rewrite`);
+page-reader calls inside `read_url` also carry `component: reader` and the `tool_call` number.
 
 ## Invariants (from the study design; easy to break)
 
@@ -130,8 +137,10 @@ Every record carries a `stage` tag (`orchestrator`, `execution`, `refine.review|
 
 Keys are in `llm/specs.py`. Each key pins the model id, one provider (no fallbacks), `require_parameters`,
 `data_collection: deny`, the generation cap, sampling and reasoning effort.
-- Defaults: orchestrator and refiner use `luna-high` (GPT-6 Luna, effort high, refuses tools). Workers use `luna`
-  (effort none, the only effort with function calling on Chat Completions).
+- Defaults (2026-10-09, M1): **every role uses `luna-high`** (GPT-6 Luna, effort high): orchestrator, refiner,
+  workers (with tools) and the page reader. Tools at effort high work through OpenRouter's Chat Completions
+  (OpenAI's own Chat Completions would refuse them; M4); runs flag stages without reasoning tokens (`warnings`).
+  `luna` (effort none) is kept for comparisons.
 - `gemini` is the second candidate in the `redundant` pool. Which Gemini model to use is still open.
 - `gpt4o` is available.
 - Every call is cost-reserved before sending, validated (provider, served model, cost) and recorded. Paid tool

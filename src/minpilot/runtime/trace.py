@@ -95,6 +95,10 @@ class BudgetScope:
 _TAGS: contextvars.ContextVar[dict] = contextvars.ContextVar("minpilot_tags", default={})
 
 
+def reasoning_tokens(usage: dict) -> int:
+    return int(((usage or {}).get("completion_tokens_details") or {}).get("reasoning_tokens") or 0)
+
+
 class Trace:
     def __init__(self, run_dir: Path | str | None, limits: Limits | None = None):
         self.run_dir = Path(run_dir) if run_dir else None
@@ -223,6 +227,9 @@ class Trace:
                 b["llm_calls"] = b.get("llm_calls", 0) + 1
                 for k in ("prompt_tokens", "completion_tokens"):
                     b[k] = b.get(k, 0) + (u.get(k) or 0)
+                b["reasoning_tokens"] = b.get("reasoning_tokens", 0) + reasoning_tokens(u)
+                if rec.get("effort") not in (None, "none"):
+                    b["reasoning_calls"] = b.get("reasoning_calls", 0) + 1  # calls that asked for reasoning
                 b["cost_usd"] = b.get("cost_usd", 0.0) + float(u.get("cost") or 0.0)
         self._append("llm_calls.jsonl", rec)
 

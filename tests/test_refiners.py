@@ -225,3 +225,18 @@ def test_rewrite_prompt_names_the_executor_tools(tmp_path, task):
     run.run_fresh()
     text = llm.by_kind["rewrite"][0]["messages"][1]["content"]
     assert "executed by generalist" in text and "web_search" in text
+
+
+def test_r4_analysis_allows_premise_issues_and_rewrite_keeps_the_goal(tmp_path, task):
+    """R14 revised (refiner prompts r4): premises may be questioned; the rewrite turns contradictions into checks
+    and conditional steps, not into an assessment of whether the problem holds."""
+    llm = ScriptedLLM(base_script(worker=["probe answer", "2"]))
+    run = make_run(tmp_path, task, llm, pool="single", refiner="C_probe")
+    run.run_fresh()
+    analyze = llm.by_kind["analyze"][0]["messages"][1]["content"]
+    assert "wrong premises" in analyze and "treat them as given" not in analyze
+    assert "unanswerable" not in analyze and "one intended answer" not in analyze
+    rewrite_text = llm.by_kind["rewrite"][0]["messages"][1]["content"]
+    assert "correct the instruction where it conflicts with the original task" in rewrite_text
+    assert "into an assessment of whether the problem holds" in rewrite_text
+    assert "most plausible intended reading" not in rewrite_text

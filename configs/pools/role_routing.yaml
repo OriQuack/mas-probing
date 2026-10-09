@@ -3,14 +3,14 @@
 name: role_routing
 workers:
   - id: web_luna
-    model: luna
-    tools: [web_search, read_url, run_python]
+    model: luna-high
+    tools: [web_search, read_url, read_url_text, find_in_url, run_python]
     max_tool_calls: 20
     system_prompt: |
       You are a web research worker. You find information on the web, read the relevant pages and documents
       carefully, and report what they say with their sources.
   - id: file_luna
-    model: luna
+    model: luna-high
     tools: [read_file, view_image, run_python]
     max_tool_calls: 20
     system_prompt: |

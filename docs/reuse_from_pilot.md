@@ -23,6 +23,12 @@ were deliberately left behind. Check it before copying anything else over.
 | `docs/failure_codebook.md`, `docs/labelling_protocol.md` | `docs/failure_codebook.md`, session `labels/PROTOCOL.md` | Objectivity rules and implementation-induced categories kept; actors, categories and fields re-defined for min_pilot (decision L2) |
 | `scripts/run_batch.py` | `scripts/run_batch.py` (idea only) | Written new: subprocess per run, rep-major, session cost cap |
 
+## Taken from other projects
+
+| min_pilot | From | Change |
+|---|---|---|
+| `tools/reader.py` (`read_url`'s page reader, tools v3) | AOrchestra `benchmark/gaia/tools/extract_url_jina.py` @ 14a1a20 (Apache-2.0) | Prompts and long-text splitting kept verbatim; fetching (our chain instead of Jina), model (`luna` instead of deepseek-reasoner), budget/trace accounting and output text are ours (decision K17). Only the reader is taken, not AOrchestra's worker scaffold |
+
 ## Not carried over (OWL-specific)
 
 - **Roles:** the Planner / Coordinator / answerer split. Here one orchestrator decides, delegates and answers.

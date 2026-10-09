@@ -1,11 +1,17 @@
-"""Web tools for workers: `web_search` and `read_url` (with an optional `date` for an archived snapshot).
+"""Web tools for workers: `web_search`, and three ways to read a page (each with an optional `date` for an archived
+snapshot):
+- `read_url(url, question)`: a reader model answers the question from the page's full text (tools v3; reader.py,
+  adapted from AOrchestra's reader);
+- `read_url_text(url, page)`: the raw text, in fixed-size pages (tools v1-v2 `read_url`);
+- `find_in_url(url, text)`: every occurrence of a string, with surrounding text and its page number.
+All three get the page through the same path (`_fetch_doc`: cache, blocklist, reader chain, Wayback).
 
 One `WebTools` per run, shared by every worker and every workspace of the run (it touches no files). It owns the
 fallback chains (backends.py), the per-run search-backend pin, the shared result cache (frozen on first success,
 so restored runs see identical results for identical queries/URLs), paid-credit accounting and the GAIA-answer
 blocklist. The agent never sees which backend served a result; tool records always do.
 
-The machinery (_call, _search, _read, page_issue, _paged) is the previous pilot's tools v3, unchanged in
+The machinery (_call, _search, _read, page_issue, paged) is the previous pilot's tools v3, unchanged in
 behaviour. Tool names, signatures and descriptions are new (not OWL's).
 """
 
@@ -53,6 +59,7 @@ class WebTools:
         self.wayback = wayback or WaybackBackend(self.cfg)
         self.pinned_search: str | None = None
         self.blocked_urls: set[str] = set()
+        self.reader = None  # tools.reader.PageReader, set by the harness (it needs the run's model client)
         self._lock = threading.Lock()
 
     def fork(self) -> "WebTools":
@@ -114,33 +121,89 @@ class WebTools:
             rec["error"] = repr(e)
             return f"Error: search failed ({type(e).__name__}).", rec
 
-    def read_url(self, url: str, page: int = 1, date: str | None = None,
-                 allowed: tuple[str, ...] = ()) -> tuple[str, dict]:
+    def read_url_text(self, url: str, page: int = 1, date: str | None = None,
+                      allowed: tuple[str, ...] = ()) -> tuple[str, dict]:
         rec = self._new_record()
         try:
-            url = url.strip()
-            if not re.match(r"^https?://", url):
-                return "Error: url must start with http:// or https://. Use read_file for local files.", rec
-            if date and _WAYBACK_SNAPSHOT.search(url):
-                date = None  # already a snapshot URL: read it as is (looking up a snapshot of it finds nothing)
-            if date:
-                date = str(date).strip()
-                if not re.fullmatch(r"\d{4}(\d{2}(\d{2})?)?", date):
-                    return "Error: date must be in YYYYMMDD format.", rec
-                snap = self._snapshot(url, date, rec)
-                if isinstance(snap, str):
-                    return snap, rec
-                url = snap["snapshot_url"]
-            doc = self._read(url, rec, allowed)
-            if doc is None:
-                rec["error"] = "all_readers_failed"
-                return "Error: could not retrieve this page. Try a different source.", rec
-            if doc.get("blocked"):
-                return BLOCKED_MESSAGE, rec
-            return self._paged(doc, page, url), rec
+            doc = self._fetch_doc(url, date, rec, allowed)
+            if isinstance(doc, str):
+                return doc, rec
+            return paged(doc, page, self.cfg.page_chars, "read_url_text", doc["url"]), rec
         except Exception as e:
             rec["error"] = repr(e)
             return f"Error: reading the page failed ({type(e).__name__}: {e}).", rec
+
+    def read_url(self, url: str, question: str, date: str | None = None,
+                 allowed: tuple[str, ...] = ()) -> tuple[str, dict]:
+        """The question-based reader (tools v3). Budget and infrastructure errors of the reader model propagate
+        (they end the run like any other model call); everything else comes back to the worker as text."""
+        rec = self._new_record()
+        question = str(question or "").strip()
+        rec["question"] = question
+        if not question:
+            rec["error"] = "invalid_arguments: empty question"
+            return "Error: give a `question` about the page (for the raw text use read_url_text).", rec
+        if self.reader is None:
+            rec["error"] = "no_reader"
+            return "Error: the page reader is not available.", rec
+        try:
+            doc = self._fetch_doc(url, date, rec, allowed)
+        except Exception as e:
+            rec["error"] = repr(e)
+            return f"Error: reading the page failed ({type(e).__name__}: {e}).", rec
+        if isinstance(doc, str):
+            return doc, rec
+        answer, info = self.reader.answer(doc["text"], question)
+        rec["reader"] = info
+        if answer is None:
+            rec["error"] = f"reader_failed: {info.get('error')}"
+            return ("Error: the page reader failed on this page. Try again, or use read_url_text / find_in_url.",
+                    rec)
+        parts = f", in {info['n_parts']} parts" if info["n_parts"] > 1 else ""
+        lines = doc_header(doc) + [f"Question: {question}",
+                                   f"Answer of the page reader (it read the whole text, {len(doc['text'])} characters"
+                                   f"{parts}, and saw only the text and the question):", "", answer]
+        return "\n".join(lines), rec
+
+    def find_in_url(self, url: str, text: str, date: str | None = None,
+                    allowed: tuple[str, ...] = ()) -> tuple[str, dict]:
+        rec = self._new_record()
+        try:
+            needle = " ".join(str(text or "").split())
+            rec["find"] = needle
+            if not needle:
+                rec["error"] = "invalid_arguments: empty text"
+                return "Error: give the `text` to find.", rec
+            doc = self._fetch_doc(url, date, rec, allowed)
+            if isinstance(doc, str):
+                return doc, rec
+            return find_text(doc, needle, self.cfg), rec
+        except Exception as e:
+            rec["error"] = repr(e)
+            return f"Error: searching the page failed ({type(e).__name__}: {e}).", rec
+
+    def _fetch_doc(self, url: str, date: str | None, rec: dict, allowed: tuple[str, ...]) -> dict | str:
+        """The page as a cached document dict, or the error text the agent sees (rec is updated either way)."""
+        url = str(url or "").strip()
+        if not re.match(r"^https?://", url):
+            return "Error: url must start with http:// or https://. Use read_file for local files."
+        if date and _WAYBACK_SNAPSHOT.search(url):
+            date = None  # already a snapshot URL: read it as is (looking up a snapshot of it finds nothing)
+        if date:
+            date = str(date).strip()
+            if not re.fullmatch(r"\d{4}(\d{2}(\d{2})?)?", date):
+                return "Error: date must be in YYYYMMDD format."
+            snap = self._snapshot(url, date, rec)
+            if isinstance(snap, str):
+                return snap
+            url = snap["snapshot_url"]
+        doc = self._read(url, rec, allowed)
+        if doc is None:
+            rec["error"] = "all_readers_failed"
+            return "Error: could not retrieve this page. Try a different source."
+        if doc.get("blocked"):
+            return BLOCKED_MESSAGE
+        return {**doc, "url": doc.get("url") or url}
 
     # -- internals ---------------------------------------------------------------------------
     @staticmethod
@@ -315,8 +378,14 @@ class WebTools:
             return {"blocked": reason}
         return cached
 
-    def _paged(self, doc: dict, page: int, ref: str) -> str:
-        return paged(doc, page, self.cfg.page_chars, "read_url", ref)
+
+def doc_header(doc: dict) -> list[str]:
+    header = [f"Source: {doc['url']}"]
+    if doc.get("title"):
+        header.append(f"Title: {doc['title']}")
+    if snap := _snapshot_date(doc["url"]):
+        header.append(f"Archived snapshot (Wayback Machine) taken on {snap}; the page may have changed since.")
+    return header
 
 
 def paged(doc: dict, page: Any, size: int, tool: str, ref: str) -> str:
@@ -329,11 +398,26 @@ def paged(doc: dict, page: Any, size: int, tool: str, ref: str) -> str:
     if page < 1 or page > n_pages:
         return f"Error: page {page} out of range; this document has {n_pages} page(s)."
     start = (page - 1) * size
-    header = [f"Source: {doc['url']}"]
-    if doc.get("title"):
-        header.append(f"Title: {doc['title']}")
-    if snap := _snapshot_date(doc["url"]):
-        header.append(f"Archived snapshot (Wayback Machine) taken on {snap}; the page may have changed since.")
+    header = doc_header(doc)
     header.append(f"Page {page} of {n_pages} (characters {start}-{min(start + size, len(text))} of {len(text)})."
                   + (f" Call {tool} with page={page + 1} for more." if page < n_pages else ""))
     return "\n".join(header) + "\n\n" + text[start:start + size]
+
+
+def find_text(doc: dict, needle: str, cfg: ToolConfig) -> str:
+    """Case-insensitive search for `needle` (any whitespace between its words) in the document's text."""
+    text = doc["text"]
+    pattern = re.compile(r"\s+".join(re.escape(w) for w in needle.split()), re.IGNORECASE)
+    hits = list(pattern.finditer(text))
+    n_pages = max(1, -(-len(text) // cfg.page_chars))
+    lines = doc_header(doc) + [f'{len(hits)} occurrence(s) of "{needle}" in {len(text)} characters '
+                               f"({n_pages} page(s) of read_url_text)."]
+    ctx = cfg.find_context_chars
+    for i, m in enumerate(hits[:cfg.find_max_matches], 1):
+        a, b = max(0, m.start() - ctx), min(len(text), m.end() + ctx)
+        snippet = " ".join(text[a:b].split())
+        lines.append(f"\n[{i}] page {m.start() // cfg.page_chars + 1}, character {m.start()}:\n"
+                     f"{'...' if a else ''}{snippet}{'...' if b < len(text) else ''}")
+    if len(hits) > cfg.find_max_matches:
+        lines.append(f"\n(Showing the first {cfg.find_max_matches}; search for a longer string to narrow it down.)")
+    return "\n".join(lines)

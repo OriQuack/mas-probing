@@ -6,8 +6,13 @@ Ported from the previous pilot's `models/openrouter.py` (the OpenRouter part onl
 - exactly one provider, no fallbacks, `require_parameters`, `data_collection: deny` (a base provider slug matches
   the provider's default endpoints, never its service tiers);
 - the generation cap (`max_tokens`), sampling, and for reasoning models a fixed `reasoning` setting;
-- `tools_allowed`: GPT-6 Luna on Chat Completions allows function calling only at reasoning effort `none`, so the
-  effort-high key refuses requests with tools (its callers use JSON-schema structured output instead).
+- `tools_allowed`: whether requests may carry tools. On OpenAI's own Chat Completions API, GPT-6 Luna allows
+  function calling only at effort `none` (reasoning with tools needs the Responses API). Through OpenRouter's Chat
+  Completions, tools + effort high work (checked live 2026-10-09: reasoning tokens > 0 with tools at medium/high,
+  multi-turn tool loops with encrypted reasoning re-sent); the responses look like OpenAI Responses API output
+  (`native_finish_reason: completed`, `reasoning.encrypted`), i.e. OpenRouter appears to translate the request.
+  This is undocumented OpenRouter behaviour: runs record reasoning tokens per stage and warn when an effort-high
+  stage shows none (harness, decision M4).
 No OpenRouter response caching and no web plugins: reruns must resample, and no uncontrolled search tool.
 """
 
@@ -54,16 +59,18 @@ MAX_TOKENS_REASONING = 32768
 SPECS: dict[str, ModelSpec] = {
     "luna-high": ModelSpec(
         key="luna-high", model="openai/gpt-6-luna-20260922", provider="openai", max_tokens=MAX_TOKENS_REASONING,
-        reasoning={"effort": "high"}, tools_allowed=False, price_prompt=1e-7, price_completion=5e-7,
+        reasoning={"effort": "high"}, preserve_reasoning=True, price_prompt=1e-7, price_completion=5e-7,
         image_tokens="patch:1.2",
-        note="GPT-6 Luna at effort high. No tools (Chat Completions refuses function calling at efforts other "
-             "than none). Orchestrator and refiner: actions and analyses come as strict JSON-schema output."),
+        note="GPT-6 Luna at effort high: every role since 2026-10-09 (orchestrator, refiner, workers, page reader; "
+             "decision M1). Tools allowed through OpenRouter (see tools_allowed above). Workers re-send the "
+             "encrypted reasoning of their earlier turns; the orchestrator keeps only its action JSON."),
     "luna": ModelSpec(
         key="luna", model="openai/gpt-6-luna-20260922", provider="openai", max_tokens=MAX_TOKENS,
         reasoning={"effort": "none"}, preserve_reasoning=True, price_prompt=1e-7, price_completion=5e-7,
         image_tokens="patch:1.2",
-        note="GPT-6 Luna at effort none (0 reasoning tokens): the only effort with function calling on Chat "
-             "Completions. Sampling fixed by OpenAI (stochastic). Knowledge cutoff 2026-05-18."),
+        note="GPT-6 Luna at effort none (0 reasoning tokens). The worker default until 2026-10-09 (it was believed "
+             "to be the only effort with function calling); kept for comparisons. Sampling fixed by OpenAI "
+             "(stochastic). Knowledge cutoff 2026-05-18."),
     "gpt4o": ModelSpec(
         key="gpt4o", model="openai/gpt-4o-2024-08-06", provider="openai", max_tokens=MAX_TOKENS,
         context_window=128_000 - MAX_TOKENS - 8192, sampling={"temperature": 1.0, "top_p": 1.0},

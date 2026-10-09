@@ -52,9 +52,12 @@ class ToolConfig:
     # (cached results are frozen on first success and would keep serving the old behaviour).
     # v1 (2026-10-08): the previous pilot's tools v3 behaviour under new tool names (web_search, read_url,
     #     read_file, view_image, run_python); no Wikipedia tools, no browser agent.
-    tools_version: str = "v2"
+    # v2 (2026-10-08): docx order, error statuses, blocklist fixes (docs/decisions.md K6).
+    # v3 (2026-10-09): read_url(url, question) = question-based page reader (AOrchestra's, reader.py);
+    #     raw pages move to read_url_text; new find_in_url (decisions K17, K7).
+    tools_version: str = "v3"
     blocklist_version: str = BLOCKLIST_VERSION
-    cache_path: Path = REPO_ROOT / "outputs" / "cache" / "tools_v2.sqlite"
+    cache_path: Path = REPO_ROOT / "outputs" / "cache" / "tools_v3.sqlite"
     # Page readers, in fallback order (names: crawl4ai, direct, playwright).
     reader_chain: tuple[str, ...] = ("crawl4ai", "direct", "playwright")
     crawl4ai_endpoint: Path = field(default_factory=_crawl4ai_endpoint)
@@ -63,6 +66,16 @@ class ToolConfig:
     user_agent: str = (
         "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
     )
+    # read_url's page reader (K17): a fixed model and AOrchestra's long-text rule (cl100k tokens, parts of at most
+    # 95,000 tokens + 1,024 overlap). The same for every condition; its calls count toward the run's budgets.
+    reader_model: str = "luna-high"  # effort high like every role (M1); `luna` (none) in v3-check
+    reader_encoding: str = "cl100k_base"
+    reader_part_tokens: int = 95_000
+    reader_overlap_tokens: int = 1_024
+    reader_max_parallel: int = 4  # parts answered at once (speed only; answers do not depend on it)
+    # find_in_url: characters of context on each side of a match, and matches shown
+    find_context_chars: int = 300
+    find_max_matches: int = 20
     # run_python
     code_timeout_s: float = 60.0
     max_code_output_chars: int = 40_000

@@ -41,7 +41,7 @@ from minpilot.agents import prompts
 from minpilot.agents.orchestrator import Action, InvalidAction, Orchestrator
 from minpilot.agents.worker import Worker, WorkerCall
 from minpilot.config import RefinerConfig, RunConfig, run_config_from_dict
-from minpilot.data.gaia import GaiaTask
+from minpilot.data.gaia import ANSWER_FORMAT, GaiaTask
 from minpilot.llm.client import LLMClient, Transport, json_schema_format
 from minpilot.llm.specs import get_spec
 from minpilot.refine.base import RefineRequest, RefineResult, make_refiner
@@ -49,6 +49,7 @@ from minpilot.runtime.costs import COSTS_VERSION, TOOL_USD_PER_CREDIT
 from minpilot.runtime.trace import BudgetExceeded, InfraError, Trace
 from minpilot.tools.config import REPO_ROOT, ToolConfig
 from minpilot.tools.crawl4ai_service import same_identity
+from minpilot.tools.reader import PageReader
 from minpilot.tools.toolbox import Toolbox
 from minpilot.tools.web import WebTools
 
@@ -102,8 +103,8 @@ def escaping_symlinks(root: Path) -> list[str]:
 
 
 # ToolConfig fields that do not change what a tool returns: where the cache file and the reader service live,
-# and the blocklist version (checked separately: a newer blocklist may continue an older checkpoint, T8).
-TOOL_IDENTITY_EXCLUDE = ("cache_path", "crawl4ai_endpoint", "blocklist_version")
+# how many reader parts run at once, and the blocklist version (checked separately: a newer blocklist may continue an older checkpoint, T8).
+TOOL_IDENTITY_EXCLUDE = ("cache_path", "crawl4ai_endpoint", "blocklist_version", "reader_max_parallel")
 
 
 def tool_identity(tools: dict) -> dict:
@@ -121,6 +122,17 @@ def code_hash() -> str:
 
 def _version_num(v: str) -> int:
     return int("".join(c for c in str(v) if c.isdigit()) or 0)
+
+
+# Effort-high calls with tools rely on undocumented OpenRouter behaviour (llm/specs.py, decision M4): a stage whose
+# reasoning calls all report zero reasoning tokens is flagged (single calls may legitimately use none).
+MIN_CALLS_FOR_REASONING_WARNING = 3
+
+
+def reasoning_warnings(usage: dict) -> list[str]:
+    return [f"no reasoning tokens in stage {stage!r} ({b['reasoning_calls']} effort>none calls)"
+            for stage, b in sorted(usage.items())
+            if b.get("reasoning_calls", 0) >= MIN_CALLS_FOR_REASONING_WARNING and not b.get("reasoning_tokens")]
 
 
 def original_task_of(task: GaiaTask) -> str:
@@ -142,9 +154,13 @@ class Run:
         self.transport = transport
         self.clients: dict[str, LLMClient] = {}
         self.web = web or WebTools(self.tool_cfg, question=task.question)
+        if self.web.reader is None:  # read_url's page reader: a fixed model on the run's client and budgets
+            self.web.reader = PageReader(self.client(self.tool_cfg.reader_model), self.tool_cfg)
         self.toolbox: Toolbox | None = None
         self.workers = {wid: Worker(spec, self.client(spec.model)) for wid, spec in cfg.pool.workers.items()}
-        self.orchestrator = Orchestrator(self.client(cfg.orchestrator_model), self.role_list(), cfg.max_delegations)
+        # the answer rules come from the benchmark (GAIA's own), not from the framework
+        self.orchestrator = Orchestrator(self.client(cfg.orchestrator_model), self.role_list(), cfg.max_delegations,
+                                         answer_format=ANSWER_FORMAT)
         self.refiner = make_refiner(cfg.refiner)
         self.messages: list[dict] = []
         self.delegations: list[dict] = []
@@ -162,7 +178,8 @@ class Run:
                 for r in self.cfg.pool.roles.values()]
 
     def model_identities(self) -> dict:
-        keys = {self.cfg.orchestrator_model, self.cfg.refiner_model, *(w.model for w in self.cfg.pool.workers.values())}
+        keys = {self.cfg.orchestrator_model, self.cfg.refiner_model, self.tool_cfg.reader_model,
+                *(w.model for w in self.cfg.pool.workers.values())}
         return {k: get_spec(k).identity() for k in sorted(keys)}
 
     def _setup_workspace(self) -> None:
@@ -316,7 +333,9 @@ class Run:
                                  instruction=action.instruction, answer=action.answer, rationale=action.rationale,
                                  forced=must_finish, invalid_before=self.orchestrator.last_invalid)
                 if action.kind == "finish":
-                    self.info["forced_finish"] = must_finish
+                    # the answer is kept exactly as given (scoring extracts separately); the rationale is kept for
+                    # post-hoc reading of qualified answers (decisions F16)
+                    self.info.update(forced_finish=must_finish, final_rationale=action.rationale)
                     return action.answer, "ok"
                 if self.cfg.checkpoint:
                     self.save_checkpoint(action, k)
@@ -371,10 +390,11 @@ class Run:
         self.messages.append({"role": "user", "content": prompts.report_message(role.id, k, call.report, sent)})
 
     def _finish(self, status: str, **extra) -> dict:
-        self.trace.event("run_end", status=status)
+        warnings = reasoning_warnings(self.trace.usage)
+        self.trace.event("run_end", status=status, warnings=warnings)
         self._write_run_json(status=status, ended_at=time.time(), n_delegations=len(self.delegations),
                              delegations=self.delegations, usage=self.trace.usage,
-                             counters=self.trace.run_scope.counters(), **extra)
+                             counters=self.trace.run_scope.counters(), warnings=warnings, **extra)
         return self.info
 
     # -- checkpoints -------------------------------------------------------------------------

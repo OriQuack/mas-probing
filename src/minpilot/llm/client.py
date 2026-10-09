@@ -151,7 +151,8 @@ class LLMClient:
             base = {"call_id": call_id, "attempt": attempt, "model_key": self.spec.key, "model": self.spec.model,
                     "messages": hashes, "n_tools": len(tools or []), "tool_choice": tool_choice,
                     "response_format": (response_format or {}).get("json_schema", {}).get("name"),
-                    "n_images": _count_images(messages), "reserve_usd": reserve}
+                    "n_images": _count_images(messages), "reserve_usd": reserve,
+                    "effort": (self.spec.reasoning or {}).get("effort")}
             self.trace.llm({**base, "status": "started"})
             t0 = time.monotonic()
             try:

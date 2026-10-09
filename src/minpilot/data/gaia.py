@@ -22,6 +22,16 @@ AV_EXTENSIONS = frozenset({"mp3", "wav", "m4a", "flac", "ogg", "mp4", "mov", "av
 VIDEO_QUESTION_RE = re.compile(r"youtube|youtu\.be|\bvideos?\b(?!\s*games?)", re.IGNORECASE)
 
 
+# GAIA's answer rules (from the GAIA paper's system prompt). The harness passes them to the orchestrator: they belong
+# to the benchmark, not to the framework (a port to another benchmark passes that benchmark's rules).
+ANSWER_FORMAT = (
+    "The final answer should be a number OR as few words as possible OR a comma separated list of numbers and/or "
+    "strings. If you are asked for a number, don't use commas to write your number, nor units such as $ or "
+    "percent sign unless specified otherwise. If you are asked for a string, don't use articles nor abbreviations "
+    "(e.g. for cities), and write digits in plain text unless specified otherwise. If you are asked for a comma "
+    "separated list, apply the above rules depending on whether each element is a number or a string.")
+
+
 @dataclass(frozen=True)
 class GaiaTask:
     task_id: str

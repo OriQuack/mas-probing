@@ -6,8 +6,11 @@
 For each run: the run header (task, condition, status, final answer, cost), then every orchestrator action,
 checkpoint, refinement step and worker call, with each model request's new input messages (system prompts,
 instructions, tool results) and its output (text and tool calls). Image data is replaced by a placeholder.
+Page-reader calls inside `read_url` (tools v3) are shown short: the start and end of the request (the end holds
+the question) and the reader's answer; the full page text is in messages.jsonl (hash given).
 Reads only the run directory (never ground truth), so it is safe to give its output to labellers.
 """
+
 
 from __future__ import annotations
 
@@ -15,6 +18,8 @@ import argparse
 import json
 import sys
 from pathlib import Path
+
+READER_HEAD, READER_TAIL = 600, 400  # characters of a page-reader request shown in the transcript
 
 
 def _load(path: Path) -> list[dict]:
@@ -117,6 +122,24 @@ def render(run_dir: Path, max_chars: int) -> str:
                 out.append(f"## [event] {ev}: {_clip(json.dumps(rest, ensure_ascii=False, default=str), 3000)}")
             out.append("")
             continue
+        if r.get("component") == "reader":
+            out.append(f"### page-reader call {r.get('call_id')} inside tool call #{r.get('tool_call')} "
+                       f"[{_where(r)}] model={r.get('model_key')} status={r.get('status')} "
+                       f"finish={r.get('finish_reason')}")
+            for h in r.get("messages") or []:
+                text = _content_text(msgs.get(h, {}).get("content"), 10**9)
+                if len(text) > READER_HEAD + READER_TAIL:
+                    text = (text[:READER_HEAD] + f"\n[... {len(text) - READER_HEAD - READER_TAIL} characters of page "
+                            f"text not shown; full request: messages.jsonl h={h} ...]\n" + text[-READER_TAIL:])
+                out.append("--- request (page text + question):")
+                out.append(text)
+            out.append(f"--- ERROR: {r.get('error')}" if r.get("status") == "error" else "--- output:")
+            if r.get("status") != "error":
+                out.append(_clip(r.get("output") or "", max_chars))
+            u = r.get("usage") or {}
+            out.append(f"(tokens in/out {u.get('prompt_tokens')}/{u.get('completion_tokens')}, cost {u.get('cost')})")
+            out.append("")
+            continue
         out.append(f"### LLM call {r.get('call_id')} [{_where(r)}] model={r.get('model_key')} "
                    f"status={r.get('status')} finish={r.get('finish_reason')}")
         for h in r.get("messages") or []:
@@ -158,6 +181,9 @@ def render(run_dir: Path, max_chars: int) -> str:
                 extra = f" error={_clip(str(t['error']), 300)}"
             if t.get("sandbox_denied"):
                 extra += f" sandbox_denied={t['sandbox_denied']}"
+            if rd := t.get("reader"):
+                extra += (f" reader(parts={rd.get('n_parts')}, source_chars={rd.get('source_chars')}, "
+                          f"usd={rd.get('usd')})")
             out.append(f"- [{_where(t)}] {t.get('tool')} #{t.get('call_no')} {json.dumps(t.get('args'), ensure_ascii=False)[:300]}"
                        f" -> {t.get('status')} backend={t.get('backend')}{extra}")
     refine_dir = run_dir / "refine"

@@ -208,3 +208,15 @@ def test_symlinks_are_part_of_the_fingerprint(tmp_path, task):
     with pytest.raises(ValueError, match="symlinks leading outside"):
         Run.restore(ck, tmp_path / "r2", task=task, transport=ScriptedLLM({}), web=fake_web(tmp_path),
                     tool_cfg=ToolConfig(cache_path=tmp_path / "cache.sqlite"))
+
+
+def test_answer_rules_come_from_the_benchmark_and_answer_is_kept(tmp_path, task):
+    from minpilot.data.gaia import ANSWER_FORMAT
+
+    llm = ScriptedLLM({"orchestrator": [{**finish("2"), "rationale": "two ids, if 2025 means the calendar year"}]})
+    run = make_run(tmp_path, task, llm)
+    info = run.run_fresh()
+    system = llm.by_kind["orchestrator"][0]["messages"][0]["content"]
+    assert ANSWER_FORMAT in system and "Do not add explanations, conditions, caveats" in system
+    assert info["final_answer"] == "2" and info["final_rationale"].startswith("two ids")
+    assert set(info["models"]) == {"luna-high"}  # every role, the page reader included (M1)

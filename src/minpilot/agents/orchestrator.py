@@ -34,17 +34,19 @@ class Action:
 
 
 class Orchestrator:
-    def __init__(self, client: LLMClient, roles: list[dict], max_delegations: int, max_invalid: int = 2):
+    def __init__(self, client: LLMClient, roles: list[dict], max_delegations: int, max_invalid: int = 2, *,
+                 answer_format: str):
         self.client = client
         self.roles = {r["id"]: r for r in roles}
         self.max_delegations = max_delegations
+        self.answer_format = answer_format  # the benchmark's answer rules
         self.max_invalid = max_invalid
         self.format = json_schema_format("orchestrator_action", prompts.ORCHESTRATOR_ACTION_SCHEMA)
         self.last_invalid: list[str] = []
 
     def initial_messages(self, original_task: str) -> list[dict]:
         return [{"role": "system", "content": prompts.orchestrator_system(list(self.roles.values()),
-                                                                           self.max_delegations)},
+                                                                           self.max_delegations, self.answer_format)},
                 {"role": "user", "content": prompts.orchestrator_task_message(original_task)}]
 
     def next_action(self, messages: list[dict], must_finish: bool = False) -> Action:

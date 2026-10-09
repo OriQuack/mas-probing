@@ -10,6 +10,8 @@ beautifulsoup4
 lxml
 ddgs
 playwright
+# page reader (read_url): token-based chunking as in AOrchestra's reader
+tiktoken
 # documents
 pymupdf
 python-docx

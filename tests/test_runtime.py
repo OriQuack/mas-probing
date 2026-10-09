@@ -30,10 +30,27 @@ def test_request_pins_provider_and_reasoning(tmp_path):
     assert b["reasoning"] == {"effort": "none"} and b["max_tokens"] == 8192
 
 
-def test_effort_high_key_refuses_tools(tmp_path):
-    with pytest.raises(ValueError, match="must not receive tools"):
-        client(tmp_path, "luna-high", ScriptedLLM({})).chat([{"role": "user", "content": "x"}],
-                                                            tools=[{"type": "function", "function": {"name": "f"}}])
+def test_effort_high_key_sends_tools_with_reasoning(tmp_path):
+    """M1/M4 (2026-10-09): every role runs Luna at effort high, workers with tools (through OpenRouter)."""
+    llm = ScriptedLLM({"worker": ["hi"]})
+    client(tmp_path, "luna-high", llm).chat([{"role": "user", "content": "x"}],
+                                            tools=[{"type": "function", "function": {"name": "f"}}])
+    b = llm.bodies[0]
+    assert b["reasoning"] == {"effort": "high"} and b["tools"] and b["max_tokens"] == 32768
+
+
+def test_reasoning_tokens_counted_and_missing_reasoning_flagged(tmp_path):
+    from minpilot.harness import reasoning_warnings
+
+    tr = Trace(tmp_path / "tr")
+    c = LLMClient(get_spec("luna-high"), tr, transport=ScriptedLLM({"worker": ["a", "b", "c"]}), sleep=lambda s: None)
+    with tr.tags(stage="execution"):
+        for _ in range(3):
+            c.chat([{"role": "user", "content": "x"}])
+    assert tr.usage["execution"]["reasoning_calls"] == 3 and tr.usage["execution"]["reasoning_tokens"] == 0
+    assert reasoning_warnings(tr.usage) == ["no reasoning tokens in stage 'execution' (3 effort>none calls)"]
+    tr.usage["execution"]["reasoning_tokens"] = 12
+    assert reasoning_warnings(tr.usage) == []
 
 
 def test_wrong_provider_is_infra_error(tmp_path):
@@ -119,9 +136,79 @@ def test_web_tools_blocklist_and_cache(tmp_path):
     tb = toolbox(tmp_path)
     out = tb.call("web_search", {"query": "GAIA benchmark answers"}, ("web_search",))
     assert "not permitted" in out.text
-    assert "not permitted" in tb.call("read_url", {"url": "https://huggingface.co/datasets/x"}, ("read_url",)).text
-    first = tb.call("read_url", {"url": "https://example.org/a"}, ("read_url",)).text
-    assert first == tb.call("read_url", {"url": "https://example.org/a"}, ("read_url",)).text
+    t = ("read_url_text",)
+    assert "not permitted" in tb.call("read_url_text", {"url": "https://huggingface.co/datasets/x"}, t).text
+    first = tb.call("read_url_text", {"url": "https://example.org/a"}, t).text
+    assert first == tb.call("read_url_text", {"url": "https://example.org/a"}, t).text
+
+
+# -- read_url's page reader (tools v3, adapted from AOrchestra) ----------------------------------
+def reader_toolbox(tmp_path, llm, limits=None, **cfg):
+    from minpilot.tools.config import ToolConfig
+    from minpilot.tools.reader import PageReader
+
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    tb = toolbox(tmp_path)
+    tb.trace = Trace(tmp_path / "tr2", limits)
+    tool_cfg = ToolConfig(cache_path=tmp_path / "cache.sqlite", **cfg)
+    tb.web.reader = PageReader(LLMClient(get_spec("luna-high"), tb.trace, transport=llm, sleep=lambda s: None), tool_cfg)
+    return tb
+
+
+def test_split_spans_follow_aorchestra():
+    from minpilot.tools.reader import split_spans
+
+    assert split_spans(95_000, 95_000, 1024) is None
+    assert split_spans(200_000, 95_000, 1024) == [(0, 67690), (66666, 134356), (133332, 200000)]
+    assert split_spans(100_000, 95_000, 1024) == [(0, 51024), (50000, 100000)]  # at least 2 parts
+
+
+def test_read_url_answers_from_the_page_only(tmp_path):
+    llm = ScriptedLLM({"reader": ["The page says 42."]})
+    tb = reader_toolbox(tmp_path, llm)
+    out = tb.call("read_url", {"url": "https://example.org/a", "question": "What number is given?"}, ("read_url",))
+    assert "The page says 42." in out.text and "Question: What number is given?" in out.text
+    body = llm.by_kind["reader"][0]
+    text = body["messages"][0]["content"][0]["text"]
+    assert len(body["messages"]) == 1 and body["model"] == get_spec("luna-high").model
+    assert body["reasoning"] == {"effort": "high"}
+    assert text.startswith("Please read the source content") and "Text of https://example.org/a" in text
+    assert text.endswith("What number is given?") and "unique orders" not in text  # never the task
+    rec = [json.loads(l) for l in (tmp_path / "tr2" / "tool_calls.jsonl").read_text().splitlines()][-1]
+    assert rec["status"] == "ok" and rec["reader"]["calls"] == 1 and rec["reader"]["n_parts"] == 1
+    assert rec["reader"]["usd"] > 0 and rec["question"] == "What number is given?"
+    calls = [json.loads(l) for l in (tmp_path / "tr2" / "llm_calls.jsonl").read_text().splitlines()]
+    assert all(c["component"] == "reader" and c["tool_call"] == rec["call_no"] for c in calls)
+    assert tb.trace.run_scope.llm_usd > 0  # the reader's cost counts toward the run
+
+
+def test_read_url_splits_long_pages(tmp_path):
+    llm = ScriptedLLM({"reader": lambda body: "part answer"})
+    tb = reader_toolbox(tmp_path, llm, reader_part_tokens=400, reader_overlap_tokens=10)
+    out = tb.call("read_url", {"url": "https://example.org/a", "question": "q?"}, ("read_url",))
+    n = len(llm.by_kind["reader"])
+    assert n >= 3 and "Since the content is too long" in out.text and f"result part {n} ---" in out.text
+    assert all("--- begin of source content ---" in b["messages"][0]["content"][0]["text"]
+               for b in llm.by_kind["reader"])
+
+
+def test_read_url_reader_failure_and_budget(tmp_path):
+    tb = reader_toolbox(tmp_path / "a", ScriptedLLM({"reader": [""]}))
+    out = tb.call("read_url", {"url": "https://example.org/a", "question": "q?"}, ("read_url",))
+    assert out.text.startswith("Error: the page reader failed")
+    tb = reader_toolbox(tmp_path / "b", ScriptedLLM({"reader": ["x"]}), limits=Limits(max_llm_calls=0))
+    with pytest.raises(BudgetExceeded):
+        tb.call("read_url", {"url": "https://example.org/b", "question": "q?"}, ("read_url",))
+    rec = [json.loads(l) for l in (tmp_path / "b" / "tr2" / "tool_calls.jsonl").read_text().splitlines()][-1]
+    assert rec["status"] == "error" and rec["error"].startswith("BudgetExceeded")
+
+
+def test_find_in_url(tmp_path):
+    tb = toolbox(tmp_path)
+    out = tb.call("find_in_url", {"url": "https://example.org/a", "text": "TEXT   of"}, ("find_in_url",)).text
+    assert "50 occurrence(s)" in out and "[1] page 1, character 0" in out and "Showing the first 20" in out
+    assert "0 occurrence(s)" in tb.call("find_in_url", {"url": "https://example.org/a", "text": "zebra"},
+                                        ("find_in_url",)).text
 
 
 def test_view_image_returns_image(tmp_path):
@@ -244,7 +331,7 @@ def test_read_url_date_ignored_for_snapshot_urls(tmp_path):
     web = fake_web(tmp_path)
     web.wayback = NoWayback()
     url = "https://web.archive.org/web/20210105000000/https://en.wikipedia.org/wiki/Greenland"
-    text, rec = web.read_url(url, date="20210101")
+    text, rec = web.read_url_text(url, date="20210101")
     assert "Text of" in text and not rec.get("error")
 
 

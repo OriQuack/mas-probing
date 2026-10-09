@@ -2,8 +2,13 @@
 
 Tools (names and descriptions are min_pilot's own):
   web_search(query)                 Google results via Serper (DuckDuckGo fallback); cached
-  read_url(url, page=1, date=None)  page text (Crawl4AI -> direct -> Playwright), paged; `date` reads the
-                                    Wayback snapshot closest to that date
+  read_url(url, question, date=None)
+                                    a reader model answers `question` from the page's full text (tools v3;
+                                    tools/reader.py, adapted from AOrchestra); `date` reads the Wayback snapshot
+                                    closest to that date
+  read_url_text(url, page=1, date=None)
+                                    the page's raw text (Crawl4AI -> direct -> Playwright), paged
+  find_in_url(url, text, date=None) every occurrence of a string, with context and page numbers
   read_file(path, page=1)           a file in the workspace (attachments, files written by code); paged; zips
                                     are extracted
   view_image(path_or_url)           puts the image into the worker's context (the worker model sees it)
@@ -26,7 +31,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from minpilot.runtime.trace import Trace
+from minpilot.runtime.trace import BudgetExceeded, InfraError, Trace
 from minpilot.tools import blocklist, documents
 from minpilot.tools.sandbox import normalize_paths, run_python
 from minpilot.tools.web import BLOCKED_MESSAGE, WebTools, paged
@@ -40,14 +45,36 @@ TOOL_SCHEMAS: dict[str, dict] = {
             "query": {"type": "string", "description": "The search query."}}, "required": ["query"]},
     },
     "read_url": {
-        "description": ("Read a web page or an online document (HTML, PDF, DOCX, XLSX, ...) as text. Long content is "
-                        "split into pages; request later pages with `page`. Give `date` (YYYYMMDD) to read the "
-                        "archived snapshot (Wayback Machine) closest to that date instead of the live page."),
+        "description": ("Ask a question about a web page or an online document (HTML, PDF, DOCX, XLSX, ...). A reader "
+                        "model reads the whole text and answers from it; it sees only the text and your question, "
+                        "so make the question self-contained. Give `date` (YYYYMMDD) to read the archived snapshot "
+                        "(Wayback Machine) closest to that date instead of the live page. For the raw text use "
+                        "read_url_text; to locate a string use find_in_url."),
+        "parameters": {"type": "object", "properties": {
+            "url": {"type": "string", "description": "http(s) URL."},
+            "question": {"type": "string", "description": "What to find out from the page."},
+            "date": {"type": "string", "description": "Optional YYYYMMDD date for an archived snapshot."}},
+            "required": ["url", "question"]},
+    },
+    "read_url_text": {
+        "description": ("Read a web page or an online document as raw text. Long content is split into pages; "
+                        "request later pages with `page`. `date` (YYYYMMDD) reads the archived snapshot closest to "
+                        "that date."),
         "parameters": {"type": "object", "properties": {
             "url": {"type": "string", "description": "http(s) URL."},
             "page": {"type": "integer", "description": "Page of the extracted text, starting at 1."},
             "date": {"type": "string", "description": "Optional YYYYMMDD date for an archived snapshot."}},
             "required": ["url"]},
+    },
+    "find_in_url": {
+        "description": ("Find every occurrence of a string in a web page or an online document (case-insensitive). "
+                        "Returns each match with the text around it and the read_url_text page it is on. `date` "
+                        "(YYYYMMDD) searches the archived snapshot closest to that date."),
+        "parameters": {"type": "object", "properties": {
+            "url": {"type": "string", "description": "http(s) URL."},
+            "text": {"type": "string", "description": "The string to find."},
+            "date": {"type": "string", "description": "Optional YYYYMMDD date for an archived snapshot."}},
+            "required": ["url", "text"]},
     },
     "read_file": {
         "description": ("Read a file in the working directory (e.g. an attachment, or a file written by code) as "
@@ -127,7 +154,12 @@ class Toolbox:
         self.trace.tool({**rec, "status": "started"})
         t0 = time.monotonic()
         try:
-            out, extra = getattr(self, f"_t_{name}")(**args)
+            with self.trace.tags(tool_call=rec["call_no"]):  # model calls inside a tool (read_url's reader)
+                out, extra = getattr(self, f"_t_{name}")(**args)
+        except (BudgetExceeded, InfraError) as e:  # they end the run, like any other model call's
+            self.trace.tool({**rec, "status": "error", "error": f"{type(e).__name__}: {e}"[:500],
+                             "latency_s": round(time.monotonic() - t0, 3)})
+            raise
         except TypeError as e:  # wrong or missing arguments
             out, extra = f"Error: invalid arguments for {name} ({e}).", {"error": f"invalid_arguments: {e}"}
         except Exception as e:  # tool bugs never crash the run; the record keeps the error
@@ -148,8 +180,14 @@ class Toolbox:
     def _t_web_search(self, query: str):
         return self.web.web_search(str(query), allowed=self.attachment_names())
 
-    def _t_read_url(self, url: str, page: int = 1, date: str | None = None):
-        return self.web.read_url(str(url), page=page, date=date, allowed=self.attachment_names())
+    def _t_read_url(self, url: str, question: str, date: str | None = None):
+        return self.web.read_url(str(url), str(question), date=date, allowed=self.attachment_names())
+
+    def _t_read_url_text(self, url: str, page: int = 1, date: str | None = None):
+        return self.web.read_url_text(str(url), page=page, date=date, allowed=self.attachment_names())
+
+    def _t_find_in_url(self, url: str, text: str, date: str | None = None):
+        return self.web.find_in_url(str(url), str(text), date=date, allowed=self.attachment_names())
 
     def _confine(self, path: str) -> Path | None:
         p = Path(str(path)).expanduser()

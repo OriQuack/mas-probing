@@ -8,12 +8,17 @@ protocol: the objectivity rules are kept; the run description, actors and fields
 
 - The **orchestrator** (`luna-high`, no tools) sees the task. Each turn it returns a JSON action: `delegate` (a
   role and an instruction) or `finish` (the final answer). It sees each report before its next action.
-- A **worker** (`luna`, tools) receives only the original task and the instruction. It runs a tool loop (at most
+- A **worker** (`luna-high`, tools; `luna` at effort none before 2026-10-09) receives only the original task and the instruction. It runs a tool loop (at most
   20 tool calls, then a forced report turn) and returns a free-text report. Workers keep no memory between
   delegations, so anything a worker needs from earlier reports must be in the instruction.
-- Roles (`role_routing` pool): `web_researcher` → `web_luna` (web_search, read_url with an optional Wayback date,
+- Roles (`role_routing` pool): `web_researcher` → `web_luna` (web_search, read_url, read_url_text, find_in_url,
   run_python); `file_analyst` → `file_luna` (read_file, view_image, run_python). The `redundant` and `single`
-  pools have one `generalist` role with all tools.
+  pools have one `generalist` role with all tools. From tools v3 (2026-10-09), `read_url(url, question)` is a
+  **page reader**: a model (`luna-high`) reads the whole page and answers the worker's question; it sees only the page
+  text and the question. Its calls appear as "page-reader call" in transcripts. If the reader's answer misstates
+  text that is plainly on the page, the first error is the tool's: label `tool_bug` (implementation-induced) and
+  quote the page text (full request in messages.jsonl, hash given). In tools v1-v2 runs, `read_url` returned the
+  raw text (now `read_url_text`).
 - Delegation indices are 0-based in events, checkpoints and labels (`d0`, `d1`, ...). The orchestrator's own
   prompt numbers reports from 1 ("Report from ... (delegation 1)" is d0).
 - In restore runs (conditions B/C), a **refiner** may revise the instruction before execution. The transcript
@@ -75,10 +80,18 @@ One JSON file per run, `labels/<run>.json`:
   "would_a_better_instruction_help": "yes | no | unclear",
   "better_instruction_note": "<what was missing or wrong, and whether it was available at that point>",
   "framework_events": {"invalid_actions": 0, "tool_limit_reports": 0, "empty_reports": 0, "forced_finish": false, "n_delegations": 0},
+  "answer_qualification": {"qualified": "yes | no", "case": "none | undecided_condition | explanation_added | new_info_condition | task_requires", "note": "<quote of the answer and, if needed, of the rationale>"},
   "tool_issues": ["<with evidence>"],
   "process_notes": "<anything else; for correct runs: well supported or lucky, and why>",
   "confidence": "high | medium | low"
 }
 ```
+`answer_qualification` (from 2026-10-09, decision L8): does `finish.answer` carry explanations, conditions, caveats
+or confidence beyond the bare answer? If yes, which case: `undecided_condition` (the run never settled a condition
+and the value depends on it), `explanation_added` (the condition was settled; text was added anyway),
+`new_info_condition` (a condition that only surfaced during execution), `task_requires` (the task asks for a
+conditional or explained answer). It is a signal to inspect, not evidence by itself that a probe should have
+caught something.
+
 Also write `labels/<run>.md`: a short readable rationale (at most 40 lines) with the step-by-step account, ending
 with the label.

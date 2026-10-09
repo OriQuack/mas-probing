@@ -4,28 +4,29 @@
 - REFINER_PROMPTS_VERSION: the probe, review, analysis, verification and rewrite prompts. They act only after a
   checkpoint, so a restore may use a newer version than the run that recorded the checkpoint.
 
-Written for this framework; nothing is taken from OWL's prompts. The answer-format rule is GAIA's own
-(from the GAIA paper's system prompt).
+Written for this framework; nothing is taken from OWL's prompts. The answer-format rules are the benchmark's
+(GAIA's, in data/gaia.py) and are passed in by the harness.
 """
 
 from __future__ import annotations
 
-PROMPTS_VERSION = "v1"
+# v2 (2026-10-09): the answer rules come from the benchmark; `answer` holds only the answer (no explanation,
+#     conditions, caveats or confidence unless the task asks); worker tool lines for tools v3 (decisions F16, K17)
+PROMPTS_VERSION = "v2"
 # r2 (2026-10-08): the task's premises are given; issues never turn the subtask into "is the task answerable?"
 # r3 (2026-10-09): the rewrite prompt names the executing worker's role and tools (review: a rewrite must stay
 #     doable by the fixed executor)
-REFINER_PROMPTS_VERSION = "r3"
-
-GAIA_ANSWER_FORMAT = (
-    "The final answer should be a number OR as few words as possible OR a comma separated list of numbers and/or "
-    "strings. If you are asked for a number, don't use commas to write your number, nor units such as $ or "
-    "percent sign unless specified otherwise. If you are asked for a string, don't use articles nor abbreviations "
-    "(e.g. for cities), and write digits in plain text unless specified otherwise. If you are asked for a comma "
-    "separated list, apply the above rules depending on whether each element is a number or a string.")
+# r4 (2026-10-09): r2 reverted in the analysis (premises and doubts may be raised and checked again); the rewrite
+#     keeps the subtask's goal, corrects conflicts with the task, and turns contradictions into checks and
+#     conditional steps instead of a validity assessment (decisions R14)
+REFINER_PROMPTS_VERSION = "r4"
 
 TOOL_LINES = {
     "web_search": "web_search: search the web (Google results)",
-    "read_url": "read_url: read a web page or online document as text (optionally an archived snapshot by date)",
+    "read_url": ("read_url: ask a question about a web page or online document; a reader model answers from its full "
+                 "text (optionally an archived snapshot by date)"),
+    "read_url_text": "read_url_text: read a web page or online document as raw text, page by page",
+    "find_in_url": "find_in_url: find a string in a web page or online document, with the text around it",
     "read_file": "read_file: read a file in the working directory (documents, spreadsheets, zips, text)",
     "view_image": "view_image: look at an image file or image URL",
     "run_python": "run_python: run Python in the working directory (no network)",
@@ -39,7 +40,7 @@ def original_task_text(question: str, attachment: str | None) -> str:
 
 
 # -- orchestrator ---------------------------------------------------------------------------------
-def orchestrator_system(roles: list[dict], max_delegations: int) -> str:
+def orchestrator_system(roles: list[dict], max_delegations: int, answer_format: str) -> str:
     lines = "\n".join(f"- {r['id']}: {r['description']} Tools: {', '.join(r['tools'])}." for r in roles)
     return f"""You are the orchestrator of a team of workers solving one task. You cannot use tools or open files \
 yourself; you work by delegating subtasks to workers and reading their reports.
@@ -57,7 +58,9 @@ interpretation and conditions that matter, and what to report.
 Delegate one subtask at a time; you see each report before deciding the next step. Reports can be wrong or \
 incomplete; have important claims checked when in doubt. You can delegate at most {max_delegations} times.
 
-Answer format: {GAIA_ANSWER_FORMAT} Put only the answer in `answer`, without explanation."""
+Answer format: {answer_format}
+`answer` holds only the answer itself, in this format. Do not add explanations, conditions, caveats or statements \
+of confidence that the task does not ask for; put them in `rationale`."""
 
 
 ORCHESTRATOR_ACTION_SCHEMA = {
@@ -67,7 +70,7 @@ ORCHESTRATOR_ACTION_SCHEMA = {
         "action": {"type": "string", "enum": ["delegate", "finish"]},
         "worker_id": {"type": "string"},
         "instruction": {"type": "string"},
-        "answer": {"type": "string"},
+        "answer": {"type": "string", "description": "Only the final answer, in the required format."},
     },
     "required": ["rationale", "action"],
 }
@@ -213,10 +216,7 @@ Answers to review questions about this instruction, {origin}:
 Find issues in the instruction: places where its scope, targets or direction can be misunderstood; important \
 unstated assumptions or wrong premises; likely failures with no stated handling; missing or wrongly ordered steps. \
 Differences between answers point to ambiguity, but neither agreement nor disagreement decides what is correct: \
-judge against the original task. The original task has one intended answer, and its stated premises define the \
-problem: treat them as given even when they are loose or imprecise about the real world, and resolve doubts \
-about them toward the most plausible intended reading. Never raise an issue whose resolution would make the \
-subtask conclude that the task is invalid, impossible or unanswerable. For each issue choose a decision:
+judge against the original task. For each issue choose a decision:
 - resolved_from_task: the original task or the instruction itself settles it; give the resolution.
 - needs_verification: a fact must be checked first (in the files or on the web).
 - not_relevant: it does not affect the result.
@@ -277,10 +277,10 @@ Verification results:
 {ver}
 
 Write the final version of the subtask instruction, once. Rules:
-- Keep the subtask's goal and scope unless an issue shows that the instruction contradicts the original task. \
-The rewritten subtask must still produce the result the current instruction asks for; never turn it into deciding \
-whether the task can be answered. Where a premise of the original task is imprecise, tell the worker to follow its \
-most plausible intended reading and to state that reading.
+- Keep the current subtask's goal and scope, but correct the instruction where it conflicts with the original \
+task. Turn contradictions found in the review into checks, and into conditions on how to proceed depending on what \
+the checks find. Do not turn a subtask that produces the requested result into an assessment of whether the \
+problem holds, merely because a contradiction was found.
 - Turn resolved issues into explicit criteria, conditions or steps.
 - State verified facts explicitly; the worker will not see this review.
 - Do not state unverified claims as facts or requirements; instead tell the worker to check them first and how to \
