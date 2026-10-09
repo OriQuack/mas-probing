@@ -114,6 +114,11 @@ def _snapshot_date(url: str) -> str | None:
     return f"{ts[:4]}-{ts[4:6]}-{ts[6:8]}"
 
 
+def _credit_id(backend) -> str:
+    """Key of a paid backend's credit count in the shared cache (per API key for Serper)."""
+    return getattr(backend, "credit_id", backend.name)
+
+
 class WebTools:
     def __init__(self, cfg: ToolConfig | None = None, *, cache: ToolCache | None = None, question: str | None = None,
                  search_backends: list | None = None, read_backends: list | None = None,
@@ -318,16 +323,17 @@ class WebTools:
             return backend.available()
         if not backend.available():
             return False
-        state = self.cache.credits(backend.name)
+        cid = _credit_id(backend)
+        state = self.cache.credits(cid)
         if state is None or time.time() - state[1] > self.cfg.credit_sync_s:
             try:
-                self.cache.sync_credits(backend.name, backend.balance())
+                self.cache.sync_credits(cid, backend.balance())
             except CreditsExhausted:
-                self.cache.sync_credits(backend.name, 0)
+                self.cache.sync_credits(cid, 0)
             except Exception:
                 if state is None:
                     return True  # balance endpoint down: try the call; the call itself reports exhaustion
-            state = self.cache.credits(backend.name)
+            state = self.cache.credits(cid)
         remaining, _, used = state
         return remaining - used > self.cfg.credit_reserve.get(backend.name, 0)
 
@@ -365,12 +371,12 @@ class WebTools:
                     continue
                 return None
             except CreditsExhausted as e:
-                self.cache.sync_credits(backend.name, 0)
+                self.cache.sync_credits(_credit_id(backend), 0)
                 rec["attempts"].append({"backend": backend.name, "ok": False, "error": str(e)[:300]})
                 return None
             except BackendError as e:
                 if backend.paid:
-                    self.cache.charge(backend.name)
+                    self.cache.charge(_credit_id(backend))
                     rec["credits"][backend.name] = rec["credits"].get(backend.name, 0) + 1
                 rec["attempts"].append({"backend": backend.name, "ok": False, "error": str(e)[:300],
                                         "latency_s": round(time.monotonic() - t0, 2)})
@@ -379,7 +385,7 @@ class WebTools:
                 if token:
                     self.cache.release(token)
             if backend.paid:
-                self.cache.charge(backend.name)
+                self.cache.charge(_credit_id(backend))
                 rec["credits"][backend.name] = rec["credits"].get(backend.name, 0) + 1
             rec["attempts"].append({"backend": backend.name, "ok": True, "latency_s": round(time.monotonic() - t0, 2)})
             return result

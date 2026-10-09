@@ -102,6 +102,11 @@ class SerperBackend:
     def available(self) -> bool:
         return bool(self.key)
 
+    @property
+    def credit_id(self) -> str:
+        """Credit bookkeeping per API key: runs started after a key change must not share the old key's count."""
+        return f"serper:{self.key[-4:]}" if self.key else "serper"
+
     def balance(self) -> int:
         r = requests.get("https://google.serper.dev/account", headers={"X-API-KEY": self.key}, timeout=20)
         _raise_for_status(self.name, r)

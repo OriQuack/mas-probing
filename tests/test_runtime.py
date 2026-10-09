@@ -563,3 +563,35 @@ def test_sandbox_network_message_is_role_neutral_and_non_english_stub_is_a_chall
             "액세스하는 데 문제가 있으면 [여기를 클릭](/search?q=x&emsg=SG_REL&sei=abc)하거나 의견을 보내 주세요.")
     assert challenge_reason(stub, "Google Search") == "anti_bot_challenge"
     assert challenge_reason("An article about how Google's /sorry/ pages work. " * 200, "Blog") is None
+
+
+def test_serper_credits_are_counted_per_api_key(tmp_path, monkeypatch):
+    from minpilot.tools.backends import SerperBackend
+    from minpilot.tools.config import ToolConfig
+
+    class Paid:
+        name, paid = "serper", True
+
+        def __init__(self, key, balance):
+            self.credit_id, self.bal, self.n = f"serper:{key}", balance, 0
+
+        def available(self):
+            return True
+
+        def balance(self):
+            return self.bal
+
+        def search(self, query):
+            self.n += 1
+            return []
+
+    web = fake_web(tmp_path)
+    old = Paid("aaaa", 50)  # at the reserve: exhausted
+    web.search_backends = [old]
+    assert not web._has_credits(old)
+    new = Paid("bbbb", 2500)  # a run started after the key change does not inherit the old key's count
+    web.search_backends = [new]
+    assert web._has_credits(new)
+    assert web.cache.credits("serper:aaaa")[0] == 50 and web.cache.credits("serper:bbbb")[0] == 2500
+    monkeypatch.setenv("SERPER_API_KEY", "k-123-wxyz")
+    assert SerperBackend(ToolConfig()).credit_id == "serper:wxyz"
