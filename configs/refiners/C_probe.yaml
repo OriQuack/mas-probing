@@ -3,6 +3,7 @@
 # only in where the answers come from (review 2026-10-09, F1). C_probe_followup adds follow-up questions.
 name: C_probe
 kind: probe
+prompts: r5
 questions: [understanding, assumptions, failure, plan]
 samples_per_worker: 1
 probe_tools: false

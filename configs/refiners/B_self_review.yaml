@@ -2,6 +2,7 @@
 # same questions (one prediction per probe slot C would fill), then the shared analyze -> verify -> rewrite.
 name: B_self_review
 kind: self_review
+prompts: r5
 questions: [understanding, assumptions, failure, plan]
 samples_per_worker: 1
 max_verifications: 2

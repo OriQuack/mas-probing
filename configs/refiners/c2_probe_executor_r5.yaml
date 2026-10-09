@@ -1,0 +1,14 @@
+# Stage 1 (E8): the earlier refiner. Condition 2 with the frozen r5 prompts (four questions; r5 analysis and rewrite
+# rules; no context additions), otherwise identical to c2_probe_executor.
+name: c2_probe_executor_r5
+kind: probe
+prompts: r5
+questions: [understanding, assumptions, failure, plan]
+probe_workers: executor
+samples_per_worker: 1
+probe_tools: false
+max_followups: 0
+max_verifications: 2
+verify_max_tool_calls: 10
+connect_probe_to_execution: false
+budget: {max_llm_calls: 60, max_cost_usd: 1.0, max_worker_calls: 8}

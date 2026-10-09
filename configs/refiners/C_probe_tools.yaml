@@ -1,6 +1,7 @@
 # Variant of C: probe workers may use tools (on scratch copies) while answering.
 name: C_probe_tools
 kind: probe
+prompts: r5
 questions: [understanding, assumptions, failure, plan]
 samples_per_worker: 1
 probe_tools: true

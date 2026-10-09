@@ -1,13 +1,20 @@
-"""Conditions B and C: one review pipeline, two sources of answers.
+"""The review refiners: one pipeline, three sources of answers.
 
     collect answers -> analyze (issues, follow-ups, verifications) -> [C: follow-ups -> re-analyze]
-                    -> verify (checks delegated to workers) -> rewrite once
+                    -> verify (checks delegated to workers) -> rewrite once (instruction + context additions)
 
-- C `ProbeRefiner`: the answers come from the real probe workers (call_worker with the probe questions).
+- C `ProbeRefiner`: the answers come from the real probe workers (call_worker with the probe).
 - B `SelfReviewRefiner`: the orchestrator-side model predicts each probe worker's answers itself, one prediction
   per (probe worker, sample), i.e. the same slots C fills with real answers.
+- `DirectCheckRefiner`: no answers; the analysis chooses issues and checks from the inputs alone (the comparison
+  arm of the probe-tools condition; decision R21).
 Everything after collection (analysis prompt, verification access, rewrite rules, budget) is shared, so C-B
-isolates where the answers come from.
+isolates where the answers come from. The prompt set is the condition's `prompts`:
+- r7 (prompts.py; decision R22): the orchestrator-side steps (B's prediction, analysis, rewrite) are turns of a copy
+  of the orchestrator's own conversation (`RefineRequest.orchestrator_messages`), discarded afterwards: the analysis
+  turn and its reply stay in the copy, so the rewrite turn follows them. B's predictions each start from the copy.
+- r5 (the frozen prompts_r5.py, the earlier refiner arm): each step is a separate conversation with its own
+  system prompt.
 
 Stopping rules (same for B and C): no issue that needs a change -> the draft is kept without a rewrite call
 (`no_issues`); the refinement budget runs out -> the draft is kept (`budget_exceeded`); a structured reply
@@ -18,7 +25,10 @@ the run.
 
 from __future__ import annotations
 
-from minpilot.agents import prompts
+import json
+import re
+
+from minpilot.agents import prompts, prompts_r5
 from minpilot.config import RefinerConfig
 from minpilot.refine.base import RefineContext, RefineRequest, RefineResult
 from minpilot.runtime.trace import BudgetExceeded
@@ -34,11 +44,12 @@ class RefineError(Exception):
 
 
 # defer_to_execution: the executor checks it during execution (the rewrite states the check and how to proceed);
-# only needs_verification issues get pre-execution checks (decision R20)
-DECISIONS = ("resolved_from_task", "needs_verification", "defer_to_execution", "not_relevant")
+# only needs_verification issues get pre-execution checks (decision R20). r7 names the first one `clarify` (R22).
+DECISIONS = prompts.DECISIONS
 
 
-def check_analysis(d: dict, response_ids: set[str], role_ids: set[str]) -> str | None:
+def check_analysis(d: dict, response_ids: set[str], role_ids: set[str],
+                   decisions: tuple[str, ...] = DECISIONS) -> str | None:
     issues = d.get("issues")
     if not isinstance(issues, list) or not isinstance(d.get("verifications"), list) \
             or not isinstance(d.get("followups"), list):
@@ -46,7 +57,7 @@ def check_analysis(d: dict, response_ids: set[str], role_ids: set[str]) -> str |
     ids = [i.get("id") for i in issues if isinstance(i, dict)]
     if len(ids) != len(issues) or len(set(ids)) != len(ids):
         return "issues without unique ids"
-    if bad := [i.get("decision") for i in issues if i.get("decision") not in DECISIONS]:
+    if bad := [i.get("decision") for i in issues if i.get("decision") not in decisions]:
         return f"unknown decisions {bad}"
     if bad := [v.get("issue_id") for v in d["verifications"] if v.get("issue_id") not in ids]:
         return f"verifications refer to unknown issues {bad}"
@@ -65,12 +76,47 @@ def check_rewrite(d: dict) -> str | None:
     return None
 
 
+def tool_observations(messages: list[dict], max_chars: int = 1500) -> list[dict]:
+    """The tool calls of a probe conversation and what they returned (the source is the tool and its arguments):
+    the observations a probe with tools made (R21). `result` is clipped; tool_calls.jsonl has the full record."""
+    out, calls = [], {}
+    for m in messages or []:
+        for tc in m.get("tool_calls") or []:
+            calls[tc.get("id")] = tc.get("function") or {}
+        if m.get("role") == "tool":
+            f = calls.get(m.get("tool_call_id"), {})
+            text = m.get("content") if isinstance(m.get("content"), str) else str(m.get("content"))
+            out.append({"tool": f.get("name"), "args": f.get("arguments"), "result": text[:max_chars],
+                        "result_chars": len(text)})
+    return out
+
+
+_TOKENS = (re.compile(r"https?://[^\s<>\"')\]]+"), re.compile(r"\b\d[\d,.]*\d\b"), re.compile(r'"([^"\n]{3,80})"'))
+
+
+def observation_overlap(final: str, before: list[str], observed: list[str]) -> list[str]:
+    """URLs, numbers (2+ characters) and quoted strings that the final instruction / context additions contain,
+    the task, context and draft do not, and some probe tool result does: a mechanical sign that a probe
+    observation reached the rewrite (R21; ambiguous cases are judged in labelling)."""
+    def toks(text: str) -> set[str]:
+        out = set()
+        for rx in _TOKENS:
+            out |= {(m.group(1) if rx.groups else m.group(0)).rstrip(".,;:").lower() for m in rx.finditer(text or "")}
+        return out
+
+    prior = set().union(*(toks(t) for t in before)) if before else set()
+    obs = "\n".join(observed).lower()
+    return sorted(t for t in toks(final) - prior if t and t in obs)
+
+
 class _ReviewRefiner:
-    source = ""  # "probe" | "self_review"
+    source = ""  # "probe" | "self_review" | "direct"
     retries = 1  # one more attempt for an unusable structured reply
 
     def __init__(self, cfg: RefinerConfig):
         self.cfg = cfg
+        self.P = prompts_r5 if cfg.prompts == "r5" else prompts  # the condition's refiner prompt set
+        self.version = prompts_r5.VERSION if cfg.prompts == "r5" else prompts.REFINER_PROMPTS_VERSION
 
     # -- to implement -------------------------------------------------------------------------
     def collect(self, req: RefineRequest, ctx: RefineContext, log: dict) -> list[dict]:
@@ -82,9 +128,12 @@ class _ReviewRefiner:
 
     # -- shared pipeline ----------------------------------------------------------------------
     def refine(self, req: RefineRequest, ctx: RefineContext) -> RefineResult:
-        log: dict = {"refiner": self.cfg.name, "kind": self.cfg.kind, "draft": req.draft_instruction,
+        log: dict = {"refiner": self.cfg.name, "kind": self.cfg.kind, "prompts": self.version,
+                     "draft": req.draft_instruction,
                      "context": req.context,
                      "target_worker": req.target_worker, "probe_workers": list(req.probe_workers)}
+        # r7: the review's copy of the orchestrator's conversation (grows by the analysis turn and its reply)
+        self.conv = self._base_conversation(req) if self.P is prompts else None
         try:
             with ctx.budget_scope(self.cfg):
                 return self._refine(req, ctx, log)
@@ -117,6 +166,23 @@ class _ReviewRefiner:
             problems.append(problem)
         raise RefineError(stage, problems)
 
+    @staticmethod
+    def _base_conversation(req: RefineRequest) -> list[dict]:
+        """A copy of the orchestrator's conversation up to the pending delegate action. A port without one gets the
+        task and the action only."""
+        if req.orchestrator_messages:
+            return [{"role": m["role"], "content": m["content"]} for m in req.orchestrator_messages]
+        action = {"action": "delegate", "context": req.context, "instruction": req.draft_instruction}
+        return [{"role": "user", "content": prompts.orchestrator_task_message(req.original_task)},
+                {"role": "assistant", "content": json.dumps(action, ensure_ascii=False)}]
+
+    def _messages(self, system: str, user: str) -> list[dict]:
+        """The messages of one orchestrator-side step: r7 continues the review conversation; r5 is a separate
+        conversation with `system`."""
+        if self.conv is not None:
+            return self.conv + [{"role": "user", "content": user}]
+        return [{"role": "system", "content": system}, {"role": "user", "content": user}]
+
     def _refine(self, req: RefineRequest, ctx: RefineContext, log: dict) -> RefineResult:
         responses = self.collect(req, ctx, log)
         log["responses"] = [{k: v for k, v in r.items() if k != "messages"} for r in responses]
@@ -141,13 +207,15 @@ class _ReviewRefiner:
         if not actionable:
             return RefineResult(req.draft_instruction, False, "no_issues", log,
                                 self._execution_history(req, responses))
-        out, problems = self._call(
-            ctx, [{"role": "system", "content": prompts.analyze_system()},
-                  {"role": "user", "content": prompts.rewrite_request(req.original_task, req.draft_instruction,
-                                                                      actionable, verifications,
-                                                                      ctx.worker_profile(req.target_worker),
-                                                                      req.context)}],
-            stage="refine.rewrite", schema_name="rewrite", schema=prompts.REWRITE_SCHEMA, check=check_rewrite)
+        P, target = self.P, ctx.worker_profile(req.target_worker)
+        if P is prompts:
+            msg = P.rewrite_request(verifications, target, bool(req.context.strip()))
+        else:
+            msg = P.rewrite_request(req.original_task, req.draft_instruction, actionable, verifications, target,
+                                    req.context)
+        out, problems = self._call(ctx, self._messages(P.analyze_system() if P is not prompts else "", msg),
+                                   stage="refine.rewrite", schema_name="rewrite", schema=P.REWRITE_SCHEMA,
+                                   check=check_rewrite)
         log["rewrite"] = out
         if problems:
             log["rewrite_retried"] = problems
@@ -155,20 +223,33 @@ class _ReviewRefiner:
         if not new or out.get("unchanged"):
             return RefineResult(req.draft_instruction, False, "unchanged", log, self._execution_history(req, responses))
         changed = new != req.draft_instruction.strip()
-        return RefineResult(new, changed, "rewritten" if changed else "unchanged", log,
-                            self._execution_history(req, responses))
+        additions = (out.get("context_additions") or "").strip()  # r7 only (r5's schema has none)
+        if self.source == "probe" and self.cfg.probe_tools:
+            observed = [o["result"] for r in responses for o in tool_observations(r.get("messages"), 10 ** 7)]
+            log["observations_in_rewrite"] = observation_overlap(
+                f"{new}\n{additions}", [req.original_task, req.context, req.draft_instruction], observed)
+        return RefineResult(new if changed else req.draft_instruction, changed,
+                            "rewritten" if (changed or additions) else "unchanged", log,
+                            self._execution_history(req, responses), context_additions=additions)
 
     def _analyze(self, req: RefineRequest, ctx: RefineContext, responses: list[dict], followups: int) -> dict:
         target = ctx.worker_profile(req.target_worker)
-        msg = prompts.analyze_request(req.original_task, req.draft_instruction, target,
-                                      [{"id": r["id"], "who": r["who"], "text": r["text"]} for r in responses],
-                                      self.source, self.cfg.max_verifications, ctx.roles(), followups,
-                                      req.context)
+        answers = [{"id": r["id"], "who": r["who"], "text": r["text"]} for r in responses]
+        P = self.P
+        if P is prompts:
+            msg = P.analyze_request(target, answers, self.source, self.cfg.max_verifications, ctx.roles(), followups,
+                                    bool(req.context.strip()),
+                                    observations=self.source == "probe" and self.cfg.probe_tools)
+        else:
+            msg = P.analyze_request(req.original_task, req.draft_instruction, target, answers, self.source,
+                                    self.cfg.max_verifications, ctx.roles(), followups, req.context)
         role_ids = {r["id"] for r in ctx.roles()}
+        messages = self._messages(P.analyze_system() if P is not prompts else "", msg)
         out, problems = self._call(
-            ctx, [{"role": "system", "content": prompts.analyze_system()}, {"role": "user", "content": msg}],
-            stage="refine.analyze", schema_name="review_analysis", schema=prompts.ANALYZE_SCHEMA,
-            check=lambda d: check_analysis(d, {r["id"] for r in responses}, role_ids))
+            ctx, messages, stage="refine.analyze", schema_name="review_analysis", schema=P.ANALYZE_SCHEMA,
+            check=lambda d: check_analysis(d, {r["id"] for r in responses}, role_ids, P.DECISIONS))
+        if self.conv is not None:  # the rewrite turn follows this analysis in the same conversation
+            self.conv = messages + [{"role": "assistant", "content": json.dumps(out, ensure_ascii=False)}]
         return {**out, "retried": problems} if problems else out
 
     def _verify(self, req: RefineRequest, ctx: RefineContext, analysis: dict, log: dict) -> list[dict]:
@@ -191,12 +272,16 @@ class _ReviewRefiner:
             if worker is None:
                 out.append({**entry, "report": "(not run: unknown worker)", "status": "skipped"})
                 continue
-            call = ctx.call_worker(worker, req.original_task, prompts.verify_instruction(v.get("instruction", "")),
+            call = ctx.call_worker(worker, req.original_task, self.P.verify_instruction(v.get("instruction", "")),
                                    stage="refine.verify", allow_tools=True, context=req.context,
                                    max_tool_calls=self.cfg.verify_max_tool_calls, label=f"verify{i + 1}")
             out.append({**entry, "executed_by": worker, "report": call.report, "status": call.status,
                         "n_tool_calls": call.n_tool_calls})
         return out
+
+    def _parsed(self, text: str) -> dict:
+        """r7: the four labelled items of an answer, for the log (None if unlabelled)."""
+        return {"parsed": prompts.parse_probe(text)} if self.P is prompts else {}
 
     def _execution_history(self, req: RefineRequest, responses: list[dict]) -> list[dict] | None:
         if not (self.cfg.connect_probe_to_execution and self.source == "probe"):
@@ -213,8 +298,7 @@ class ProbeRefiner(_ReviewRefiner):
 
     def collect(self, req: RefineRequest, ctx: RefineContext, log: dict) -> list[dict]:
         cfg = self.cfg
-        instruction = prompts.probe_instruction(req.draft_instruction, cfg.questions, cfg.probe_tools,
-                                                cfg.probe_max_tool_calls, bool(req.context.strip()))
+        instruction = self.P.probe_for(req.draft_instruction, cfg, bool(req.context.strip()))
         log["probe_instruction"] = instruction
         out = []
         for w in req.probe_workers:
@@ -225,7 +309,10 @@ class ProbeRefiner(_ReviewRefiner):
                                        label=f"probe_{rid}")
                 out.append({"id": rid, "who": f"worker {w}, sample {s + 1}", "worker_id": w, "sample": s,
                             "text": call.report, "status": call.status, "n_tool_calls": call.n_tool_calls,
-                            "messages": call.messages})
+                            "messages": call.messages, **self._parsed(call.report)})
+                if cfg.probe_tools:  # what the probe observed, and from where (R21)
+                    log.setdefault("probe_observations", []).extend(
+                        {"response_id": rid, **o} for o in tool_observations(call.messages))
         return out
 
     def followup(self, req, ctx, responses, asks, log):
@@ -238,7 +325,7 @@ class ProbeRefiner(_ReviewRefiner):
             # the follow-up continues that probe conversation (and its scratch workspace, see harness)
             call = ctx.call_worker(r["worker_id"], req.original_task, "", stage="refine.followup",
                                    allow_tools=self.cfg.probe_tools, max_tool_calls=self.cfg.probe_max_tool_calls,
-                                   history=r["messages"], user_message=prompts.followup_message(a["question"]),
+                                   history=r["messages"], user_message=self.P.followup_message(a["question"]),
                                    label=f"probe_{r['id']}")
             new = {"id": f"{r['id']}.f{len(out) + 1}", "who": f"{r['who']}, follow-up: {a['question']}",
                    "worker_id": r["worker_id"], "sample": r["sample"], "text": call.report, "status": call.status,
@@ -259,11 +346,20 @@ class SelfReviewRefiner(_ReviewRefiner):
             profile = ctx.worker_profile(w)
             for s in range(self.cfg.samples_per_worker):
                 rid = f"r{len(out) + 1}"
-                text, _ = self._call(ctx, [{"role": "system", "content": prompts.simulate_system()},
-                                           {"role": "user", "content": prompts.simulate_request(
-                                               req.original_task, req.draft_instruction, profile, self.cfg.questions,
-                                               req.context)}],
-                                     stage="refine.review")
+                # r7: each prediction starts from the copy of the orchestrator's conversation (independent)
+                msg = self.P.simulate_for(req.original_task, req.draft_instruction, profile, self.cfg, req.context)
+                text, _ = self._call(ctx, self._messages(self.P.simulate_system() if self.P is not prompts else "",
+                                                         msg), stage="refine.review")
                 out.append({"id": rid, "who": f"predicted for worker {w}, sample {s + 1}", "worker_id": w,
-                            "sample": s, "text": text})
+                            "sample": s, "text": text, **self._parsed(text)})
         return out
+
+
+class DirectCheckRefiner(_ReviewRefiner):
+    """No answers: the analysis reads the original task, the context and the draft, chooses issues and the checks
+    to delegate, and the rewrite follows (R21; the comparison arm of the probe-tools condition)."""
+
+    source = "direct"
+
+    def collect(self, req: RefineRequest, ctx: RefineContext, log: dict) -> list[dict]:
+        return []

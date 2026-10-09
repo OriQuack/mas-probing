@@ -115,6 +115,8 @@ def render(run_dir: Path, max_chars: int) -> str:
                            f"connected={r.get('connected')}")
                 if r.get("changed"):
                     out.append(f"FINAL instruction sent to the worker:\n<<<\n{r.get('final')}\n>>>")
+                if r.get("context_additions"):
+                    out.append(f"context additions sent after the context:\n<<<\n{r.get('context_additions')}\n>>>")
             elif ev in ("report", "refine_worker_call"):
                 out.append(f"## [event] {ev} {_where(r)}: status={r.get('status')}, tool calls={r.get('n_tool_calls')}")
             elif ev == "checkpoint":

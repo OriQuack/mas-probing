@@ -70,8 +70,11 @@ class PoolConfig:
 @dataclass(frozen=True)
 class RefinerConfig:
     name: str
-    kind: str = "none"                       # none | self_review | probe
-    # Probing (C) and simulated probing (B): which questions, who answers, how many answers per probe worker.
+    kind: str = "none"                       # none | self_review | probe | direct_check
+    # Refiner prompt set (decisions R21, R22): "r7" (current, prompts.py) or "r5" (frozen, prompts_r5.py; the earlier
+    # refiner arm). direct_check needs r7.
+    prompts: str = "r7"
+    # r5 only: which probe questions (r7's probe has four fixed labelled items).
     questions: tuple[str, ...] = PROBE_QUESTIONS
     # Who answers (decision P5): "pool" = the role's registered probe_workers; "executor" = the role's executor
     # only; or a list of worker ids of the pool ("executor" allowed as an entry). The pool, the executor and the
@@ -90,8 +93,14 @@ class RefinerConfig:
     budget: Limits = field(default_factory=lambda: Limits(max_llm_calls=60, max_cost_usd=1.0, max_worker_calls=8))
 
     def __post_init__(self):
-        if self.kind not in ("none", "self_review", "probe"):
+        if self.kind not in ("none", "self_review", "probe", "direct_check"):
             raise ValueError(f"unknown refiner kind {self.kind!r}")
+        if self.prompts not in ("r5", "r7"):
+            raise ValueError(f"unknown refiner prompts {self.prompts!r}; known: r5, r7")
+        if self.prompts == "r7" and tuple(self.questions) != PROBE_QUESTIONS:
+            raise ValueError("`questions` applies to r5 only (r7's probe has four fixed items)")
+        if self.kind == "direct_check" and self.prompts != "r7":
+            raise ValueError("direct_check needs prompts r7")
         bad = [q for q in self.questions if q not in PROBE_QUESTIONS]
         if bad:
             raise ValueError(f"unknown probe questions {bad}; known: {PROBE_QUESTIONS}")
@@ -172,6 +181,7 @@ def load_refiner(path_or_name: str | Path) -> RefinerConfig:
 
 def refiner_from_dict(d: dict) -> RefinerConfig:
     d = dict(d)
+    d.setdefault("prompts", "r5")  # recorded before refiner prompt sets existed (R21): r5 or earlier
     d["questions"] = tuple(d.get("questions", PROBE_QUESTIONS))
     if isinstance(d.get("probe_workers"), list):
         d["probe_workers"] = tuple(d["probe_workers"])

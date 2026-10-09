@@ -1,9 +1,9 @@
-# Condition 2 (decisions R20, E7): one worker asked. The executor answers the four questions (no tools, a separate
-# conversation), then the same analysis -> checks -> rewrite as conditions 1 and 3. c2 - c1: real answers instead
-# of predicted ones.
+# Condition 2 (decisions R20-R22, E7): one worker asked. The executor answers the probe (four labelled items; no
+# tools, a separate conversation), then the same analysis -> checks -> rewrite as conditions 1 and 3. c2 - c1: real
+# answers instead of predicted ones. Stage 1 (E8): the revised refiner (r7) of the comparison draft / r5 / revised.
 name: c2_probe_executor
 kind: probe
-questions: [understanding, assumptions, failure, plan]
+prompts: r7
 probe_workers: executor
 samples_per_worker: 1
 probe_tools: false

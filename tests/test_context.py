@@ -7,7 +7,7 @@ from __future__ import annotations
 import json
 
 from fakes import ScriptedLLM, delegate, fake_web, finish
-from minpilot.agents import prompts
+from minpilot.agents import prompts, prompts_r5
 from minpilot.agents.orchestrator import Orchestrator
 from minpilot.config import load_refiner
 from minpilot.harness import Run
@@ -32,7 +32,9 @@ def script(**extra):
 
 
 def user_text(body) -> str:
-    return body["messages"][1]["content"]
+    """The request's own text: a worker request (messages[1]) or the review turn (the last message, r7)."""
+    return body["messages"][-1]["content"] if body["messages"][0]["content"].startswith("You are the orchestrator") \
+        else body["messages"][1]["content"]
 
 
 def test_orchestrator_writes_context_and_instruction():
@@ -48,8 +50,9 @@ def test_orchestrator_writes_context_and_instruction():
 def test_requests_without_context_have_no_context_section():
     text = prompts.worker_request("task", "do x")
     assert "Context (" not in text and text.startswith("Original task:\n<<<\ntask\n>>>\n\nYour instruction:")
-    probe = prompts.probe_instruction("do x", ("plan",), False, 0)
+    probe = prompts_r5.probe_instruction("do x", ("plan",), False, 0)  # r5 names the context only when there is one
     assert "context" not in probe
+    assert "Context (" not in prompts.worker_request("task", prompts.probe_instruction("do x", False, 0), kind="probe")
     with_ctx = prompts.worker_request("task", "do x", context="c")
     assert with_ctx.index("Original task") < with_ctx.index("Context (") < with_ctx.index("Your instruction")
 
@@ -61,13 +64,16 @@ def test_every_c3_step_reads_the_context_and_execution_gets_it_unchanged(tmp_pat
     assert run.run_fresh()["status"] == "ok"
     probes, check, execution = llm.by_kind["worker"][:2], llm.by_kind["worker"][2], llm.by_kind["worker"][3]
     for b in probes:
-        assert CTX in user_text(b) and "(with the context above)" in user_text(b)
+        assert CTX in user_text(b) and "understanding:" in user_text(b)
     assert CTX in user_text(check) and "Do only this check" in user_text(check)
-    analysis = user_text(llm.by_kind["analyze"][0])
-    assert CTX in analysis and "passed to the worker unchanged" in analysis
+    # r7: the review turns follow the orchestrator's conversation, which holds the context in the pending action
+    analysis_body = llm.by_kind["analyze"][0]
+    assert CTX in json.dumps(analysis_body["messages"][:-1], ensure_ascii=False)
+    analysis = user_text(analysis_body)
+    assert "the original task, the context and the instruction of that delegation" in analysis
     assert "the original task, the context and your check instruction" in analysis
     rewrite = user_text(llm.by_kind["rewrite"][0])
-    assert CTX in rewrite and "Only the instruction is rewritten" in rewrite
+    assert "the context is sent as you wrote it" in rewrite
     sent = user_text(execution)
     assert sent.count(CTX) == 1 and REWRITTEN in sent and DRAFT not in sent
     d = json.loads((run.run_dir / "run.json").read_text())["delegations"][0]
@@ -79,8 +85,8 @@ def test_c1_prediction_sees_the_same_context_as_a_real_probe(tmp_path, task):
     run = make_run(tmp_path, task, llm, pool="multi", refiner="c1_self_review")
     run.run_fresh()
     sim = user_text(llm.by_kind["simulate"][0])
-    real = prompts.worker_request(run.original_task, prompts.probe_instruction(DRAFT, run.cfg.refiner.questions, False,
-                                                                               0, True), context=CTX, kind="probe")
+    real = prompts.worker_request(run.original_task, prompts.probe_instruction(DRAFT, False, 0), context=CTX,
+                                  kind="probe")
     assert real in sim
 
 

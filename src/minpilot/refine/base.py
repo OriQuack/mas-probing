@@ -3,14 +3,18 @@
     refine(request, ctx) -> RefineResult
 
 Input (`RefineRequest`): the original task, the draft instruction, the delegation's context, the target
-(executing) worker, and the probe workers. Output: the instruction to execute. The context is read-only: every step
-(prediction, probes, analysis, checks, rewrite) sees it, and the harness sends it to the executor unchanged
+(executing) worker, and the probe workers. Output: the instruction to execute, and facts from pre-execution checks
+the executor needs (`context_additions`). The context is read-only: every step (prediction, probes, analysis,
+checks, rewrite) sees it, and the harness sends it unchanged, with the additions appended under their own heading
 (decision F21). Inside: probe -> compare answers -> decide/verify issues -> rewrite.
 Decomposition, assignment and the final synthesis belong to the harness; this module is the unit that is ported
 to other frameworks and compared across conditions.
 
-The refiner sees exactly what the executing worker would see (original task + context + instruction) plus the worker
-profiles. It never sees the orchestrator's history, other reports, failure traces or the answer.
+The refiner speaks for the orchestrator: from refiner prompts r7 its steps (prediction, analysis, rewrite) are turns
+of a copy of the orchestrator's conversation up to this delegation (`orchestrator_messages`), so it knows what the
+orchestrator knows and intends; the copy is discarded and only the result reaches the orchestrator's history
+(decision R22). Workers asked by the refiner still get only the original task, the context and their instruction.
+It never sees the continuation after the checkpoint, failure traces or the answer.
 
 Everything the refiner does goes through `RefineContext`, which the harness implements:
 - `llm(...)`: the orchestrator-side model (no tools), in its own conversation, never appended to the
@@ -38,16 +42,21 @@ class RefineRequest:
     target_worker: str             # the fixed executing worker of that role
     probe_workers: tuple[str, ...]
     context: str = ""              # the orchestrator's context for this delegation (read-only, F21)
+    # the orchestrator's conversation up to and including the pending delegate action (role/content only); from
+    # refiner prompts r7 the review runs as turns of a copy of it, discarded afterwards (decision R22)
+    orchestrator_messages: tuple[dict, ...] = ()
 
 
 @dataclass
 class RefineResult:
     instruction: str
     changed: bool
-    status: str                    # unchanged | rewritten | no_issues | budget_exceeded | error
+    status: str                    # unchanged | rewritten | no_issues | budget_exceeded | refine_error | ...
     log: dict = field(default_factory=dict)
     # "connected" condition only: the executor's probe conversation, continued by the execution call
     execution_history: list[dict] | None = None
+    # facts for the executor from the review (r7), appended after the unchanged context; "" = none
+    context_additions: str = ""
 
 
 class RefineContext(Protocol):
@@ -84,6 +93,7 @@ class NoRefiner:
 
 
 def make_refiner(cfg: RefinerConfig) -> InstructionRefiner:
-    from minpilot.refine.review import ProbeRefiner, SelfReviewRefiner
+    from minpilot.refine.review import DirectCheckRefiner, ProbeRefiner, SelfReviewRefiner
 
-    return {"none": NoRefiner, "self_review": SelfReviewRefiner, "probe": ProbeRefiner}[cfg.kind](cfg)
+    return {"none": NoRefiner, "self_review": SelfReviewRefiner, "probe": ProbeRefiner,
+            "direct_check": DirectCheckRefiner}[cfg.kind](cfg)

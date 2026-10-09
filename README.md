@@ -27,8 +27,9 @@ orchestrator (no tools) ── delegate(context, instruction) ─► [checkpoint
 - `call_worker(worker_id, original_task, instruction, context="") -> report` is the only interface to workers.
   `context` = what earlier reports said (sent unchanged); `instruction` = this subtask (what the refiner revises).
 - `InstructionRefiner.refine(original_task, draft, context, target worker, probe workers) -> instruction` is the
-  method module: probe → compare → decide/verify issues → rewrite. It reads the context and returns only the
-  instruction.
+  method module: probe → compare → decide/verify issues → rewrite. It reads the context and returns the instruction,
+  plus facts from its checks that are appended after the unchanged context. Its steps run as turns of a discarded
+  copy of the orchestrator's conversation (refiner prompts r7).
 - Worker pools: `multi` (default: one role, executor Luna, probe-only Haiku 5.5; the orchestrator
   only writes instructions), `single` (the same role with one worker), `role_routing` (web / file roles the orchestrator chooses; a robustness check), `redundant`
   (several candidate workers are probed, the executor is fixed).

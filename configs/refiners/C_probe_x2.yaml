@@ -4,6 +4,7 @@
 # heterogeneity. Its B counterpart is B_self_review_x2 (two predictions for the executor).
 name: C_probe_x2
 kind: probe
+prompts: r5
 questions: [understanding, assumptions, failure, plan]
 probe_workers: executor
 samples_per_worker: 2

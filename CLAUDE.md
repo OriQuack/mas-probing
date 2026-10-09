@@ -16,13 +16,16 @@ modes, by varying one component at a time, and later ported to other frameworks.
 - `docs/reuse_from_pilot.md` lists what was copied from `../pilot` and the OWL-specific choices left out.
 
 Stage (2026-10-09): the 2026-10-08 baseline (tools v2, prompts v1, refiner prompts r2;
-`outputs/sessions/pilot-base-v2-20261008T160736Z/`, report `outputs/sessions/REPORT_20261008.md`) is
+run outputs deleted on 2026-10-09; report `outputs/sessions/REPORT_20261008.md`) is
 **superseded** by the user's revisions of 2026-10-09: refiner prompts r4 (R14), prompts v2 (F16, answer rules from
 the benchmark), tools v3 (K17: AOrchestra's question-based reader in `read_url`; `read_url_text`, `find_in_url`).
-Old checkpoints cannot be restored under them. Next (E5): inspect the validation pass `outputs/sessions/v3-check-*`,
-freeze, record the new baseline on `data/splits/baseline_v1.csv` (50 tasks, L1:L2:L3 = 8:25:17, contains the 12 dev
+Old checkpoints cannot be restored under them. Refiner prompts r6 (R21), then r7 (R22: the review runs in a copy
+of the orchestrator's conversation; `clarify`), and the three-stage plan (E8) followed the c2-insight traces
+(`outputs/sessions/c2-insight-*`); stage 1 restores its 11 d0 checkpoints: A / r5 / r6 in
+`outputs/sessions/stage1-r6-*`, r7 in `outputs/sessions/stage1-r7-*`. Next (E5): freeze (the validation passes `v3-*-check` and older run
+outputs were deleted on 2026-10-09), record the new baseline on `data/splits/baseline_v1.csv` (50 tasks, L1:L2:L3 = 8:25:17, contains the 12 dev
 tasks; E6) × 1 rep with checkpoints, on the `multi` pool (P7: condition 3's probe-only worker must be in the
-checkpoint's pool) with prompts v5 (F18) and refiner prompts r5 (R20); then restore under c1/c2/c3 (E7); open items in `docs/decisions.md` (F14, K8–K14, R3);
+checkpoint's pool) with prompts v5 (F18) and refiner prompts r7 (R22); then restore under c1/c2/c3 (E7, E8); open items in `docs/decisions.md` (F14, K8–K14, R3);
 more exploration tasks for Exp 1 headroom.
 
 ## Do not bring OWL back
@@ -38,14 +41,17 @@ scorer, splits) may be copied; record the copy in `docs/reuse_from_pilot.md`.
 minimal framework.md     framework spec (user's; authoritative for the framework)
 configs/pools/           worker pools: multi (default, P7), single (P6), role_routing, redundant (workers + roles)
 configs/refiners/        conditions: A_none (baseline); main comparison (E7) c1_self_review, c2_probe_executor,
-                         c3_probe_multi (same steps after collection); earlier arms kept for reference: B_self_review,
+                         c3_probe_multi (same steps after collection; refiner prompts r7); stage arms (E8):
+                         c2_probe_executor_r5 (earlier refiner, frozen r5), c2_probe_tools, c2_direct_check;
+                         earlier arms kept for reference (r5): B_self_review,
                          C_probe and variants C_probe_followup, C_probe_tools, C_probe_connected,
                          C_probe_connected_norewrite, C_probe_x2 / B_self_review_x2
 src/minpilot/
   harness.py             orchestrator loop, call_worker, checkpoints, restores (one Run per task run)
   config.py              WorkerSpec, RoleSpec, PoolConfig, RefinerConfig, RunConfig (+ YAML loading)
-  agents/                orchestrator.py, worker.py, prompts.py (all prompts, PROMPTS_VERSION)
-  refine/                base.py (InstructionRefiner interface, NoRefiner), review.py (B and C)
+  agents/                orchestrator.py, worker.py, prompts.py (all prompts, PROMPTS_VERSION, refiner r7),
+                         prompts_r5.py (refiner prompts r5, frozen; `prompts: r5`)
+  refine/                base.py (InstructionRefiner interface, NoRefiner), review.py (B, C, direct check)
   llm/                   specs.py (model keys), client.py (OpenRouter over HTTP, budget, validation)
   runtime/trace.py       records (llm/tool/events), stage tags, budget scopes
   tools/                 toolbox.py (worker tools), web.py, reader.py (read_url's page reader, from AOrchestra),
@@ -69,7 +75,10 @@ answer is stored as given, with no re-output step). A role maps to a fixed **exe
 only writes instructions and chooses no role (P6); its executor is `gen_luna`, and `gen_haiku` (Claude Haiku 5.5) is a
 probe-only worker (P7). Main comparison: A_none vs c1_self_review / c2_probe_executor / c3_probe_multi (E7); `role_routing` (web / file roles) is kept for a robustness check. `call_worker(worker_id, original_task, instruction,
 context="") -> report` is the only way work gets done: a delegation has a `context` (what earlier reports said, sent
-unchanged) and an `instruction` (this subtask; the only thing the refiner revises; F21).
+unchanged) and an `instruction` (this subtask; what the refiner revises; F21). Facts from the refiner's checks are
+appended after the unchanged context (`context_additions`); actions go in the instruction. From refiner
+prompts r7 the review is the orchestrator's own: its steps are turns of a discarded copy of the orchestrator's
+conversation (R22).
 A worker (`luna-high`, effort high, with tools) gets the original task, the context and the instruction only, runs a tool loop and
 returns a free-text report; it keeps no state between calls. Web workers read pages through `read_url(url,
 question)` (a fixed `luna-high` page reader that sees only the page and the question; its calls count toward the
@@ -123,8 +132,10 @@ page-reader calls inside `read_url` also carry `component: reader` and the `tool
   path where web text reaches a model.
 - **Eval set** (`data/splits/eval_v1.csv`, 24 tasks) is for Exp 2 only. Never run, inspect or tune on it before
   then (`run_task.py` refuses it without `--allow-eval`). Exploration: `exploration_v1.csv`.
-- **The refiner sees only its `RefineRequest`** (original task, draft, target, probe workers) and the worker
-  profiles. It never sees the continuation, failure traces or the answer. Post-hoc rewrites written by a human or
+- **The refiner sees only its `RefineRequest`** (original task, draft, context, target, probe workers, and the
+  orchestrator's conversation up to the pending delegation; R1, R22) and the worker profiles. From refiner prompts
+  r7 its steps run in a discarded copy of the orchestrator's conversation. It never sees the continuation, failure
+  traces or the answer. Post-hoc rewrites written by a human or
   by Claude after reading traces are Exp 1 only: run them with `--source post_hoc` and keep them out of probe-effect
   claims.
 - **Probe isolation:** probe and verification conversations and files never reach the execution, except what the
@@ -139,7 +150,8 @@ page-reader calls inside `read_url` also carry `component: reader` and the `tool
 - Version bumps:
   - Orchestrator or worker prompts: bump `PROMPTS_VERSION` (restores refuse a mismatch).
   - Probe, review, analysis or rewrite prompts: bump `REFINER_PROMPTS_VERSION` (recorded; restores may use a newer
-    one, since refinement happens after the checkpoint).
+    one, since refinement happens after the checkpoint). Keep a set that an arm still compares against frozen in
+    its own module (as `prompts_r5.py`, selected by the condition's `prompts`).
   - Tool behaviour: bump `ToolConfig.tools_version` (a new cache file; restores refuse a mismatch).
 
 ## Models

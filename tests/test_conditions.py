@@ -14,7 +14,7 @@ LUNA, HAIKU = "openai/gpt-6-luna-20260922", "anthropic/claude-haiku-5.5-20261007
 DRAFT = "Count the orders in attachments/sheet.csv for 2025."
 REWRITTEN = "Count UNIQUE order ids in attachments/sheet.csv for 2025."
 ISSUE = {"id": "i1", "kind": "assumption", "summary": "rows vs unique ids", "evidence": "r1 counts rows",
-         "decision": "resolved_from_task", "resolution": "count unique ids"}
+         "decision": "clarify", "resolution": "count unique ids"}
 
 
 def script(**extra):
@@ -83,7 +83,7 @@ def test_c3_probes_luna_and_haiku_independently_and_executes_on_luna(tmp_path, t
     probes, execution = llm.by_kind["worker"][:2], llm.by_kind["worker"][2]
     assert [b["model"] for b in probes] == [LUNA, HAIKU]
     assert not any("probe answer" in json.dumps(b["messages"]) for b in probes)  # neither sees the other
-    a = llm.by_kind["analyze"][0]["messages"][1]["content"]
+    a = llm.by_kind["analyze"][0]["messages"][-1]["content"]
     assert "probe answer luna" in a and "probe answer haiku" in a
     assert execution["model"] == LUNA and len(execution["messages"]) == 2
     assert REWRITTEN in execution["messages"][1]["content"]
@@ -125,5 +125,5 @@ def test_one_role_is_named_the_worker_in_prompts(tmp_path, task):
     run.run_fresh()
     report = llm.by_kind["orchestrator"][1]["messages"][-1]["content"]
     assert "Report from the worker (delegation 1)" in report and "actually sent to the worker" in report
-    assert "to be sent to the worker:" in llm.by_kind["analyze"][0]["messages"][1]["content"]
-    assert "executed by the worker," in llm.by_kind["rewrite"][0]["messages"][1]["content"]
+    assert "sent to the worker, review its instruction" in llm.by_kind["analyze"][0]["messages"][-1]["content"]
+    assert "executed by the worker," in llm.by_kind["rewrite"][0]["messages"][-1]["content"]

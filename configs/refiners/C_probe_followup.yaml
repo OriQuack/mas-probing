@@ -3,6 +3,7 @@
 # C_probe instead.
 name: C_probe_followup
 kind: probe
+prompts: r5
 questions: [understanding, assumptions, failure, plan]
 samples_per_worker: 1
 probe_tools: false

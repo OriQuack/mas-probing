@@ -4,7 +4,7 @@
 import json
 
 from fakes import ScriptedLLM, delegate, finish
-from minpilot.agents import prompts
+from minpilot.agents import prompts, prompts_r5
 from minpilot.harness import Run
 from minpilot.tools.config import ToolConfig
 from test_harness import fake_web, make_run
@@ -39,7 +39,7 @@ def test_b_sees_the_real_system_prompt_and_probe_message(tmp_path, task):
     sim = llm.by_kind["simulate"][0]["messages"][1]["content"]
     worker = run.workers["gen_luna"]
     assert worker.system_message()["content"] in sim
-    real_probe = prompts.worker_request(run.original_task, prompts.probe_instruction(
+    real_probe = prompts.worker_request(run.original_task, prompts_r5.probe_instruction(  # B_self_review: r5
         DRAFT, run.cfg.refiner.questions, False, 0), kind="probe")
     assert real_probe in sim and "model" not in sim.lower().replace("reader model", "")
 

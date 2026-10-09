@@ -1,11 +1,11 @@
-# Condition 3 (decisions R20, E7, P7): several workers asked. Each listed worker answers the four questions
+# Condition 3 (decisions R20-R22, E7, P7): several workers asked. Each listed worker answers the probe
 # independently (no tools, separate conversations, not shown each other's answers); the analysis compares the
 # answer sets and decides which issues change the result; checks run through the executor; one rewrite.
 # Heterogeneous for now: the executor (Luna) + a probe-only Haiku 5.5 worker of the `multi` pool. The
 # homogeneous counterpart ([executor, executor]) is deferred. c3 - c2 = one more answer set + the comparison.
 name: c3_probe_multi
 kind: probe
-questions: [understanding, assumptions, failure, plan]
+prompts: r7
 probe_workers: [executor, gen_haiku]
 samples_per_worker: 1
 probe_tools: false

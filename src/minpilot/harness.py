@@ -208,7 +208,9 @@ class Run:
                 "condition": self.cfg.refiner.name, "refine_at": self.cfg.refine_at, "status": "running",
                 "final_answer": None, "started_at": time.time(), "git_commit": git_commit(), "code_hash": code_hash(),
                 "prompts_version": prompts.PROMPTS_VERSION,
-                "refiner_prompts_version": prompts.REFINER_PROMPTS_VERSION, "config": self.cfg.to_dict(),
+                # the condition's prompt set (r5 is kept frozen for the earlier-refiner arm; R21)
+                "refiner_prompts_version": ("r5" if self.cfg.refiner.prompts == "r5"
+                                            else prompts.REFINER_PROMPTS_VERSION), "config": self.cfg.to_dict(),
                 "costs": {"version": COSTS_VERSION, "tool_usd_per_credit": TOOL_USD_PER_CREDIT},
                 "models": self.model_identities(), "tools": self.tool_cfg.to_dict(),
                 "reader_identity": self.reader_identity, "reference_date": self.reference_date}
@@ -376,7 +378,8 @@ class Run:
     def _delegate(self, action: Action, k: int, override: tuple[str | None, str | None]) -> None:
         role = self.cfg.pool.roles[action.worker_id]
         req = RefineRequest(self.original_task, action.instruction, role.id, role.executor,
-                            self.cfg.refiner.probe_workers_for(role, self.cfg.pool), context=action.context)
+                            self.cfg.refiner.probe_workers_for(role, self.cfg.pool), context=action.context,
+                            orchestrator_messages=tuple(self.messages))  # ends with the pending action (R22)
         result: RefineResult
         if override[0] is not None:
             result = RefineResult(override[0], override[0] != action.instruction, "override",
@@ -387,15 +390,19 @@ class Run:
         else:
             result = RefineResult(action.instruction, False, "not_selected", {})
         self.handled += 1
+        # the orchestrator's context unchanged, then the review's facts under their own heading (F21)
+        sent_context = prompts.context_with_additions(action.context, result.context_additions)
         if result.log:
             (self.run_dir / "refine").mkdir(exist_ok=True)
             (self.run_dir / "refine" / f"d{k}.json").write_text(json.dumps(
-                {**result.log, "status": result.status, "final": result.instruction}, indent=1, ensure_ascii=False))
+                {**result.log, "status": result.status, "final": result.instruction,
+                 "context_additions": result.context_additions}, indent=1, ensure_ascii=False))
         self.trace.event("delegation", delegation=k, role=role.id, worker=role.executor, draft=action.instruction,
                          final=result.instruction, changed=result.changed, refine_status=result.status,
+                         context_additions=result.context_additions,
                          refiner=self.cfg.refiner.name, connected=result.execution_history is not None)
         with self.trace.tags(stage="execution", delegation=k, role=role.id, worker=role.executor):
-            call = self.run_worker(role.executor, self.original_task, result.instruction, context=action.context,
+            call = self.run_worker(role.executor, self.original_task, result.instruction, context=sent_context,
                                    history=result.execution_history)
         self.trace.event("report", delegation=k, worker=role.executor, status=call.status,
                          n_tool_calls=call.n_tool_calls, report=call.report)
@@ -403,14 +410,15 @@ class Run:
         same = " ".join(action.instruction.split())
         repeat_of = next((d["index"] for d in self.delegations if " ".join(d["draft"].split()) == same), None)
         self.delegations.append({"index": k, "role": role.id, "worker": role.executor, "context": action.context,
-                                 "draft": action.instruction,
+                                 "context_additions": result.context_additions, "draft": action.instruction,
                                  "final": result.instruction, "changed": result.changed,
                                  "refine_status": result.status, "report_status": call.status,
                                  "n_tool_calls": call.n_tool_calls, "draft_chars": len(action.instruction),
                                  "final_chars": len(result.instruction), "repeat_of": repeat_of})
         sent = result.instruction if (result.changed and self.cfg.show_final_instruction) else None
-        self.messages.append({"role": "user",
-                              "content": prompts.report_message(self.role_name(role.id), k, call.report, sent)})
+        added = result.context_additions if self.cfg.show_final_instruction else None
+        self.messages.append({"role": "user", "content": prompts.report_message(self.role_name(role.id), k,
+                                                                                call.report, sent, added)})
 
     def _finish(self, status: str, **extra) -> dict:
         warnings = reasoning_warnings(self.trace.usage)
@@ -447,7 +455,8 @@ class Run:
         (ck / "request.json").write_text(json.dumps(
             {"original_task": self.original_task, "context": action.context,
              "draft_instruction": action.instruction, "target_role": role.id,
-             "target_worker": role.executor, "probe_workers": list(role.probe_workers)}, indent=1, ensure_ascii=False))
+             "target_worker": role.executor, "probe_workers": list(role.probe_workers),
+             "orchestrator_messages": self.messages}, indent=1, ensure_ascii=False))
         self.trace.event("checkpoint", delegation=k, path=str(ck))
         return ck
 
