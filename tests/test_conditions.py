@@ -127,3 +127,28 @@ def test_one_role_is_named_the_worker_in_prompts(tmp_path, task):
     assert "Report from the worker (delegation 1)" in report and "actually sent to the worker" in report
     assert "sent to the worker, review its instruction" in llm.by_kind["analyze"][0]["messages"][-1]["content"]
     assert "executed by the worker," in llm.by_kind["rewrite"][0]["messages"][-1]["content"]
+
+
+def test_c3_answers_are_anonymous_in_a_shuffled_order(tmp_path, task, monkeypatch):
+    """R23: the analysis sees "respondent k" in the order the workers answered (shuffled per delegation); the log
+    keeps the order and each answer's worker; probes of every condition use tools (stage 4)."""
+    from minpilot.refine import review
+
+    class Reverse:
+        def shuffle(self, xs):
+            xs.reverse()
+
+    monkeypatch.setattr(review, "ORDER_RNG", Reverse())
+    llm = ScriptedLLM(script(**{f"worker:{LUNA}": ["probe answer luna", "2 unique orders"],
+                                f"worker:{HAIKU}": ["probe answer haiku"]}))
+    run = make_run(tmp_path, task, llm, pool="multi", refiner="c3_probe_multi")
+    assert run.run_fresh()["status"] == "ok"
+    assert [b["model"] for b in llm.by_kind["worker"]] == [HAIKU, LUNA, LUNA]
+    a = llm.by_kind["analyze"][0]["messages"][-1]["content"]
+    assert a.index("[r1] (respondent 1)\nprobe answer haiku") < a.index("[r2] (respondent 2)\nprobe answer luna")
+    for name in ("gen_luna", "gen_haiku", "luna", "haiku"):
+        assert name not in a.replace("probe answer luna", "").replace("probe answer haiku", "").lower()
+    log = json.loads((run.run_dir / "refine" / "d0.json").read_text())
+    assert log["probe_order"] == ["gen_haiku", "gen_luna"]
+    assert [(r["id"], r["worker_id"]) for r in log["responses"]] == [("r1", "gen_haiku"), ("r2", "gen_luna")]
+    assert all(load_refiner(c).probe_tools for c in ("c2_probe_tools", "c3_probe_multi"))

@@ -4,7 +4,7 @@
 # (R21); the c2 budget as is.
 name: c2_direct_check
 kind: direct_check
-prompts: r7
+prompts: r8
 probe_workers: executor
 max_verifications: 2
 verify_max_tool_calls: 10

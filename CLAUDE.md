@@ -22,10 +22,13 @@ the benchmark), tools v3 (K17: AOrchestra's question-based reader in `read_url`;
 Old checkpoints cannot be restored under them. Refiner prompts r6 (R21), then r7 (R22: the review runs in a copy
 of the orchestrator's conversation; `clarify`), and the three-stage plan (E8) followed the c2-insight traces
 (`outputs/sessions/c2-insight-*`); stage 1 restores its 11 d0 checkpoints: A / r5 / r6 in
-`outputs/sessions/stage1-r6-*`, r7 in `outputs/sessions/stage1-r7-*`. Next (E5): freeze (the validation passes `v3-*-check` and older run
+`outputs/sessions/stage1-r6-*`, r7 in `outputs/sessions/stage1-r7-*`. Stage 3 (E9): prompts v6 (F22: worker
+report Result / Evidence / Interpretation / Unfinished; targeted re-checks) and refiner prompts r8 (R23: anonymous,
+shuffled probe answers); fresh 50-task baselines `outputs/sessions/stage3-v5-base-*` (v5) and `stage3-v6-base-*` (v6),
+then stage 4 restores the v6 d0 checkpoints under A / c2_probe_tools / c3_probe_multi. Next (E5): freeze (the validation passes `v3-*-check` and older run
 outputs were deleted on 2026-10-09), record the new baseline on `data/splits/baseline_v1.csv` (50 tasks, L1:L2:L3 = 8:25:17, contains the 12 dev
 tasks; E6) × 1 rep with checkpoints, on the `multi` pool (P7: condition 3's probe-only worker must be in the
-checkpoint's pool) with prompts v5 (F18) and refiner prompts r7 (R22); then restore under c1/c2/c3 (E7, E8); open items in `docs/decisions.md` (F14, K8–K14, R3);
+checkpoint's pool) with prompts v6 (F22) and refiner prompts r8 (R23); then restore under c1/c2/c3 (E7, E8); open items in `docs/decisions.md` (F14, K8–K14, R3);
 more exploration tasks for Exp 1 headroom.
 
 ## Do not bring OWL back
@@ -41,7 +44,7 @@ scorer, splits) may be copied; record the copy in `docs/reuse_from_pilot.md`.
 minimal framework.md     framework spec (user's; authoritative for the framework)
 configs/pools/           worker pools: multi (default, P7), single (P6), role_routing, redundant (workers + roles)
 configs/refiners/        conditions: A_none (baseline); main comparison (E7) c1_self_review, c2_probe_executor,
-                         c3_probe_multi (same steps after collection; refiner prompts r7); stage arms (E8):
+                         c3_probe_multi (same steps after collection; refiner prompts r8); stage arms (E8):
                          c2_probe_executor_r5 (earlier refiner, frozen r5), c2_probe_tools, c2_direct_check;
                          earlier arms kept for reference (r5): B_self_review,
                          C_probe and variants C_probe_followup, C_probe_tools, C_probe_connected,
@@ -49,7 +52,7 @@ configs/refiners/        conditions: A_none (baseline); main comparison (E7) c1_
 src/minpilot/
   harness.py             orchestrator loop, call_worker, checkpoints, restores (one Run per task run)
   config.py              WorkerSpec, RoleSpec, PoolConfig, RefinerConfig, RunConfig (+ YAML loading)
-  agents/                orchestrator.py, worker.py, prompts.py (all prompts, PROMPTS_VERSION, refiner r7),
+  agents/                orchestrator.py, worker.py, prompts.py (all prompts, PROMPTS_VERSION, refiner r8),
                          prompts_r5.py (refiner prompts r5, frozen; `prompts: r5`)
   refine/                base.py (InstructionRefiner interface, NoRefiner), review.py (B, C, direct check)
   llm/                   specs.py (model keys), client.py (OpenRouter over HTTP, budget, validation)

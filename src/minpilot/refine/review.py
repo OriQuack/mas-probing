@@ -15,6 +15,9 @@ isolates where the answers come from. The prompt set is the condition's `prompts
   turn and its reply stay in the copy, so the rewrite turn follows them. B's predictions each start from the copy.
 - r5 (the frozen prompts_r5.py, the earlier refiner arm): each step is a separate conversation with its own
   system prompt.
+- r8 (decision R23): as r7, and the answers are anonymous: "respondent k" in an order shuffled per delegation
+  (`probe_order` in the log; each response keeps its `worker_id` for the record), so neither a name nor a position
+  tells the orchestrator's model which answer came from which model.
 
 Stopping rules (same for B and C): no issue that needs a change -> the draft is kept without a rewrite call
 (`no_issues`); the refinement budget runs out -> the draft is kept (`budget_exceeded`); a structured reply
@@ -26,12 +29,17 @@ the run.
 from __future__ import annotations
 
 import json
+import random
 import re
 
 from minpilot.agents import prompts, prompts_r5
 from minpilot.config import RefinerConfig
 from minpilot.refine.base import RefineContext, RefineRequest, RefineResult
 from minpilot.runtime.trace import BudgetExceeded
+
+
+# r8: the order in which probe workers answer (and so their ids) is shuffled per delegation (R23); tests replace it
+ORDER_RNG = random.SystemRandom()
 
 
 class RefineError(Exception):
@@ -300,14 +308,22 @@ class ProbeRefiner(_ReviewRefiner):
         cfg = self.cfg
         instruction = self.P.probe_for(req.draft_instruction, cfg, bool(req.context.strip()))
         log["probe_instruction"] = instruction
+        workers = list(req.probe_workers)
+        anonymous = self.P is prompts  # r8 (R23); r5 keeps the fixed order and the worker ids
+        if anonymous:
+            ORDER_RNG.shuffle(workers)
+            log["probe_order"] = workers
         out = []
-        for w in req.probe_workers:
+        for k, w in enumerate(workers):
             for s in range(cfg.samples_per_worker):
                 rid = f"r{len(out) + 1}"
                 call = ctx.call_worker(w, req.original_task, instruction, stage="refine.probe", context=req.context,
                                        allow_tools=cfg.probe_tools, max_tool_calls=cfg.probe_max_tool_calls,
                                        label=f"probe_{rid}")
-                out.append({"id": rid, "who": f"worker {w}, sample {s + 1}", "worker_id": w, "sample": s,
+                who = f"respondent {k + 1}" if anonymous else f"worker {w}"
+                if cfg.samples_per_worker > 1 or not anonymous:
+                    who += f", sample {s + 1}"
+                out.append({"id": rid, "who": who, "worker_id": w, "sample": s,
                             "text": call.report, "status": call.status, "n_tool_calls": call.n_tool_calls,
                             "messages": call.messages, **self._parsed(call.report)})
                 if cfg.probe_tools:  # what the probe observed, and from where (R21)
@@ -350,7 +366,9 @@ class SelfReviewRefiner(_ReviewRefiner):
                 msg = self.P.simulate_for(req.original_task, req.draft_instruction, profile, self.cfg, req.context)
                 text, _ = self._call(ctx, self._messages(self.P.simulate_system() if self.P is not prompts else "",
                                                          msg), stage="refine.review")
-                out.append({"id": rid, "who": f"predicted for worker {w}, sample {s + 1}", "worker_id": w,
+                who = (f"predicted, sample {s + 1}" if self.P is prompts  # r8: no worker ids (R23)
+                       else f"predicted for worker {w}, sample {s + 1}")
+                out.append({"id": rid, "who": who, "worker_id": w,
                             "sample": s, "text": text, **self._parsed(text)})
         return out
 

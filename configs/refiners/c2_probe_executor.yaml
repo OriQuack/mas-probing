@@ -3,7 +3,7 @@
 # answers instead of predicted ones. Stage 1 (E8): the revised refiner (r7) of the comparison draft / r5 / revised.
 name: c2_probe_executor
 kind: probe
-prompts: r7
+prompts: r8
 probe_workers: executor
 samples_per_worker: 1
 probe_tools: false

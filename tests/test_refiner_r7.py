@@ -1,4 +1,4 @@
-"""Refiner prompts r6/r7 (decisions R21, R22): the four-item probe, the analysis order and acceptance rule, the rewrite rules,
+"""Refiner prompts r6-r8 (decisions R21-R23): the four-item probe, the analysis order and acceptance rule, the rewrite rules,
 context additions (facts to the context, actions to the instruction), the frozen r5 arm, the probe-tools condition
 and its observation records, and the direct-check condition."""
 
@@ -74,8 +74,9 @@ def test_r7_analysis_and_rewrite_texts(tmp_path, task):
     assert "Do not demand explicit statements or a separate proof of uniqueness" in r
     assert "Another conceivable interpretation is not sufficient." in r
     log = refine_log(run)
-    assert log["prompts"] == "r7" and log["responses"][0]["parsed"]["plan"] == ["a"]
-    assert json.loads((run.run_dir / "run.json").read_text())["refiner_prompts_version"] == "r7"
+    assert log["prompts"] == "r8" and log["responses"][0]["parsed"]["plan"] == ["a"]
+    assert json.loads((run.run_dir / "run.json").read_text())["refiner_prompts_version"] == "r8"
+    assert "[r1] (respondent 1)\n" in a and "gen_luna" not in a and log["probe_order"] == ["gen_luna"]
 
 
 def test_context_additions_follow_the_unchanged_context(tmp_path, task):
@@ -161,6 +162,8 @@ def test_config_rules():
     with pytest.raises(ValueError):
         RefinerConfig(name="x", kind="direct_check", prompts="r5")
     assert refiner_from_dict({"name": "old", "kind": "probe"}).prompts == "r5"  # recorded before prompt sets
+    with pytest.raises(ValueError):
+        RefinerConfig(name="x", kind="probe", prompts="r7")  # not kept (R23)
 
 
 def test_r7_review_continues_a_discarded_copy_of_the_orchestrator_conversation(tmp_path, task):

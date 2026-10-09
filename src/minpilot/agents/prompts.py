@@ -4,7 +4,7 @@
 - REFINER_PROMPTS_VERSION: the probe, review, analysis, verification and rewrite prompts. They act only after a
   checkpoint, so a restore may use a newer version than the run that recorded the checkpoint. The previous set (r5) is
   kept frozen in prompts_r5.py for the earlier-refiner arm (decision R21). From r7 the review runs inside a
-  copy of the orchestrator's conversation (R22).
+  copy of the orchestrator's conversation (R22); from r8 probe answers are anonymous (R23).
 
 Written for this framework; nothing is taken from OWL's prompts. The answer-format rules are the benchmark's
 (GAIA's, in data/gaia.py) and are passed in by the harness.
@@ -25,7 +25,11 @@ from __future__ import annotations
 #     extracted text (decision F18). Delegated work (execution, checks) gets the call's tool-call limit and the
 #     no-question rule in its request, not in the system prompt (probes do not); the task text carries the run
 #     reference date (F19)
-PROMPTS_VERSION = "v5"
+# v6 (2026-10-09; stage 3 of E8, user's plan): worker report Result / Evidence / Interpretation / Unfinished (the
+#     interpretations and assumptions applied; claims not verified go under Unfinished); the orchestrator delegates a
+#     check only for a specific unresolved issue that could change the answer, and the check reports which
+#     observations support or change the current result (decision F22)
+PROMPTS_VERSION = "v6"
 # r2 (2026-10-08): the task's premises are given; issues never turn the subtask into "is the task answerable?"
 # r3 (2026-10-09): the rewrite prompt names the executing worker's role and tools (review: a rewrite must stay
 #     doable by the fixed executor)
@@ -51,7 +55,10 @@ PROMPTS_VERSION = "v5"
 #     orchestrator's intention, and stated in the instruction); the analysis compares the answers with the
 #     intention; `context_additions` only for facts the task and context do not contain (decision R22). r6 (the
 #     separate-conversation version of the same prompts) was run once in stage 1 and is not kept.
-REFINER_PROMPTS_VERSION = "r7"
+# r8 (2026-10-09; user's decision): probe answers are shown without worker ids or model names ("respondent k"),
+#     the probe workers answer in an order shuffled per delegation (logged), against the orchestrator model's
+#     self-preference; otherwise r7 (decision R23). r7 ran in stages 1-2 and is not kept.
+REFINER_PROMPTS_VERSION = "r8"
 
 TOOL_LINES = {
     "web_search": "web_search: search the web (Google results); returns titles, URLs and snippets",
@@ -115,8 +122,9 @@ earlier report used them.
 - finish: set `answer` to the final answer, when the task is solved or when you must give your best answer.
 
 Delegate one subtask at a time; you see each report before deciding the next step. Reports can be wrong or \
-incomplete. When an important result is in doubt, have it checked by delegating a check. Otherwise, build on \
-previous results rather than repeating completed work. You can delegate at most {max_delegations} times.
+incomplete. Delegate a check only for a specific unresolved issue that could change the answer, and have the check \
+report which observations support or change the current result. Otherwise, build on previous results rather than \
+repeating completed work. You can delegate at most {max_delegations} times.
 
 Answer format: {answer_format}
 `answer` holds only the answer itself, in this format. Do not add explanations, conditions, caveats or statements \
@@ -192,10 +200,11 @@ Files are referenced by paths relative to the working directory; task attachment
 
 Your final message (without a tool call) is your reply, and it is all the orchestrator sees. When you have \
 executed delegated work, report:
-Result: completed or useful partial findings.
-Evidence: supporting URLs, files, computations and created file paths.
-Assumptions: assumptions made and claims not verified.
-Unfinished: remaining work, failures and blockers."""
+Result: the result, or useful partial findings.
+Evidence: what supports it (URLs, files, computations, created file paths).
+Interpretation: the interpretations and assumptions you applied where the task or instruction left room for \
+judgment.
+Unfinished: claims not verified, remaining work, failures and blockers."""
 
 
 def context_block(context: str) -> str:

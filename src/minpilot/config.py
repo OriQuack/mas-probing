@@ -71,10 +71,10 @@ class PoolConfig:
 class RefinerConfig:
     name: str
     kind: str = "none"                       # none | self_review | probe | direct_check
-    # Refiner prompt set (decisions R21, R22): "r7" (current, prompts.py) or "r5" (frozen, prompts_r5.py; the earlier
-    # refiner arm). direct_check needs r7.
-    prompts: str = "r7"
-    # r5 only: which probe questions (r7's probe has four fixed labelled items).
+    # Refiner prompt set (decisions R21-R23): "r8" (current, prompts.py) or "r5" (frozen, prompts_r5.py; the earlier
+    # refiner arm). r6 and r7 are not kept. direct_check needs r8.
+    prompts: str = "r8"
+    # r5 only: which probe questions (r8's probe has four fixed labelled items).
     questions: tuple[str, ...] = PROBE_QUESTIONS
     # Who answers (decision P5): "pool" = the role's registered probe_workers; "executor" = the role's executor
     # only; or a list of worker ids of the pool ("executor" allowed as an entry). The pool, the executor and the
@@ -95,12 +95,12 @@ class RefinerConfig:
     def __post_init__(self):
         if self.kind not in ("none", "self_review", "probe", "direct_check"):
             raise ValueError(f"unknown refiner kind {self.kind!r}")
-        if self.prompts not in ("r5", "r7"):
-            raise ValueError(f"unknown refiner prompts {self.prompts!r}; known: r5, r7")
-        if self.prompts == "r7" and tuple(self.questions) != PROBE_QUESTIONS:
-            raise ValueError("`questions` applies to r5 only (r7's probe has four fixed items)")
-        if self.kind == "direct_check" and self.prompts != "r7":
-            raise ValueError("direct_check needs prompts r7")
+        if self.prompts not in ("r5", "r8"):
+            raise ValueError(f"unknown refiner prompts {self.prompts!r}; known: r5, r8 (r6 and r7 are not kept)")
+        if self.prompts == "r8" and tuple(self.questions) != PROBE_QUESTIONS:
+            raise ValueError("`questions` applies to r5 only (r8's probe has four fixed items)")
+        if self.kind == "direct_check" and self.prompts != "r8":
+            raise ValueError("direct_check needs prompts r8")
         bad = [q for q in self.questions if q not in PROBE_QUESTIONS]
         if bad:
             raise ValueError(f"unknown probe questions {bad}; known: {PROBE_QUESTIONS}")
