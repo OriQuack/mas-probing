@@ -27,7 +27,7 @@ def rewrite(instr=REWRITTEN):
 
 
 def base_script(**extra):
-    s = {"orchestrator": [delegate("generalist", DRAFT), finish("2")],
+    s = {"orchestrator": [delegate("worker", DRAFT), finish("2")],
          "analyze": [analysis()], "rewrite": [rewrite()]}
     s.update(extra)
     return s
@@ -38,7 +38,7 @@ def refine_log(run):
 
 
 def test_A_executes_draft_without_extra_calls(tmp_path, task):
-    llm = ScriptedLLM({"orchestrator": [delegate("generalist", DRAFT), finish("3")], "worker": ["3 orders"]})
+    llm = ScriptedLLM({"orchestrator": [delegate("worker", DRAFT), finish("3")], "worker": ["3 orders"]})
     run = make_run(tmp_path, task, llm, pool="single", refiner="A_none")
     run.run_fresh()
     assert len(llm.by_kind["worker"]) == 1 and DRAFT in llm.by_kind["worker"][0]["messages"][1]["content"]
@@ -56,7 +56,7 @@ def test_C_probes_every_candidate_and_executes_rewrite(tmp_path, task):
     assert [b["model"] for b in probes] == ["openai/gpt-6-luna-20260922", "google/gemini-3.1-flash-lite"]
     for b in probes:  # probe: original task + draft + the four questions; no tools by default
         text = b["messages"][1]["content"]
-        assert task.question in text and DRAFT in text and "Do NOT carry out" in text and "4. Plan" in text
+        assert task.question in text and DRAFT in text and "Do not execute the subtask" in text and "4. Plan" in text
         assert "tools" not in b
     # analysis saw both real answers; the executor (fixed: gen_luna) got the rewrite, in a fresh conversation
     a = llm.by_kind["analyze"][0]["messages"][1]["content"]
@@ -129,7 +129,7 @@ def test_refine_budget_exceeded_keeps_draft(tmp_path, task):
 
 
 def test_refine_at_first_only_refines_first_delegation(tmp_path, task):
-    llm = ScriptedLLM({"orchestrator": [delegate("generalist", DRAFT), delegate("generalist", "second"), finish("2")],
+    llm = ScriptedLLM({"orchestrator": [delegate("worker", DRAFT), delegate("worker", "second"), finish("2")],
                        "analyze": [analysis()], "rewrite": [rewrite()], "worker": ["p", "r1", "r2"]})
     run = make_run(tmp_path, task, llm, pool="single", refiner="C_probe", refine_at="first")
     run.run_fresh()
@@ -140,7 +140,7 @@ def test_refine_at_first_only_refines_first_delegation(tmp_path, task):
 def test_verification_runs_in_scratch_workspace(tmp_path, task):
     """A check delegated by the refiner writes a file; it must not appear in the execution's workspace."""
     ver = analysis(issues=[{**ISSUE, "decision": "needs_verification"}],
-                   verifications=[{"issue_id": "i1", "worker_id": "generalist", "instruction": "write marker"}])
+                   verifications=[{"issue_id": "i1", "worker_id": "worker", "instruction": "write marker"}])
     code = "open('marker.txt','w').write('x'); print('ok')"
     llm = ScriptedLLM(base_script(analyze=[ver], worker=[
         "probe", {"tool_calls": [("run_python", {"code": code})]}, "wrote marker", "2"]))
@@ -152,17 +152,26 @@ def test_verification_runs_in_scratch_workspace(tmp_path, task):
     assert "wrote marker" in llm.by_kind["rewrite"][0]["messages"][1]["content"]
 
 
-def test_verification_skipped_for_not_relevant_issues(tmp_path, task):
+def test_checks_run_only_for_needs_verification_issues(tmp_path, task):
+    """R20: checks requested for not_relevant, defer_to_execution or resolved issues are not run (counted by
+    decision); deferred issues still reach the rewrite."""
+    nv = {**ISSUE, "decision": "needs_verification"}
     nr = {**ISSUE, "id": "i2", "decision": "not_relevant"}
-    ver = [{"issue_id": "i2", "worker_id": "generalist", "instruction": "check x"},
-           {"issue_id": "i1", "worker_id": "generalist", "instruction": "check y"}]
-    llm = ScriptedLLM(base_script(analyze=[analysis(issues=(ISSUE, nr), verifications=ver)],
-                                  worker=["predicted answers", "checked y", "2 unique orders"]))
+    de = {**ISSUE, "id": "i3", "decision": "defer_to_execution", "summary": "deferred one"}
+    rs = {**ISSUE, "id": "i4"}
+    ver = [{"issue_id": "i2", "worker_id": "worker", "instruction": "check x"},
+           {"issue_id": "i1", "worker_id": "worker", "instruction": "check y"},
+           {"issue_id": "i3", "worker_id": "worker", "instruction": "check z"},
+           {"issue_id": "i4", "worker_id": "worker", "instruction": "check w"}]
+    llm = ScriptedLLM(base_script(analyze=[analysis(issues=(nv, nr, de, rs), verifications=ver)],
+                                  worker=["probe answers", "checked y", "2 unique orders"]))
     run = make_run(tmp_path, task, llm, pool="single", refiner="C_probe")
     assert run.run_fresh()["status"] == "ok"
     log = refine_log(run)
     assert [v["issue_id"] for v in log["verifications"]] == ["i1"]
-    assert log["verifications_skipped_not_relevant"] == 1
+    assert log["verifications_skipped"] == {"not_relevant": 1, "defer_to_execution": 1, "resolved_from_task": 1}
+    rewrite_text = llm.by_kind["rewrite"][0]["messages"][1]["content"]
+    assert "deferred one" in rewrite_text and "defer_to_execution" in rewrite_text
 
 
 def stages(run):
@@ -194,7 +203,7 @@ def test_truncated_analysis_is_refine_error_not_no_issues(tmp_path, task):
 
 
 def test_invalid_analysis_is_retried_once(tmp_path, task):
-    bad = analysis(verifications=[{"issue_id": "nope", "worker_id": "generalist", "instruction": "x"}])
+    bad = analysis(verifications=[{"issue_id": "nope", "worker_id": "worker", "instruction": "x"}])
     llm = ScriptedLLM(base_script(analyze=[bad, analysis()], worker=["probe answer", "2"]))
     run = make_run(tmp_path, task, llm, pool="single", refiner="C_probe")
     run.run_fresh()
@@ -211,7 +220,7 @@ def test_empty_rewrite_is_refine_error_not_unchanged(tmp_path, task):
 
 
 def test_answers_only_arm_executes_the_draft_after_a_connected_probe(tmp_path, task):
-    llm = ScriptedLLM({"orchestrator": [delegate("generalist", DRAFT), finish("2")], "worker": ["probe answer", "2"]})
+    llm = ScriptedLLM({"orchestrator": [delegate("worker", DRAFT), finish("2")], "worker": ["probe answer", "2"]})
     run = make_run(tmp_path, task, llm, pool="single", refiner="C_probe_connected_norewrite")
     assert run.run_fresh()["status"] == "ok"
     assert refine_log(run)["status"] == "answers_only" and set(llm.by_kind) == {"orchestrator", "worker"}
@@ -224,21 +233,23 @@ def test_rewrite_prompt_names_the_executor_tools(tmp_path, task):
     run = make_run(tmp_path, task, llm, pool="single", refiner="C_probe")
     run.run_fresh()
     text = llm.by_kind["rewrite"][0]["messages"][1]["content"]
-    assert "executed by generalist" in text and "web_search" in text
+    assert "executed by the worker" in text and "web_search" in text and "generalist" not in text.split("Verification results")[0]
 
 
-def test_r4_analysis_allows_premise_issues_and_rewrite_keeps_the_goal(tmp_path, task):
-    """R14 revised (refiner prompts r4): premises may be questioned; the rewrite turns contradictions into checks
-    and conditional steps, not into an assessment of whether the problem holds."""
+def test_r5_analysis_and_rewrite_rules(tmp_path, task):
+    """Refiner prompts r5 (R20; keeps R14): premises may be questioned; checks the executor can do are left to
+    execution; the rewrite is minimal and keeps the task's goal."""
     llm = ScriptedLLM(base_script(worker=["probe answer", "2"]))
     run = make_run(tmp_path, task, llm, pool="single", refiner="C_probe")
     run.run_fresh()
     analyze = llm.by_kind["analyze"][0]["messages"][1]["content"]
-    assert "wrong premises" in analyze and "treat them as given" not in analyze
+    assert "questionable premises" in analyze and "treat them as given" not in analyze
+    assert "- defer_to_execution:" in analyze and "Request checks only for needs_verification issues" in analyze
+    assert "compared" not in analyze and "answer sets above were given independently" not in analyze  # one answer
     assert "unanswerable" not in analyze and "one intended answer" not in analyze
     rewrite_text = llm.by_kind["rewrite"][0]["messages"][1]["content"]
-    assert "correct the instruction where it conflicts with the original task" in rewrite_text
-    assert "into an assessment of whether the problem holds" in rewrite_text
+    assert "Change only what is needed" in rewrite_text
+    assert "do not silently replace the task with a different one" in rewrite_text
     assert "most plausible intended reading" not in rewrite_text
 
 
@@ -261,6 +272,6 @@ def test_probe_worker_lists_are_validated_against_the_pool(tmp_path, task):
     cfg = RefinerConfig(name="C_bad", kind="probe", probe_workers=("executor", "nobody"))
     pool = load_pool("redundant")
     with pytest.raises(ValueError, match="not in pool"):
-        cfg.probe_workers_for(pool.roles["generalist"], pool)
+        cfg.probe_workers_for(pool.roles["worker"], pool)
     ok = RefinerConfig(name="C_list", kind="probe", probe_workers=("gen_gemini", "executor"))
-    assert ok.probe_workers_for(pool.roles["generalist"], pool) == ("gen_gemini", "gen_luna")
+    assert ok.probe_workers_for(pool.roles["worker"], pool) == ("gen_gemini", "gen_luna")

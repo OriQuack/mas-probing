@@ -2,9 +2,9 @@
 """Run many runs in parallel, each in its own process, into one session dir: fresh runs for a task list, or
 restores of checkpoints under several conditions (paired comparisons).
 
-  python scripts/run_batch.py --tasks data/splits/executor_selection_v1.csv --reps 3 --pool single \
+  python scripts/run_batch.py --tasks data/splits/executor_selection_v1.csv --reps 3 --pool multi \
       --refiner A_none --session outputs/sessions/base-<stamp> [--parallel 4] [--session-cost-usd 20]
-  python scripts/run_batch.py --checkpoints cks.txt --refiners A_none B_self_review C_probe --reps 3 \
+  python scripts/run_batch.py --checkpoints cks.txt --refiners A_none c1_self_review c2_probe_executor c3_probe_multi --reps 3 \
       --session outputs/sessions/exp-<stamp>          # cks.txt: one checkpoint dir per line
 
 Session dir: planned.csv (every planned run with its arm: task_id, label, mode, pool, condition, checkpoint,
@@ -71,7 +71,7 @@ def main() -> int:
     src.add_argument("--checkpoints", help="restores: file with one checkpoint dir per line")
     ap.add_argument("--reps", type=int, default=1)
     ap.add_argument("--rep-offset", type=int, default=0)
-    ap.add_argument("--pool", default="single", help="fresh runs only (restores keep the checkpoint's)")
+    ap.add_argument("--pool", default="multi", help="fresh runs only (restores keep the checkpoint's)")
     ap.add_argument("--refiner", default="A_none", help="fresh runs")
     ap.add_argument("--refiners", nargs="+", default=None, help="restores: the conditions to compare")
     ap.add_argument("--label-prefix", default="base")

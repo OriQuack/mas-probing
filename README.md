@@ -19,16 +19,18 @@ Framework spec: [`minimal framework.md`](minimal%20framework.md). Implementation
 ## Framework
 
 ```
-orchestrator (no tools) ── delegate(role, instruction) ──► [checkpoint] ──► InstructionRefiner ──► call_worker
+orchestrator (no tools) ── delegate(context, instruction) ─► [checkpoint] ──► InstructionRefiner ──► call_worker
         ▲                                                                   (A / B / C)          (executor)
         └────────────────────────────── report ◄───────────────────────────────────────────────────┘
 ```
 
-- `call_worker(worker_id, original_task, instruction) -> report` is the only interface to workers.
-- `InstructionRefiner.refine(original_task, draft, target worker, probe workers) -> instruction` is the method
-  module: probe → compare → decide/verify issues → rewrite.
-- Worker pools: `single` (default: one generalist worker with all tools; the orchestrator only writes
-  instructions), `role_routing` (web / file roles the orchestrator chooses; a robustness check), `redundant`
+- `call_worker(worker_id, original_task, instruction, context="") -> report` is the only interface to workers.
+  `context` = what earlier reports said (sent unchanged); `instruction` = this subtask (what the refiner revises).
+- `InstructionRefiner.refine(original_task, draft, context, target worker, probe workers) -> instruction` is the
+  method module: probe → compare → decide/verify issues → rewrite. It reads the context and returns only the
+  instruction.
+- Worker pools: `multi` (default: one role, executor Luna, probe-only Haiku 5.5; the orchestrator
+  only writes instructions), `single` (the same role with one worker), `role_routing` (web / file roles the orchestrator chooses; a robustness check), `redundant`
   (several candidate workers are probed, the executor is fixed).
 
 ## Setup
@@ -38,7 +40,7 @@ bash envs/doh_minpilot/setup.sh && conda activate doh_minpilot
 cp .env.example .env                     # OPENROUTER_API_KEY, SERPER_API_KEY
 bash scripts/crawl4ai/ensure.sh          # local page reader (pinned Crawl4AI image, Apptainer)
 python -m pytest
-python scripts/run_task.py fresh --task-id <id> --pool single --refiner A_none
+python scripts/run_task.py fresh --task-id <id> --pool multi --refiner A_none
 ```
 
 GAIA 2023 validation is expected at `~/data2/datasets/GAIA/2023/validation/`.

@@ -104,6 +104,8 @@ def render(run_dir: Path, max_chars: int) -> str:
                     out.append(f"rationale: {_clip(r['rationale'], max_chars)}")
                 if r.get("action") == "delegate":
                     out.append(f"role: {r.get('worker_id')}")
+                    if r.get("context"):
+                        out.append(f"context:\n<<<\n{r.get('context')}\n>>>")
                     out.append(f"instruction:\n<<<\n{r.get('instruction')}\n>>>")
                 else:
                     out.append(f"answer: {r.get('answer')!r}")

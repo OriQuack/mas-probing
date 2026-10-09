@@ -1,0 +1,14 @@
+# Condition 2 (decisions R20, E7): one worker asked. The executor answers the four questions (no tools, a separate
+# conversation), then the same analysis -> checks -> rewrite as conditions 1 and 3. c2 - c1: real answers instead
+# of predicted ones.
+name: c2_probe_executor
+kind: probe
+questions: [understanding, assumptions, failure, plan]
+probe_workers: executor
+samples_per_worker: 1
+probe_tools: false
+max_followups: 0
+max_verifications: 2
+verify_max_tool_calls: 10
+connect_probe_to_execution: false
+budget: {max_llm_calls: 60, max_cost_usd: 1.0, max_worker_calls: 8}

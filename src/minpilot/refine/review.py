@@ -33,7 +33,9 @@ class RefineError(Exception):
         self.problems = problems
 
 
-DECISIONS = ("resolved_from_task", "needs_verification", "not_relevant")
+# defer_to_execution: the executor checks it during execution (the rewrite states the check and how to proceed);
+# only needs_verification issues get pre-execution checks (decision R20)
+DECISIONS = ("resolved_from_task", "needs_verification", "defer_to_execution", "not_relevant")
 
 
 def check_analysis(d: dict, response_ids: set[str], role_ids: set[str]) -> str | None:
@@ -81,6 +83,7 @@ class _ReviewRefiner:
     # -- shared pipeline ----------------------------------------------------------------------
     def refine(self, req: RefineRequest, ctx: RefineContext) -> RefineResult:
         log: dict = {"refiner": self.cfg.name, "kind": self.cfg.kind, "draft": req.draft_instruction,
+                     "context": req.context,
                      "target_worker": req.target_worker, "probe_workers": list(req.probe_workers)}
         try:
             with ctx.budget_scope(self.cfg):
@@ -133,7 +136,7 @@ class _ReviewRefiner:
                 log["analysis"].append(analysis)
         issues = analysis.get("issues") or []
         actionable = [i for i in issues if i.get("decision") != "not_relevant"]
-        verifications = self._verify(req, ctx, analysis, {i.get("id") for i in issues if i not in actionable}, log)
+        verifications = self._verify(req, ctx, analysis, log)
         log["verifications"] = verifications
         if not actionable:
             return RefineResult(req.draft_instruction, False, "no_issues", log,
@@ -142,7 +145,8 @@ class _ReviewRefiner:
             ctx, [{"role": "system", "content": prompts.analyze_system()},
                   {"role": "user", "content": prompts.rewrite_request(req.original_task, req.draft_instruction,
                                                                       actionable, verifications,
-                                                                      ctx.worker_profile(req.target_worker))}],
+                                                                      ctx.worker_profile(req.target_worker),
+                                                                      req.context)}],
             stage="refine.rewrite", schema_name="rewrite", schema=prompts.REWRITE_SCHEMA, check=check_rewrite)
         log["rewrite"] = out
         if problems:
@@ -158,7 +162,8 @@ class _ReviewRefiner:
         target = ctx.worker_profile(req.target_worker)
         msg = prompts.analyze_request(req.original_task, req.draft_instruction, target,
                                       [{"id": r["id"], "who": r["who"], "text": r["text"]} for r in responses],
-                                      self.source, self.cfg.max_verifications, ctx.roles(), followups)
+                                      self.source, self.cfg.max_verifications, ctx.roles(), followups,
+                                      req.context)
         role_ids = {r["id"] for r in ctx.roles()}
         out, problems = self._call(
             ctx, [{"role": "system", "content": prompts.analyze_system()}, {"role": "user", "content": msg}],
@@ -166,14 +171,20 @@ class _ReviewRefiner:
             check=lambda d: check_analysis(d, {r["id"] for r in responses}, role_ids))
         return {**out, "retried": problems} if problems else out
 
-    def _verify(self, req: RefineRequest, ctx: RefineContext, analysis: dict, not_relevant_ids: set,
-                log: dict) -> list[dict]:
-        """Run the requested checks (at most max_verifications), except those for issues marked `not_relevant`."""
+    def _verify(self, req: RefineRequest, ctx: RefineContext, analysis: dict, log: dict) -> list[dict]:
+        """Run the requested checks (at most max_verifications, in the order given) for `needs_verification`
+        issues only; checks requested for issues with another decision are not run (counted by decision)."""
         out = []
-        asked = [v for v in analysis.get("verifications") or [] if v.get("issue_id") not in not_relevant_ids]
-        skipped = len(analysis.get("verifications") or []) - len(asked)
+        decision = {i.get("id"): i.get("decision") for i in analysis.get("issues") or []}
+        requested = analysis.get("verifications") or []
+        asked = [v for v in requested if decision.get(v.get("issue_id")) == "needs_verification"]
+        skipped: dict[str, int] = {}
+        for v in requested:
+            if v not in asked:
+                d = decision.get(v.get("issue_id"))
+                skipped[d] = skipped.get(d, 0) + 1
         if skipped:
-            log["verifications_skipped_not_relevant"] = skipped
+            log["verifications_skipped"] = skipped
         for i, v in enumerate(asked[:self.cfg.max_verifications]):
             worker = ctx.role_executor(v.get("worker_id", ""))
             entry = {"issue_id": v.get("issue_id"), "worker_id": v.get("worker_id"), "instruction": v.get("instruction")}
@@ -181,7 +192,7 @@ class _ReviewRefiner:
                 out.append({**entry, "report": "(not run: unknown worker)", "status": "skipped"})
                 continue
             call = ctx.call_worker(worker, req.original_task, prompts.verify_instruction(v.get("instruction", "")),
-                                   stage="refine.verify", allow_tools=True,
+                                   stage="refine.verify", allow_tools=True, context=req.context,
                                    max_tool_calls=self.cfg.verify_max_tool_calls, label=f"verify{i + 1}")
             out.append({**entry, "executed_by": worker, "report": call.report, "status": call.status,
                         "n_tool_calls": call.n_tool_calls})
@@ -203,13 +214,13 @@ class ProbeRefiner(_ReviewRefiner):
     def collect(self, req: RefineRequest, ctx: RefineContext, log: dict) -> list[dict]:
         cfg = self.cfg
         instruction = prompts.probe_instruction(req.draft_instruction, cfg.questions, cfg.probe_tools,
-                                                cfg.probe_max_tool_calls)
+                                                cfg.probe_max_tool_calls, bool(req.context.strip()))
         log["probe_instruction"] = instruction
         out = []
         for w in req.probe_workers:
             for s in range(cfg.samples_per_worker):
                 rid = f"r{len(out) + 1}"
-                call = ctx.call_worker(w, req.original_task, instruction, stage="refine.probe",
+                call = ctx.call_worker(w, req.original_task, instruction, stage="refine.probe", context=req.context,
                                        allow_tools=cfg.probe_tools, max_tool_calls=cfg.probe_max_tool_calls,
                                        label=f"probe_{rid}")
                 out.append({"id": rid, "who": f"worker {w}, sample {s + 1}", "worker_id": w, "sample": s,
@@ -250,7 +261,8 @@ class SelfReviewRefiner(_ReviewRefiner):
                 rid = f"r{len(out) + 1}"
                 text, _ = self._call(ctx, [{"role": "system", "content": prompts.simulate_system()},
                                            {"role": "user", "content": prompts.simulate_request(
-                                               req.original_task, req.draft_instruction, profile, self.cfg.questions)}],
+                                               req.original_task, req.draft_instruction, profile, self.cfg.questions,
+                                               req.context)}],
                                      stage="refine.review")
                 out.append({"id": rid, "who": f"predicted for worker {w}, sample {s + 1}", "worker_id": w,
                             "sample": s, "text": text})

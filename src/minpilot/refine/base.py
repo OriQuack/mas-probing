@@ -2,12 +2,14 @@
 
     refine(request, ctx) -> RefineResult
 
-Input (`RefineRequest`): the original task, the draft instruction, the target (executing) worker, and the probe
-workers. Output: the instruction to execute. Inside: probe -> compare answers -> decide/verify issues -> rewrite.
+Input (`RefineRequest`): the original task, the draft instruction, the delegation's context, the target
+(executing) worker, and the probe workers. Output: the instruction to execute. The context is read-only: every step
+(prediction, probes, analysis, checks, rewrite) sees it, and the harness sends it to the executor unchanged
+(decision F21). Inside: probe -> compare answers -> decide/verify issues -> rewrite.
 Decomposition, assignment and the final synthesis belong to the harness; this module is the unit that is ported
 to other frameworks and compared across conditions.
 
-The refiner sees exactly what the executing worker would see (original task + instruction) plus the worker
+The refiner sees exactly what the executing worker would see (original task + context + instruction) plus the worker
 profiles. It never sees the orchestrator's history, other reports, failure traces or the answer.
 
 Everything the refiner does goes through `RefineContext`, which the harness implements:
@@ -35,6 +37,7 @@ class RefineRequest:
     target_role: str               # the role the orchestrator delegated to
     target_worker: str             # the fixed executing worker of that role
     probe_workers: tuple[str, ...]
+    context: str = ""              # the orchestrator's context for this delegation (read-only, F21)
 
 
 @dataclass
@@ -53,7 +56,7 @@ class RefineContext(Protocol):
 
     def call_worker(self, worker_id: str, original_task: str, instruction: str, *, stage: str, allow_tools: bool,
                     max_tool_calls: int | None = None, history: list[dict] | None = None,
-                    user_message: str | None = None, label: str = "") -> WorkerCall: ...
+                    user_message: str | None = None, label: str = "", context: str = "") -> WorkerCall: ...
 
     def worker_profile(self, worker_id: str) -> dict[str, Any]: ...
 

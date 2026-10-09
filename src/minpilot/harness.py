@@ -3,10 +3,12 @@
     loop:  orchestrator action
              finish   -> final answer, done
              delegate -> [DELEGATION POINT k: checkpoint] -> refiner (if refine_at selects k) or override
-                         -> call_worker(executor, original_task, instruction) on the main workspace
+                         -> call_worker(executor, original_task, instruction, context) on the main workspace
                          -> report appended to the orchestrator's history
 
-`call_worker(worker_id, original_task, instruction) -> report` is the only way work gets done. The orchestrator
+`call_worker(worker_id, original_task, instruction, context="") -> report` is the only way work gets done. The
+orchestrator's delegate action has a `context` (what earlier reports said) and an `instruction` (this subtask); the
+refiner may change only the instruction and the context is sent unchanged (decision F21). The orchestrator
 never touches tools or files. Workers are stateless between calls, so the run state at a delegation point is
 small: the orchestrator's messages, the pending action, the delegation log, budget counters, tool counters
 (search pin, code-run numbering) and the workspace files. That is exactly what a checkpoint saves.
@@ -135,8 +137,9 @@ def reasoning_warnings(usage: dict) -> list[str]:
             if b.get("reasoning_calls", 0) >= MIN_CALLS_FOR_REASONING_WARNING and not b.get("reasoning_tokens")]
 
 
-def original_task_of(task: GaiaTask) -> str:
-    return prompts.original_task_text(task.question, f"attachments/{task.file_name}" if task.file_name else None)
+def original_task_of(task: GaiaTask, reference_date: str | None = None) -> str:
+    return prompts.original_task_text(task.question, f"attachments/{task.file_name}" if task.file_name else None,
+                                      reference_date)
 
 
 class Run:
@@ -150,7 +153,9 @@ class Run:
         self.tool_cfg = tool_cfg or ToolConfig()
         self.reader_identity = reader_identity
         self.trace = Trace(self.run_dir, cfg.budget)
-        self.original_task = original_task_of(task)
+        # fixed when a fresh run starts; a restore takes the checkpoint's (decision F19)
+        self.reference_date = dt.datetime.now(dt.timezone.utc).date().isoformat()
+        self.original_task = original_task_of(task, self.reference_date)
         self.transport = transport
         self.clients: dict[str, LLMClient] = {}
         self.web = web or WebTools(self.tool_cfg, question=task.question)
@@ -174,6 +179,10 @@ class Run:
         if key not in self.clients:
             self.clients[key] = LLMClient(get_spec(key), self.trace, transport=self.transport)
         return self.clients[key]
+
+    def role_name(self, role_id: str) -> str:
+        """How prompts name a role: "the worker" when the pool has one role (no role id is shown), else its id."""
+        return "the worker" if len(self.cfg.pool.roles) == 1 else role_id
 
     def role_list(self) -> list[dict]:
         return [{"id": r.id, "description": r.description, "tools": list(self.cfg.pool.role_tools(r.id))}
@@ -202,7 +211,7 @@ class Run:
                 "refiner_prompts_version": prompts.REFINER_PROMPTS_VERSION, "config": self.cfg.to_dict(),
                 "costs": {"version": COSTS_VERSION, "tool_usd_per_credit": TOOL_USD_PER_CREDIT},
                 "models": self.model_identities(), "tools": self.tool_cfg.to_dict(),
-                "reader_identity": self.reader_identity}
+                "reader_identity": self.reader_identity, "reference_date": self.reference_date}
 
     # -- entry points ------------------------------------------------------------------------
     def run_fresh(self) -> dict:
@@ -244,6 +253,9 @@ class Run:
         return run
 
     def _restore_state(self, ck: Path, state: dict, override: str | None, override_source: str | None) -> None:
+        # the checkpoint's date (None for checkpoints recorded before reference dates: the task text had none)
+        self.reference_date = state.get("reference_date")
+        self.original_task = original_task_of(self.task, self.reference_date)
         self.info = self._base_info("restore")
         self.info.update(restored_from=str(ck.resolve()), restored_delegation=state["delegation"],
                          override=override is not None, override_source=override_source)
@@ -332,7 +344,8 @@ class Run:
                 with self.trace.tags(stage="orchestrator", delegation=k):
                     action = self.orchestrator.next_action(self.messages, must_finish=must_finish)
                 self.trace.event("action", delegation=k, action=action.kind, worker_id=action.worker_id,
-                                 instruction=action.instruction, answer=action.answer, rationale=action.rationale,
+                                 context=action.context, instruction=action.instruction, answer=action.answer,
+                                 rationale=action.rationale,
                                  forced=must_finish, invalid_before=self.orchestrator.last_invalid)
                 if action.kind == "finish":
                     # the answer is kept exactly as given (scoring extracts separately); the rationale is kept for
@@ -344,17 +357,18 @@ class Run:
             self._delegate(action, k, override)
             override = (None, None)
 
-    # -- the worker interface (spec: call_worker(worker_id, original_task, instruction) -> report) --------
-    def call_worker(self, worker_id: str, original_task: str, instruction: str) -> str:
+    # -- the worker interface (spec: call_worker(worker_id, original_task, instruction, context) -> report) --
+    def call_worker(self, worker_id: str, original_task: str, instruction: str, context: str = "") -> str:
         """The spec's interface: run `worker_id` on the main workspace and return its report. Ports to other
         frameworks implement this; the harness itself uses `run_worker`, which also returns status and tool
         counts."""
-        return self.run_worker(worker_id, original_task, instruction).report
+        return self.run_worker(worker_id, original_task, instruction, context=context).report
 
-    def run_worker(self, worker_id: str, original_task: str, instruction: str, *,
+    def run_worker(self, worker_id: str, original_task: str, instruction: str, *, context: str = "",
                    history: list[dict] | None = None) -> WorkerCall:
         self.trace.before_worker_call()
-        return self.workers[worker_id].run(original_task, instruction, self.toolbox, history=history)
+        return self.workers[worker_id].run(original_task, instruction, self.toolbox, history=history,
+                                           context=context)
 
     def _refine_here(self) -> bool:
         return self.cfg.refine_at == "all" or (self.cfg.refine_at == "first" and self.handled == 0)
@@ -362,7 +376,7 @@ class Run:
     def _delegate(self, action: Action, k: int, override: tuple[str | None, str | None]) -> None:
         role = self.cfg.pool.roles[action.worker_id]
         req = RefineRequest(self.original_task, action.instruction, role.id, role.executor,
-                            self.cfg.refiner.probe_workers_for(role, self.cfg.pool))
+                            self.cfg.refiner.probe_workers_for(role, self.cfg.pool), context=action.context)
         result: RefineResult
         if override[0] is not None:
             result = RefineResult(override[0], override[0] != action.instruction, "override",
@@ -381,21 +395,28 @@ class Run:
                          final=result.instruction, changed=result.changed, refine_status=result.status,
                          refiner=self.cfg.refiner.name, connected=result.execution_history is not None)
         with self.trace.tags(stage="execution", delegation=k, role=role.id, worker=role.executor):
-            call = self.run_worker(role.executor, self.original_task, result.instruction,
+            call = self.run_worker(role.executor, self.original_task, result.instruction, context=action.context,
                                    history=result.execution_history)
         self.trace.event("report", delegation=k, worker=role.executor, status=call.status,
                          n_tool_calls=call.n_tool_calls, report=call.report)
-        self.delegations.append({"index": k, "role": role.id, "worker": role.executor, "draft": action.instruction,
+        # repeat_of: an earlier delegation whose draft is the same text (whitespace aside): repeated work (F20)
+        same = " ".join(action.instruction.split())
+        repeat_of = next((d["index"] for d in self.delegations if " ".join(d["draft"].split()) == same), None)
+        self.delegations.append({"index": k, "role": role.id, "worker": role.executor, "context": action.context,
+                                 "draft": action.instruction,
                                  "final": result.instruction, "changed": result.changed,
                                  "refine_status": result.status, "report_status": call.status,
-                                 "n_tool_calls": call.n_tool_calls})
+                                 "n_tool_calls": call.n_tool_calls, "draft_chars": len(action.instruction),
+                                 "final_chars": len(result.instruction), "repeat_of": repeat_of})
         sent = result.instruction if (result.changed and self.cfg.show_final_instruction) else None
-        self.messages.append({"role": "user", "content": prompts.report_message(role.id, k, call.report, sent)})
+        self.messages.append({"role": "user",
+                              "content": prompts.report_message(self.role_name(role.id), k, call.report, sent)})
 
     def _finish(self, status: str, **extra) -> dict:
         warnings = reasoning_warnings(self.trace.usage)
         self.trace.event("run_end", status=status, warnings=warnings)
         self._write_run_json(status=status, ended_at=time.time(), n_delegations=len(self.delegations),
+                             n_repeated_delegations=sum(d.get("repeat_of") is not None for d in self.delegations),
                              delegations=self.delegations, usage=self.trace.usage,
                              counters=self.trace.run_scope.counters(), warnings=warnings, **extra)
         return self.info
@@ -418,13 +439,14 @@ class Run:
                  "config": self.cfg.to_dict(), "models": self.model_identities(), "tools": self.tool_cfg.to_dict(),
                  "prompts_version": prompts.PROMPTS_VERSION,
                  "refiner_prompts_version": prompts.REFINER_PROMPTS_VERSION, "reader_identity": self.reader_identity,
-                 "code_hash": code_hash()}
+                 "code_hash": code_hash(), "reference_date": self.reference_date}
         (ck / "state.json").write_text(json.dumps(state, indent=1, ensure_ascii=False, default=str))
         (ck / "fingerprint.json").write_text(json.dumps(self.fingerprint(action, k), indent=1))
         role = self.cfg.pool.roles[action.worker_id]
         # the refiner's whole input (and nothing after the checkpoint): for post-hoc rewrites and audits
         (ck / "request.json").write_text(json.dumps(
-            {"original_task": self.original_task, "draft_instruction": action.instruction, "target_role": role.id,
+            {"original_task": self.original_task, "context": action.context,
+             "draft_instruction": action.instruction, "target_role": role.id,
              "target_worker": role.executor, "probe_workers": list(role.probe_workers)}, indent=1, ensure_ascii=False))
         self.trace.event("checkpoint", delegation=k, path=str(ck))
         return ck
@@ -457,14 +479,15 @@ class _Ctx:
         return self.toolboxes[label]
 
     def call_worker(self, worker_id, original_task, instruction, *, stage, allow_tools, max_tool_calls=None,
-                    history=None, user_message=None, label="") -> WorkerCall:
+                    history=None, user_message=None, label="", context="") -> WorkerCall:
         run = self.run
         toolbox = self.toolbox(label)
         with run.trace.tags(stage=stage, worker=worker_id, scratch=label):
             run.trace.before_worker_call()
+            kind = "probe" if stage in ("refine.probe", "refine.followup") else "task"  # checks are delegated work
             call = run.workers[worker_id].run(original_task, instruction, toolbox, allow_tools=allow_tools,
                                               max_tool_calls=max_tool_calls, history=history,
-                                              user_message=user_message)
+                                              user_message=user_message, kind=kind, context=context)
         run.trace.event("refine_worker_call", stage=stage, worker=worker_id, scratch=label, status=call.status,
                         n_tool_calls=call.n_tool_calls, report=call.report)
         return call
@@ -473,8 +496,11 @@ class _Ctx:
         pool = self.run.cfg.pool
         spec = pool.workers[worker_id]
         role = next((r for r in pool.roles.values() if worker_id == r.executor or worker_id in r.probe_workers), None)
-        return {"id": worker_id, "role": role.id if role else worker_id, "description": role.description if role else "",
-                "model": spec.model, "tools": list(spec.tools)}
+        # system_prompt: the registered one, so B's prediction shows the worker its real system message (R20)
+        # role: the name prompts show ("the worker" with one role); role_id: the pool's id
+        return {"id": worker_id, "role": self.run.role_name(role.id) if role else worker_id,
+                "role_id": role.id if role else None, "description": role.description if role else "",
+                "model": spec.model, "tools": list(spec.tools), "system_prompt": spec.system_prompt}
 
     def roles(self) -> list[dict]:
         return self.run.role_list()

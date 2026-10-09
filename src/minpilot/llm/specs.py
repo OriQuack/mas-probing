@@ -76,6 +76,13 @@ SPECS: dict[str, ModelSpec] = {
         context_window=128_000 - MAX_TOKENS - 8192, sampling={"temperature": 1.0, "top_p": 1.0},
         price_prompt=2.5e-6, price_completion=1e-5, image_tokens="tile",
         note="GPT-4o 2024-08-06 (knowledge cutoff 2023-10, before GAIA's release)."),
+    "haiku-high": ModelSpec(
+        key="haiku-high", model="anthropic/claude-haiku-5.5-20261007", provider="anthropic",
+        max_tokens=MAX_TOKENS_REASONING, reasoning={"effort": "high"}, preserve_reasoning=True,
+        price_prompt=1e-7, price_completion=5e-7, image_tokens="fixed:10000",
+        note="Claude Haiku 5.5 at effort high: a probe-only worker of the `multi` pool (heterogeneous probes, "
+             "decision P7); never an executor. Thinking blocks are re-sent in tool loops (reasoning_details). "
+             "No sampling parameters (not supported). Image tokens: a generous fixed bound for the reservation."),
     "gemini": ModelSpec(
         key="gemini", model="google/gemini-3.1-flash-lite", provider="google-ai-studio", max_tokens=MAX_TOKENS,
         sampling={"temperature": 1.0, "top_p": 0.95}, reasoning={"effort": "minimal"}, preserve_reasoning=True,

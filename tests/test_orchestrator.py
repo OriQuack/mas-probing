@@ -16,7 +16,8 @@ def orch(roles):
 def test_single_role_has_no_routing_choice():
     o = orch(ONE)
     system = o.initial_messages("task")[0]["content"]
-    assert "worker_id" not in system and "Workers:" not in system and "generalist" in system
+    assert "worker_id" not in system and "Workers:" not in system and "generalist" not in system
+    assert "The worker: Does everything." in system
     assert "worker_id" not in o.format["json_schema"]["schema"]["properties"]
     problem, action = o._parse({"rationale": "r", "action": "delegate", "instruction": "do x"}, False)
     assert problem == "" and action.worker_id == "generalist" and action.instruction == "do x"

@@ -1,4 +1,4 @@
-# Redundant candidates: one generalist role; several workers (different models, same prompt and tools) could
+# Redundant candidates: one role (id `worker`, P8); several workers (different models, same prompt and tools) could
 # do every subtask. Probes ask all candidates; the executor stays fixed (gen_luna), so the effect of a better
 # instruction is not mixed with worker selection.
 name: redundant
@@ -16,7 +16,7 @@ workers:
     max_tool_calls: 20
     system_prompt: *generalist
 roles:
-  - id: generalist
+  - id: worker
     description: Searches the web, reads web pages, files and images, and computes with Python.
     executor: gen_luna
     probe_workers: [gen_luna, gen_gemini]

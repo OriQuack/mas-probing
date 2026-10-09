@@ -2,7 +2,7 @@
 """Score run directories against GAIA ground truth (a separate step: ground truth never enters a run dir).
 
   python scripts/score_runs.py [RUN_DIR_OR_ROOT ...] [--out outputs/scores/scores.csv] [--expected planned.csv]
-                               [--exclude runs.txt] [--compare A_none C_probe [--compare A_none B_self_review]]
+                               [--exclude runs.txt] [--compare c1_self_review c3_probe_multi [--compare ...]]
 
 Primary metric: `correct` on the extracted answer (eval/answer.py, version recorded); `correct_raw` alongside.
 Runs with status other than ok count as wrong. `--expected` is a session's planned.csv (run_batch.py): every
@@ -20,7 +20,13 @@ reps, then the equal-weight mean over tasks.
 - Post-hoc overrides (Exp 1) form their own arms (`override=<source>`), never mixed with B/C.
 `--compare X Y`: paired comparison of restore arms X and Y on the same checkpoints (same pool, no override):
 per checkpoint the success rate over reps, per task the mean over its checkpoints, then the mean difference
-Y - X over tasks with a paired task-level bootstrap 95% CI (10,000 resamples, seed 0).
+Y - X over tasks with a paired task-level bootstrap 95% CI (10,000 resamples, seed 0), and the same paired
+mean difference of cost (`after_ck_usd`) and of refiner cost (`refine_usd`).
+
+Cost columns (decision E7: conditions are compared on cost too): `cost_usd` is the run's total; a restore carries
+the checkpoint's counters, so it includes the recording run's cost up to the checkpoint. `after_ck_usd` = cost
+after the checkpoint (= `cost_usd` for fresh runs); `refine_usd` = LLM + tool cost of the refiner's stages
+(`refine.*`: predictions, probes, analysis, checks, rewrite). Each arm prints its mean of both.
 """
 
 from __future__ import annotations
@@ -79,6 +85,26 @@ def missing_rows(rows: list[dict], plan: list[dict], excluded: set[tuple]) -> li
     return out
 
 
+def refine_usd(usage: dict) -> float:
+    return sum(float(b.get("cost_usd") or 0.0) + float(b.get("tool_usd") or 0.0)
+               for stage, b in (usage or {}).items() if stage.startswith("refine"))
+
+
+def checkpoint_usd(ck: str | None) -> float:
+    if not ck:
+        return 0.0
+    try:
+        state = json.loads((Path(ck) / "state.json").read_text())
+    except (OSError, ValueError):
+        return float("nan")
+    return float(((state.get("trace") or {}).get("counters") or {}).get("cost_usd") or 0.0)
+
+
+def mean(xs) -> float:
+    xs = [float(x) for x in xs if x is not None and not pd.isna(x)]
+    return sum(xs) / len(xs) if xs else float("nan")
+
+
 def arm_of(r: dict) -> str:
     return f"{r['mode']}|{r['pool']}|{r['condition']}|override={r['override_source'] or 'none'}"
 
@@ -92,6 +118,7 @@ def per_task(rows: list[dict]) -> dict[str, float]:
 
 def compare(df: pd.DataFrame, x: str, y: str, n_boot: int = 10_000, seed: int = 0) -> dict:
     d = df[(df["mode"] == "restore") & (df["override_source"].isna())]
+    d = d.assign(**{c: np.nan for c in ("after_ck_usd", "refine_usd") if c not in d})  # rows without costs
     out = {}
     for pool, g in d.groupby("pool"):
         gx, gy = g[g["condition"] == x], g[g["condition"] == y]
@@ -102,14 +129,18 @@ def compare(df: pd.DataFrame, x: str, y: str, n_boot: int = 10_000, seed: int = 
         for ck in cks:
             ax, ay = gx[gx["checkpoint"] == ck], gy[gy["checkpoint"] == ck]
             rows.append({"task_id": ax["task_id"].iloc[0], "x": ax["correct"].mean(), "y": ay["correct"].mean(),
-                         "nx": len(ax), "ny": len(ay)})
-        t = pd.DataFrame(rows).groupby("task_id")[["x", "y"]].mean()
+                         "nx": len(ax), "ny": len(ay),
+                         "usd_x": ax["after_ck_usd"].mean(), "usd_y": ay["after_ck_usd"].mean(),
+                         "ref_x": ax["refine_usd"].mean(), "ref_y": ay["refine_usd"].mean()})
+        t = pd.DataFrame(rows).groupby("task_id")[["x", "y", "usd_x", "usd_y", "ref_x", "ref_y"]].mean()
         diff = (t["y"] - t["x"]).to_numpy()
         rng = np.random.default_rng(seed)
         boots = rng.choice(diff, size=(n_boot, len(diff)), replace=True).mean(axis=1) if len(diff) else np.array([0])
         out[pool] = {"tasks": len(t), "checkpoints": len(cks), "x": float(t["x"].mean()), "y": float(t["y"].mean()),
                      "diff": float(diff.mean()), "ci95": [float(np.percentile(boots, 2.5)),
-                                                          float(np.percentile(boots, 97.5))]}
+                                                          float(np.percentile(boots, 97.5))],
+                     "usd_diff": float((t["usd_y"] - t["usd_x"]).mean()),
+                     "refine_usd_diff": float((t["ref_y"] - t["ref_x"]).mean())}
     return out
 
 
@@ -141,6 +172,7 @@ def main() -> None:
             ok = info.get("status") == "ok"
             gt = truth[info["task_id"]]
             c = info.get("counters") or {}
+            ref_usd = refine_usd(info.get("usage"))
             label = info.get("label") or ""
             rep = REP.search(label)
             ck = info.get("restored_from")
@@ -155,7 +187,8 @@ def main() -> None:
                 "correct_raw": bool(ok and question_scorer(raw, gt)),
                 "llm_usd": c.get("llm_usd", c.get("cost_usd")), "tool_usd": c.get("tool_usd"),
                 "cost_usd": c.get("cost_usd"), "tool_usd_cold": c.get("tool_usd_cold"),
-                "unknown_cost_calls": c.get("unknown_cost_calls"), "n_delegations": info.get("n_delegations")})
+                "unknown_cost_calls": c.get("unknown_cost_calls"), "n_delegations": info.get("n_delegations"),
+                "after_ck_usd": (c.get("cost_usd") or 0.0) - checkpoint_usd(ck), "refine_usd": ref_usd})
     if a.expected:
         miss = missing_rows(rows, load_plan(Path(a.expected)), excluded_keys)
         rows += miss
@@ -170,12 +203,15 @@ def main() -> None:
         arms[arm_of(r)].append(r)
     for arm, rs in sorted(arms.items()):
         pt = per_task(rs)
-        print(f"{arm}: tasks={len(pt)} runs={len(rs)} acc={sum(pt.values()) / len(pt):.3f}")
+        print(f"{arm}: tasks={len(pt)} runs={len(rs)} acc={sum(pt.values()) / len(pt):.3f} "
+              f"usd/run={mean(r.get('after_ck_usd') for r in rs):.4f} "
+              f"refine_usd/run={mean(r.get('refine_usd') for r in rs):.4f}")
     for x, y in a.compare:
         for pool, res in compare(df, x, y).items():
             print(f"compare {y} - {x} [{pool}]: tasks={res['tasks']} checkpoints={res['checkpoints']} "
                   f"{x}={res['x']:.3f} {y}={res['y']:.3f} diff={res['diff']:+.3f} "
-                  f"95% CI [{res['ci95'][0]:+.3f}, {res['ci95'][1]:+.3f}]")
+                  f"95% CI [{res['ci95'][0]:+.3f}, {res['ci95'][1]:+.3f}] "
+                  f"usd {res['usd_diff']:+.4f} refine_usd {res['refine_usd_diff']:+.4f}")
     print(f"{len(rows)} runs -> {out}")
 
 

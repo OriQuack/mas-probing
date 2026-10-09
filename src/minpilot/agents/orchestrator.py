@@ -31,6 +31,7 @@ class Action:
     instruction: str | None = None
     answer: str | None = None
     raw: dict | None = None
+    context: str = ""         # delegate: information from earlier reports, sent as is (decision F21)
 
 
 class Orchestrator:
@@ -82,5 +83,5 @@ class Orchestrator:
             if not (d.get("instruction") or "").strip():
                 return "`delegate` needs a non-empty `instruction`.", None
             return "", Action("delegate", d.get("rationale") or "", worker_id=wid,
-                              instruction=d["instruction"].strip(), raw=d)
+                              instruction=d["instruction"].strip(), raw=d, context=(d.get("context") or "").strip())
         return f"unknown action {json.dumps(kind)}.", None

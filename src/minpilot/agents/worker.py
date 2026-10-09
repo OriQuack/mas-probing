@@ -43,13 +43,16 @@ class Worker:
 
     def run(self, original_task: str, instruction: str, toolbox: Toolbox, *, allow_tools: bool = True,
             max_tool_calls: int | None = None, history: list[dict] | None = None,
-            user_message: str | None = None) -> WorkerCall:
-        """One request. `user_message` replaces the standard request text (used for follow-up questions, which
-        continue a probe conversation)."""
+            user_message: str | None = None, kind: str = "task", context: str = "") -> WorkerCall:
+        """One request. `kind` is "task" (execution, checks: the request states this call's tool-call limit) or
+        "probe" (review questions). `user_message` replaces the standard request text (used for follow-up
+        questions, which continue a probe conversation). `context`: the delegation's context (F21), shown between
+        the original task and the instruction."""
         limit = self.spec.max_tool_calls if max_tool_calls is None else max_tool_calls
-        msgs = list(history) if history else [self.system_message()]
-        msgs.append({"role": "user", "content": user_message or prompts.worker_request(original_task, instruction)})
         tools = tool_schemas(self.spec.tools) if allow_tools and self.spec.tools else None
+        msgs = list(history) if history else [self.system_message()]
+        msgs.append({"role": "user", "content": user_message or prompts.worker_request(
+            original_task, instruction, context=context, kind=kind, tool_limit=limit if tools is not None else None)})
         n, used, status = 0, [], "ok"
         for _ in range(limit + 2):
             forced = tools is not None and n >= limit

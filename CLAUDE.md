@@ -21,7 +21,8 @@ Stage (2026-10-09): the 2026-10-08 baseline (tools v2, prompts v1, refiner promp
 the benchmark), tools v3 (K17: AOrchestra's question-based reader in `read_url`; `read_url_text`, `find_in_url`).
 Old checkpoints cannot be restored under them. Next (E5): inspect the validation pass `outputs/sessions/v3-check-*`,
 freeze, record the new baseline on `data/splits/baseline_v1.csv` (50 tasks, L1:L2:L3 = 8:25:17, contains the 12 dev
-tasks; E6) × 1 rep with checkpoints, on the `single` pool (P6, prompts v4); open items in `docs/decisions.md` (F14, K8–K14, R3);
+tasks; E6) × 1 rep with checkpoints, on the `multi` pool (P7: condition 3's probe-only worker must be in the
+checkpoint's pool) with prompts v5 (F18) and refiner prompts r5 (R20); then restore under c1/c2/c3 (E7); open items in `docs/decisions.md` (F14, K8–K14, R3);
 more exploration tasks for Exp 1 headroom.
 
 ## Do not bring OWL back
@@ -35,10 +36,11 @@ scorer, splits) may be copied; record the copy in `docs/reuse_from_pilot.md`.
 
 ```
 minimal framework.md     framework spec (user's; authoritative for the framework)
-configs/pools/           worker pools: single (default, P6), role_routing, redundant (workers + roles)
-configs/refiners/        conditions: A_none, B_self_review, C_probe (main contrast: same steps after collection);
-                         variants C_probe_followup, C_probe_tools, C_probe_connected, C_probe_connected_norewrite,
-                         C_probe_x2 / B_self_review_x2
+configs/pools/           worker pools: multi (default, P7), single (P6), role_routing, redundant (workers + roles)
+configs/refiners/        conditions: A_none (baseline); main comparison (E7) c1_self_review, c2_probe_executor,
+                         c3_probe_multi (same steps after collection); earlier arms kept for reference: B_self_review,
+                         C_probe and variants C_probe_followup, C_probe_tools, C_probe_connected,
+                         C_probe_connected_norewrite, C_probe_x2 / B_self_review_x2
 src/minpilot/
   harness.py             orchestrator loop, call_worker, checkpoints, restores (one Run per task run)
   config.py              WorkerSpec, RoleSpec, PoolConfig, RefinerConfig, RunConfig (+ YAML loading)
@@ -63,9 +65,12 @@ outputs/, logs/          gitignored run artifacts
 One orchestrator (`luna-high`: no tools, JSON actions) runs a dynamic loop: each turn it either delegates one
 subtask (an instruction) to a **role**, or finishes with the answer (the benchmark's answer rules are passed in; the
 answer is stored as given, with no re-output step). A role maps to a fixed **executor** worker and to its
-**probe workers**. The default pool `single` has one role (a generalist worker with all tools), so the orchestrator
-only writes instructions and chooses no role (P6); `role_routing` (web / file roles) is kept for a robustness check. `call_worker(worker_id, original_task, instruction) -> report` is the only way work gets done.
-A worker (`luna-high`, effort high, with tools) gets the original task and the instruction only, runs a tool loop and
+**probe workers**. The default pool `multi` has one role (a generalist worker with all tools), so the orchestrator
+only writes instructions and chooses no role (P6); its executor is `gen_luna`, and `gen_haiku` (Claude Haiku 5.5) is a
+probe-only worker (P7). Main comparison: A_none vs c1_self_review / c2_probe_executor / c3_probe_multi (E7); `role_routing` (web / file roles) is kept for a robustness check. `call_worker(worker_id, original_task, instruction,
+context="") -> report` is the only way work gets done: a delegation has a `context` (what earlier reports said, sent
+unchanged) and an `instruction` (this subtask; the only thing the refiner revises; F21).
+A worker (`luna-high`, effort high, with tools) gets the original task, the context and the instruction only, runs a tool loop and
 returns a free-text report; it keeps no state between calls. Web workers read pages through `read_url(url,
 question)` (a fixed `luna-high` page reader that sees only the page and the question; its calls count toward the
 budgets), with `read_url_text` and `find_in_url` for raw text. Before a selected delegation (`refine_at:
@@ -84,17 +89,17 @@ any condition, or with a post-hoc override (Exp 1).
 ```bash
 conda activate doh_minpilot                      # build: bash envs/doh_minpilot/setup.sh
 python -m pytest                                 # offline suite (needs Landlock + GAIA data for zero skips)
-bash scripts/crawl4ai/ensure.sh                  # page reader; or reuse a running one:
-export CRAWL4AI_ENDPOINT=/home/dohyun/mas-uncertainty/pilot/outputs/servers/crawl4ai.json
-python scripts/run_task.py fresh --task-id <exploration id> --pool single --refiner A_none --label base_r0
-python scripts/run_task.py restore --checkpoint outputs/runs/<t>/<run>/checkpoints/d0 --refiner C_probe --label C_r0
+bash scripts/crawl4ai/ensure.sh                  # page reader (this repo's instance since 2026-10-09; CRAWL4AI_ENDPOINT
+                                                 # can point at another repo's running one)
+python scripts/run_task.py fresh --task-id <exploration id> --pool multi --refiner A_none --label base_r0
+python scripts/run_task.py restore --checkpoint outputs/runs/<t>/<run>/checkpoints/d0 --refiner c3_probe_multi --label c3_r0
 python scripts/run_task.py restore --checkpoint ... --query-file q.txt --source post_hoc    # Exp 1 override
 python scripts/score_runs.py [outputs/runs/...]                                             # -> outputs/scores/
 python scripts/run_batch.py --tasks data/splits/executor_selection_v1.csv --reps 3 --session outputs/sessions/<name>
-python scripts/run_batch.py --checkpoints cks.txt --refiners A_none B_self_review C_probe --reps 3 \
+python scripts/run_batch.py --checkpoints cks.txt --refiners A_none c1_self_review c2_probe_executor c3_probe_multi --reps 3 \
     --session outputs/sessions/<name>              # paired restores; planned.csv records every run's arm
 python scripts/score_runs.py <session>/runs --out <session>/scores.csv --expected <session>/planned.csv \
-    [--compare A_none C_probe] [--exclude contaminated.txt]   # arms by condition; paired bootstrap on checkpoints
+    [--compare c1_self_review c3_probe_multi] [--exclude contaminated.txt]   # paired accuracy + cost differences
 python scripts/audit_contamination.py <session>                                             # current blocklist
 python scripts/prepare_labelling.py <session>     # transcripts/ (render_trace.py) + labels/outcomes.csv
 ```
@@ -124,9 +129,9 @@ page-reader calls inside `read_url` also carry `component: reader` and the `tool
   claims.
 - **Probe isolation:** probe and verification conversations and files never reach the execution, except what the
   rewritten instruction states (and the explicit `connect_probe_to_execution` condition).
-- **Equal budgets for B and C** (`RefinerConfig.budget`, `max_verifications`, samples), and **the same steps after
-  collecting answers** (no follow-ups in the main contrast; `C_probe_followup` is a separate variant). The executor
-  is fixed across A/B/C. A `refine_error` (unusable refiner reply) executes the draft and is reported separately.
+- **Equal budgets for c1/c2/c3 (and B/C)** (`RefinerConfig.budget`, `max_verifications`), and **the same steps
+  after collecting answers** (no follow-ups in the main contrast; `C_probe_followup` is a separate variant). The
+  executor is fixed across all conditions. c3 - c2 is one more answer set and the comparison together (E7). A `refine_error` (unusable refiner reply) executes the draft and is reported separately.
 - **Paired comparison:** every condition, A included, restores the same checkpoint. The recording run's own
   continuation is not an A rep. Reps: about 3 per condition; interleave condition order.
 - **Report all pre-selected tasks;** non-`ok` runs count as failures. Aggregation: per-task success over reps, then
