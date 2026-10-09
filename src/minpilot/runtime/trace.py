@@ -17,6 +17,11 @@ Budgets. A stack of `BudgetScope`s: the run's scope is always active; refinement
 refinement is capped on its own and still counts toward the run. Every model request reserves its worst-case
 cost first (`before_llm`), every tool call checks first (`before_tool`), and the request timeout is capped at
 the remaining wall time. Exceeding any active scope raises `BudgetExceeded(scope_name)`.
+
+Costs (review 2026-10-09, F5). `cost_usd` = `llm_usd` + `tool_usd` (paid tool calls priced in runtime/costs.py);
+budgets limit the total. `tool_usd_cold` prices the same tool calls as if the cache were empty, so condition order
+(warm cache) can be separated from cost differences. LLM attempts that end without a bill (timeouts, transport
+errors) count as $0 and are counted in `unknown_cost_calls`.
 """
 
 from __future__ import annotations
@@ -30,6 +35,8 @@ import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Iterator
+
+from minpilot.runtime.costs import MAX_TOOL_CALL_USD, TOOL_USD_PER_CREDIT, credits_usd
 
 
 class InfraError(Exception):
@@ -63,7 +70,11 @@ class BudgetScope:
     llm_calls: int = 0
     tool_calls: int = 0
     worker_calls: int = 0
-    cost_usd: float = 0.0
+    cost_usd: float = 0.0          # total: LLM + paid tools (what budgets limit)
+    llm_usd: float = 0.0
+    tool_usd: float = 0.0          # billed tool calls (cache hits cost nothing)
+    tool_usd_cold: float = 0.0     # the same calls as if the cache were empty (cold-cache equivalent)
+    unknown_cost_calls: int = 0    # LLM attempts whose billing is unknown (timeouts, transport errors), counted $0
     reserved_usd: float = 0.0
     started: float = field(default_factory=time.monotonic)
     wall_offset_s: float = 0.0  # wall time spent before a restore
@@ -76,7 +87,9 @@ class BudgetScope:
 
     def counters(self) -> dict:
         return {"llm_calls": self.llm_calls, "tool_calls": self.tool_calls, "worker_calls": self.worker_calls,
-                "cost_usd": round(self.cost_usd, 8), "wall_s": round(self.wall_s(), 3)}
+                "cost_usd": round(self.cost_usd, 8), "llm_usd": round(self.llm_usd, 8),
+                "tool_usd": round(self.tool_usd, 8), "tool_usd_cold": round(self.tool_usd_cold, 8),
+                "unknown_cost_calls": self.unknown_cost_calls, "wall_s": round(self.wall_s(), 3)}
 
 
 _TAGS: contextvars.ContextVar[dict] = contextvars.ContextVar("minpilot_tags", default={})
@@ -147,18 +160,27 @@ class Trace:
             rem = [r for s in self.scopes if (r := s.remaining_wall_s()) is not None]
         return min(rem) if rem else None
 
-    def settle_llm(self, reserve_usd: float, cost_usd: float) -> None:
+    def settle_llm(self, reserve_usd: float, cost_usd: float, unknown: bool = False) -> None:
         with self._lock:
             for s in self.scopes:
                 s.reserved_usd = max(0.0, s.reserved_usd - reserve_usd)
                 s.cost_usd += cost_usd
+                s.llm_usd += cost_usd
+                s.unknown_cost_calls += int(unknown)
 
     def before_tool(self) -> None:
         with self._lock:
             for s in self.scopes:
-                self._check(s, tool=1)
+                self._check(s, tool=1, usd=MAX_TOOL_CALL_USD)
             for s in self.scopes:
                 s.tool_calls += 1
+
+    def settle_tool(self, billed_usd: float, cold_usd: float) -> None:
+        with self._lock:
+            for s in self.scopes:
+                s.cost_usd += billed_usd
+                s.tool_usd += billed_usd
+                s.tool_usd_cold += cold_usd
 
     def before_worker_call(self) -> None:
         with self._lock:
@@ -207,11 +229,20 @@ class Trace:
     def tool(self, rec: dict) -> None:
         rec = {"ts": time.time(), **self.current_tags(), **rec}
         if rec.get("status") not in (None, "started"):
+            billed = credits_usd(rec.get("credits"))
+            # cold-cache equivalent: a cache hit from a billing backend would have cost one credit when fetched
+            cold = billed or (TOOL_USD_PER_CREDIT.get(rec.get("backend"), 0.0) if rec.get("cache_hit") else 0.0)
+            if billed or cold:
+                rec["tool_usd"], rec["tool_usd_cold"] = billed, cold
+                self.settle_tool(billed, cold)
             with self._lock:
                 b = self.usage.setdefault(rec.get("stage", "?"), {})
                 b["tool_calls"] = b.get("tool_calls", 0) + 1
                 for k, v in (rec.get("credits") or {}).items():
                     b[f"credits_{k}"] = b.get(f"credits_{k}", 0) + v
+                if billed or cold:
+                    b["tool_usd"] = b.get("tool_usd", 0.0) + billed
+                    b["tool_usd_cold"] = b.get("tool_usd_cold", 0.0) + cold
         self._append("tool_calls.jsonl", rec)
 
     def event(self, kind: str, **data: Any) -> None:
@@ -228,4 +259,8 @@ class Trace:
         s = self.run_scope
         s.llm_calls, s.tool_calls, s.worker_calls = c["llm_calls"], c["tool_calls"], c.get("worker_calls", 0)
         s.cost_usd, s.wall_offset_s = c["cost_usd"], c["wall_s"]
+        # checkpoints before cost accounting c1 have only cost_usd (= LLM cost then)
+        s.llm_usd = c.get("llm_usd", c["cost_usd"])
+        s.tool_usd, s.tool_usd_cold = c.get("tool_usd", 0.0), c.get("tool_usd_cold", 0.0)
+        s.unknown_cost_calls = c.get("unknown_cost_calls", 0)
         self.usage = {k: dict(v) for k, v in state.get("usage", {}).items()}

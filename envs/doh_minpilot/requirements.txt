@@ -1,4 +1,5 @@
-# Runtime deps of min_pilot (no camel/OWL). Exact versions are frozen after install in requirements.lock.
+# Runtime deps of min_pilot (no camel/OWL). Installs use the exact versions in requirements.lock; this file is
+# resolved only when updating the lock (UPDATE_LOCK=1 bash envs/doh_minpilot/setup.sh).
 requests
 python-dotenv
 pyyaml

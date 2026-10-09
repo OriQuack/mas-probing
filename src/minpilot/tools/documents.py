@@ -83,11 +83,22 @@ def pdf_to_text(data: bytes) -> str:
 def docx_to_text(data: bytes) -> str:
     import docx
 
+    from docx.table import Table
+    from docx.text.paragraph import Paragraph
+
     d = docx.Document(io.BytesIO(data))
-    parts = [p.text for p in d.paragraphs if p.text.strip()]
-    for t_idx, table in enumerate(d.tables, 1):
-        parts.append(f"[table {t_idx}]")
-        parts += [" | ".join(cell.text.strip() for cell in row.cells) for row in table.rows]
+    parts, t_idx = [], 0
+    # body order (tools v2): tables stay under the heading they follow, instead of all tables at the end
+    for el in d.element.body.iterchildren():
+        tag = el.tag.rsplit("}", 1)[-1]
+        if tag == "p":
+            text = Paragraph(el, d).text
+            if text.strip():
+                parts.append(text)
+        elif tag == "tbl":
+            t_idx += 1
+            parts.append(f"[table {t_idx}]")
+            parts += [" | ".join(cell.text.strip() for cell in row.cells) for row in Table(el, d).rows]
     return "\n".join(parts)
 
 
@@ -117,7 +128,8 @@ def spreadsheet_to_text(data: bytes, ext: str) -> str:
     sheets = pd.read_excel(io.BytesIO(data), sheet_name=None, header=None)
     out = []
     for name, df in sheets.items():
-        out.append(f"[sheet {name!r}: {df.shape[0]} rows x {df.shape[1]} cols, no header inferred]")
+        out.append(f"[sheet {name!r}: {df.shape[0]} rows x {df.shape[1]} cols; every row is shown, so a header row, "
+                   "if any, is the first row and is counted]")
         out.append(df.to_csv(index=False, header=False).strip())
     if ext == "xlsx":
         import openpyxl

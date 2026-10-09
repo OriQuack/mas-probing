@@ -135,3 +135,76 @@ def test_restore_with_override(tmp_path, task):
     assert info["override_source"] == "post_hoc"
     assert "same id are one order" in llm2.by_kind["worker"][0]["messages"][1]["content"]
     assert "revised in a pre-delegation review" in llm2.by_kind["orchestrator"][0]["messages"][-1]["content"]
+
+
+def test_recovered_invalid_action_is_logged(tmp_path, task):
+    bad = {"rationale": "r", "action": "delegate", "worker_id": "nobody", "instruction": "x", "answer": None}
+    llm = ScriptedLLM({"orchestrator": [bad, finish("7")]})
+    run = make_run(tmp_path, task, llm)
+    assert run.run_fresh()["final_answer"] == "7"
+    act = [e for e in events(run.run_dir) if e["event"] == "action"][0]
+    assert len(act["invalid_before"]) == 1 and "unknown worker_id" in act["invalid_before"][0]
+
+
+def test_restore_allows_newer_blocklist_but_not_older(tmp_path, task):
+    run1 = make_run(tmp_path, task, ScriptedLLM(two_step_script()), name="cont")
+    run1.run_fresh()
+    ck = run1.run_dir / "checkpoints" / "d0"
+    state = json.loads((ck / "state.json").read_text())
+    kw = dict(task=task, transport=ScriptedLLM({}), web=fake_web(tmp_path),
+              tool_cfg=ToolConfig(cache_path=tmp_path / "cache.sqlite"))
+    state["tools"]["blocklist_version"] = "v1"          # an older checkpoint: allowed
+    (ck / "state.json").write_text(json.dumps(state))
+    run = Run.restore(ck, tmp_path / "newer", **kw)
+    assert run.info["checkpoint_blocklist_version"] == "v1"
+    state["tools"]["blocklist_version"] = "v99"         # a checkpoint newer than the code: refused
+    (ck / "state.json").write_text(json.dumps(state))
+    with pytest.raises(ValueError, match="blocklist_version is older"):
+        Run.restore(ck, tmp_path / "older", **kw)
+
+
+def _checkpoint(tmp_path, task):
+    run1 = make_run(tmp_path, task, ScriptedLLM(two_step_script()), name="cont")
+    run1.run_fresh()
+    return run1.run_dir / "checkpoints" / "d0"
+
+
+@pytest.mark.parametrize("change", [{"page_chars": 7}, {"reader_chain": ("direct",)}, {"code_timeout_s": 1.0}])
+def test_restore_refuses_other_tool_settings(tmp_path, task, change):
+    ck = _checkpoint(tmp_path, task)
+    with pytest.raises(ValueError, match="tool settings differ"):
+        Run.restore(ck, tmp_path / "r", task=task, transport=ScriptedLLM({}), web=fake_web(tmp_path),
+                    tool_cfg=ToolConfig(cache_path=tmp_path / "cache.sqlite", **change))
+
+
+def test_restore_refuses_other_reader_identity(tmp_path, task):
+    ck = _checkpoint(tmp_path, task)
+    state = json.loads((ck / "state.json").read_text())
+    state["reader_identity"] = {"tag": "x", "docker_digest": "sha256:a", "sif_sha256": "b", "version": "1"}
+    (ck / "state.json").write_text(json.dumps(state))
+    with pytest.raises(ValueError, match="page-reader service identity"):
+        Run.restore(ck, tmp_path / "r", task=task, transport=ScriptedLLM({}), web=fake_web(tmp_path),
+                    tool_cfg=ToolConfig(cache_path=tmp_path / "cache.sqlite"),
+                    reader_identity={"tag": "x", "docker_digest": "sha256:other", "sif_sha256": "b", "version": "1"})
+
+
+def test_symlinks_are_part_of_the_fingerprint(tmp_path, task):
+    import os
+
+    run1 = make_run(tmp_path, task, ScriptedLLM(two_step_script()), name="cont")
+    (run1.run_dir / "work" / "attachments").mkdir(parents=True)
+    for n in ("one.txt", "two.txt"):
+        (run1.run_dir / "work" / n).write_text(n)
+    os.symlink("one.txt", run1.run_dir / "work" / "alias.txt")
+    run1.run_fresh()
+    ck = run1.run_dir / "checkpoints" / "d0"
+    os.remove(ck / "work" / "alias.txt")
+    os.symlink("two.txt", ck / "work" / "alias.txt")
+    with pytest.raises(ValueError, match="fingerprint"):
+        Run.restore(ck, tmp_path / "r", task=task, transport=ScriptedLLM({}), web=fake_web(tmp_path),
+                    tool_cfg=ToolConfig(cache_path=tmp_path / "cache.sqlite"))
+    os.remove(ck / "work" / "alias.txt")
+    os.symlink("/etc/passwd", ck / "work" / "alias.txt")
+    with pytest.raises(ValueError, match="symlinks leading outside"):
+        Run.restore(ck, tmp_path / "r2", task=task, transport=ScriptedLLM({}), web=fake_web(tmp_path),
+                    tool_cfg=ToolConfig(cache_path=tmp_path / "cache.sqlite"))

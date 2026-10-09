@@ -21,6 +21,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
@@ -156,7 +157,7 @@ class LLMClient:
             try:
                 data = self.transport(body, timeout)
             except TransientError as e:
-                self.trace.settle_llm(reserve, 0.0)
+                self.trace.settle_llm(reserve, 0.0, unknown=True)  # billing unknown: counted, recorded as $0
                 self.trace.llm({**base, "status": "error", "error": str(e)[:500], "transient": True,
                                 "latency_s": round(time.monotonic() - t0, 3)})
                 if attempt < self.retries:
@@ -211,12 +212,33 @@ class LLMClient:
             return "response names no provider (cannot verify the pinned provider)"
         if served != self.spec.provider.split("/")[0]:
             return f"served by provider {served!r}, pinned {self.spec.provider!r}"
+        if not same_model(data.get("model"), self.spec.model):
+            return f"served model {data.get('model')!r} is not the requested {self.spec.model!r}"
         cost = (data.get("usage") or {}).get("cost")
         if cost is None:
             return "response reports no cost (the cost budget cannot be enforced)"
         if float(cost) > reserve:
             return f"cost ${cost} above the reserved bound ${reserve:.5f}"
         return None
+
+
+# Served-model check (review 2026-10-09, F7). OpenRouter reports the served model without the dated suffix of a
+# pinned snapshot (requested openai/gpt-6-luna-20260922 -> served openai/gpt-6-luna), so ids are compared after
+# dropping a trailing date (-YYYYMMDD or -YYYY-MM-DD) and an OpenRouter variant (:free, ...). Exact aliases that
+# need more go in SERVED_ALIASES (requested -> accepted served ids).
+SERVED_ALIASES: dict[str, set[str]] = {}
+_DATE_SUFFIX = re.compile(r"-(\d{8}|\d{4}-\d{2}-\d{2})$")
+
+
+def _base_model(model: str) -> str:
+    return _DATE_SUFFIX.sub("", (model or "").split(":", 1)[0].strip().lower())
+
+
+def same_model(served: str | None, requested: str) -> bool:
+    if not served:
+        return False
+    return served == requested or served in SERVED_ALIASES.get(requested, set()) \
+        or _base_model(served) == _base_model(requested)
 
 
 def _count_images(messages: list[dict]) -> int:

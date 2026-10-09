@@ -15,9 +15,11 @@ modes, by varying one component at a time, and later ported to other frameworks.
   that kind, add it there (ID, choice, alternative, where).
 - `docs/reuse_from_pilot.md` lists what was copied from `../pilot` and the OWL-specific choices left out.
 
-Stage (2026-10-08): framework implemented; offline tests pass; one live smoke run (A, then restore under C) passed.
-Next: baselines on exploration tasks (several reps), the "first meaningful delegation" rubric (decision R3), then
-Exp 1.
+Stage (2026-10-08, night): live-tested on 3 tasks, bugs fixed (tools v2, blocklist v6, refiner prompts r2), and
+the **baseline (A, `role_routing`) recorded on the 12 pilot tasks × 3 and labelled**:
+`outputs/sessions/pilot-base-v2-20261008T160736Z/` (+ `pilot-base-v2-supp-*` for de9887f5). Read
+`outputs/sessions/REPORT_20261008.md` first. Next: the user's decisions on the open items in `docs/decisions.md`
+(F14 zero-delegation tasks, F16, K7–K14, R3), more exploration tasks for Exp 1 headroom, then Exp 1 restores.
 
 ## Do not bring OWL back
 
@@ -31,7 +33,9 @@ scorer, splits) may be copied; record the copy in `docs/reuse_from_pilot.md`.
 ```
 minimal framework.md     framework spec (user's; authoritative for the framework)
 configs/pools/           worker pools: role_routing, redundant, single (workers + roles)
-configs/refiners/        conditions: A_none, B_self_review, C_probe (+ C_probe_tools, C_probe_connected)
+configs/refiners/        conditions: A_none, B_self_review, C_probe (main contrast: same steps after collection);
+                         variants C_probe_followup, C_probe_tools, C_probe_connected, C_probe_connected_norewrite,
+                         C_probe_x2 / B_self_review_x2
 src/minpilot/
   harness.py             orchestrator loop, call_worker, checkpoints, restores (one Run per task run)
   config.py              WorkerSpec, RoleSpec, PoolConfig, RefinerConfig, RunConfig (+ YAML loading)
@@ -43,7 +47,8 @@ src/minpilot/
   data/gaia.py, eval/    GAIA loading (no answers), scorer, extraction rule
 scripts/                 run_task.py, score_runs.py, crawl4ai/, slurm/
 data/splits/             pre-registered task lists (copied from the previous pilot; never redraw)
-docs/                    decisions.md, reuse_from_pilot.md, cluster/slurm.md
+docs/                    decisions.md, reuse_from_pilot.md, failure_codebook.md, labelling_protocol.md,
+                         review_2026-10-09.md (implementation review and responses), cluster/slurm.md
 envs/doh_minpilot/       requirements.txt, setup.sh, requirements.lock
 tests/                   pytest, offline (scripted models, fake web)
 outputs/, logs/          gitignored run artifacts
@@ -77,7 +82,14 @@ python scripts/run_task.py fresh --task-id <exploration id> --pool role_routing 
 python scripts/run_task.py restore --checkpoint outputs/runs/<t>/<run>/checkpoints/d0 --refiner C_probe --label C_r0
 python scripts/run_task.py restore --checkpoint ... --query-file q.txt --source post_hoc    # Exp 1 override
 python scripts/score_runs.py [outputs/runs/...]                                             # -> outputs/scores/
+python scripts/run_batch.py --tasks data/splits/executor_selection_v1.csv --reps 3 --session outputs/sessions/<name>
+python scripts/score_runs.py <session>/runs --out <session>/scores.csv --expected <session>/planned.csv \
+    [--compare A_none C_probe] [--exclude contaminated.txt]   # arms by condition; paired bootstrap on checkpoints
+python scripts/audit_contamination.py <session>                                             # current blocklist
+python scripts/prepare_labelling.py <session>     # transcripts/ (render_trace.py) + labels/outcomes.csv
 ```
+Labelling: `docs/failure_codebook.md` (min_pilot's own categories and actors) and `docs/labelling_protocol.md`
+(blind to the ground truth; one JSON + one short rationale per run in `<session>/labels/`).
 Run dirs: `outputs/runs/<task_id>/<stamp>_<label>/`, which hold:
 - `run.json`;
 - `events.jsonl`, `llm_calls.jsonl`, `messages.jsonl`, `tool_calls.jsonl`;
@@ -101,14 +113,18 @@ Every record carries a `stage` tag (`orchestrator`, `execution`, `refine.review|
   claims.
 - **Probe isolation:** probe and verification conversations and files never reach the execution, except what the
   rewritten instruction states (and the explicit `connect_probe_to_execution` condition).
-- **Equal budgets for B and C** (`RefinerConfig.budget`, `max_verifications`, samples). The executor is fixed
-  across A/B/C.
+- **Equal budgets for B and C** (`RefinerConfig.budget`, `max_verifications`, samples), and **the same steps after
+  collecting answers** (no follow-ups in the main contrast; `C_probe_followup` is a separate variant). The executor
+  is fixed across A/B/C. A `refine_error` (unusable refiner reply) executes the draft and is reported separately.
 - **Paired comparison:** every condition, A included, restores the same checkpoint. The recording run's own
   continuation is not an A rep. Reps: about 3 per condition; interleave condition order.
 - **Report all pre-selected tasks;** non-`ok` runs count as failures. Aggregation: per-task success over reps, then
   the equal-weight mean over tasks; paired task-level bootstrap for differences.
-- When changing prompts, bump `PROMPTS_VERSION`; when changing tool behaviour, bump `ToolConfig.tools_version`
-  (a new cache file). Restores refuse mismatched versions.
+- Version bumps:
+  - Orchestrator or worker prompts: bump `PROMPTS_VERSION` (restores refuse a mismatch).
+  - Probe, review, analysis or rewrite prompts: bump `REFINER_PROMPTS_VERSION` (recorded; restores may use a newer
+    one, since refinement happens after the checkpoint).
+  - Tool behaviour: bump `ToolConfig.tools_version` (a new cache file; restores refuse a mismatch).
 
 ## Models
 
@@ -118,7 +134,9 @@ Keys are in `llm/specs.py`. Each key pins the model id, one provider (no fallbac
   (effort none, the only effort with function calling on Chat Completions).
 - `gemini` is the second candidate in the `redundant` pool. Which Gemini model to use is still open.
 - `gpt4o` is available.
-- Every call is cost-reserved before sending, validated (provider, cost) and recorded.
+- Every call is cost-reserved before sending, validated (provider, served model, cost) and recorded. Paid tool
+  calls are priced in `runtime/costs.py` and count toward `cost_usd` and budgets (`llm_usd`, `tool_usd`,
+  `tool_usd_cold`).
 - Secrets live in `.env`: `OPENROUTER_API_KEY`, `SERPER_API_KEY`.
 
 ## Environment

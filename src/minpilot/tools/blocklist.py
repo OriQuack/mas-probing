@@ -5,7 +5,7 @@ overnight runs (labels/SUMMARY.md): a benchmark mirror under another name (huggi
 kshitijthakkar/smoltrace-benchmark-v1), leaderboard pages, a paper printing agent traces on a task, SEO pages
 that restate a task question, and searches aimed at the benchmark.
 
-Copied unchanged from the previous pilot (rules v3). In min_pilot it is applied wherever outside text reaches a
+Copied from the previous pilot (rules v3); v4 is min_pilot's own. In min_pilot it is applied wherever outside text reaches a
 model (tools/web.py, tools/sandbox.py): search queries, search results (title + snippet), page reads (live and
 cache hits, final URL after redirects), Wayback snapshots, files that did not come with the task, and
 run_python output.
@@ -29,6 +29,18 @@ run_python output.
                               model through a search snippet in Qwen v2's bda648d7 run.
 v3 (2026-10-08) adds agent_eval_on_task and the URL rule `known_task_discussion` (papers found discussing GAIA
 tasks; extended when the audit finds one).
+v5 (2026-10-08, min_pilot; v4 was an intermediate never used for recorded results) closes gaps found by labelling
+the first min_pilot baseline (outputs/sessions/pilot-base-20261008T155247Z/labels):
+  - URL rules for query-echo and Q/A-aggregator pages (`query_echo_page`, `qa_aggregator`) and more known task
+    discussions (a blog, two OpenReview agent-trace attachments);
+  - quotes_task_question compares letters and digits only, so hyphenation and line breaks ("end- note") do not
+    defeat it;
+  - agent_trace_on_task also fires on "sub-task N:" trace wording, and on trace wording plus >= 3 of the
+    question's content words (a trace snippet that paraphrases the task shares no word 6-gram with it);
+  - web.py blocks a URL for the rest of the run once any rule blocked it (decisions used to differ per snippet).
+v6 (2026-10-08, from labelling the v5 baseline): URL rules for benchmark/leaderboard pages with a `gaia` path
+segment (hal.cs.princeton.edu/reliability/benchmark/gaia/analysis/ passed the content rules in 2 runs whenever its
+snippet did not start with the question) and more known task discussions (an AAAI paper quoting a task, an agent log in a GitHub issue).
 """
 
 from __future__ import annotations
@@ -40,10 +52,15 @@ import pandas as pd
 
 from minpilot.data.gaia import GAIA_ROOT
 
-BLOCKLIST_VERSION = "v3"
+BLOCKLIST_VERSION = "v6"
 
 _URL_RULES = [
     (re.compile(r"gaia[-_]?benchmark", re.I), "gaia_benchmark_url"),
+    # v6: benchmark / leaderboard / eval sites with a `gaia` path segment, e.g. .../benchmark/gaia/analysis/,
+    # .../suite/gaia/task/<id>
+    (re.compile(r"/(benchmarks?|leaderboards?|suites?|evals?|evaluations?|reliability)/gaia(/|$|[?#])", re.I),
+     "gaia_benchmark_url"),
+    (re.compile(r"/gaia/(analysis|tasks?|leaderboard|results|validation|test)(/|$|[?#])", re.I), "gaia_benchmark_url"),
     # Hugging Face datasets, spaces and their APIs/raw files, under ANY name: benchmark mirrors and agent-eval
     # dumps are published there under names without "gaia" (v0 leak). Model pages stay reachable.
     (re.compile(r"^https?://([a-z0-9-]+\.)*(huggingface\.co|hf\.co)/(api/)?(datasets|spaces)(/|$)", re.I), "hf_dataset_or_space"),
@@ -54,6 +71,16 @@ _URL_RULES = [
     (re.compile(r"arxiv\.org/(abs|pdf|html)/2311\.12983", re.I), "gaia_paper"),
     # Papers found discussing GAIA tasks (with their content) in prose; audit finds, extended over time.
     (re.compile(r"arxiv\.org/(abs|pdf|html)/2508\.05508", re.I), "known_task_discussion"),
+    (re.compile(r"ehudreiter\.com/2023/12/11/what-llms-cannot-do", re.I), "known_task_discussion"),  # v5
+    (re.compile(r"openreview\.net/(attachment|pdf|forum)\?id=(YTyfu1bU04|UoM3G7nKr0)\b", re.I),
+     "known_task_discussion"),  # v5: agent-trace papers on GAIA tasks
+    (re.compile(r"ojs\.aaai\.org/index\.php/AAAI/article/view/40594\b", re.I), "known_task_discussion"),  # v6
+    (re.compile(r"github\.com/MeetKai/functionary/issues/223\b", re.I), "known_task_discussion"),  # v6: agent log
+    # v5: pages generated from other people's search queries or Q/A "triples": they restate a task as keywords
+    # with an answer, and share too few word 6-grams with the question for the content rules (min_pilot
+    # pilot-base 2026-10-08: bda648d7 r2 received a nuggetpedia snippet stating the answer).
+    (re.compile(r"^https?://([a-z0-9-]+\.)*nuggetpedia\.com/", re.I), "qa_aggregator"),
+    (re.compile(r"^https?://([a-z0-9-]+\.)*instagram\.com/popular/", re.I), "query_echo_page"),
 ]
 
 _QUERY_TARGETING = re.compile(
@@ -65,7 +92,8 @@ _QUERY_TARGETING = re.compile(
 _BENCHMARK_MARKER = re.compile(
     r"(?i)gaia[-_ ]benchmark|\bgaia_\d+\b|general ai assistants?\b|\bgaia (leaderboard|validation( set)?|test set)\b")
 _TRACE_MARKER = re.compile(
-    r"(?i)\bmulti-?agent\b|\bagent'?s?\s+(dialogue|trajector(y|ies)|traces?|logs?)\b|\bsmolagents\b|\btool[- ]calls?\b")
+    r"(?i)\bmulti-?agent\b|\bagent'?s?\s+(dialogue|trajector(y|ies)|traces?|logs?)\b|\bsmolagents\b|\btool[- ]calls?\b"
+    r"|\bsub-?task\s*\d+\s*:")
 _AGENT_EVAL = re.compile(
     r"(?i)\bagentic\b|\b(llm|ai|web|research|language[- ]model|autonomous|generalist)[- ]agents?\b"
     r"|\bauto[- ]?eval|\b(agent|llm)[- ]as[- ]a[- ]judge\b|\bagent (benchmark|evaluation)s?\b"
@@ -106,6 +134,11 @@ def _norm(text: str) -> str:
     return _WS.sub(" ", text.lower()).strip()
 
 
+def _squash(text: str) -> str:
+    """Letters and digits only (v5): hyphenation, line breaks and punctuation do not matter."""
+    return re.sub(r"[^a-z0-9]", "", text.lower())
+
+
 def _sixgrams(text: str) -> set[tuple[str, ...]]:
     w = _WORD.findall(text.lower())
     return {tuple(w[i:i + 6]) for i in range(len(w) - 5)}
@@ -123,6 +156,10 @@ def _question_content_words(question: str) -> frozenset[str]:
                      if len(w) >= 5 and not w.isdigit() and w not in _COMMON)
 
 
+def _content_overlap(text: str, question: str) -> int:
+    return len(_question_content_words(question) & {w[:6] for w in _WORD.findall(text.lower())})
+
+
 def content_block_reason(text: str, question: str | None = None, allowed: tuple[str, ...] = ()) -> str | None:
     """`allowed`: exact strings exempt from the task-id rule (the current task's own attachment names, which
     are `<task_id>.<ext>`); they are removed before checking, everything else is checked as is."""
@@ -137,8 +174,8 @@ def content_block_reason(text: str, question: str | None = None, allowed: tuple[
     if _BENCHMARK_MARKER.search(text):
         return "gaia_benchmark_marker"
     if question:
-        probe = _norm(question)[:80]
-        if len(probe) >= 40 and probe in _norm(text):
+        probe = _squash(question)[:70]
+        if len(probe) >= 35 and probe in _squash(text):
             return "quotes_task_question"
         q_grams, q_tokens = _question_features(question)
         if q_grams or q_tokens:
@@ -146,10 +183,9 @@ def content_block_reason(text: str, question: str | None = None, allowed: tuple[
             shared = len(q_grams & t_grams)
             if len(q_grams) >= 5 and shared / len(q_grams) >= 0.5:
                 return "restates_task_question"
-            if _TRACE_MARKER.search(text) and (shared or any(tok in text for tok in q_tokens)):
+            if _TRACE_MARKER.search(text) and (shared or any(tok in text for tok in q_tokens)
+                                               or _content_overlap(text, question) >= 3):
                 return "agent_trace_on_task"
-        if _AGENT_EVAL.search(text):
-            words = {w[:6] for w in _WORD.findall(text.lower())}
-            if len(_question_content_words(question) & words) >= 3:
-                return "agent_eval_on_task"
+        if _AGENT_EVAL.search(text) and _content_overlap(text, question) >= 3:
+            return "agent_eval_on_task"
     return None

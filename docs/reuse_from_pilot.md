@@ -18,6 +18,10 @@ were deliberately left behind. Check it before copying anything else over.
 | `llm/specs.py` (model keys, routing, cost reservation) | `models/openrouter.py` | No camel; reasoning re-sending is now just a field kept on the message |
 | `data/splits/*.csv` | same | None (pre-registered; never redraw) |
 | `docs/cluster/slurm.md`, `scripts/slurm/gpu_job.sbatch` | same | Job name |
+| `scripts/audit_contamination.py` | same | Rewritten for min_pilot records; browser checks dropped; read URLs checked |
+| `scripts/render_trace.py` | same (idea only) | Rewritten for min_pilot's records and actors |
+| `docs/failure_codebook.md`, `docs/labelling_protocol.md` | `docs/failure_codebook.md`, session `labels/PROTOCOL.md` | Objectivity rules and implementation-induced categories kept; actors, categories and fields re-defined for min_pilot (decision L2) |
+| `scripts/run_batch.py` | `scripts/run_batch.py` (idea only) | Written new: subprocess per run, rep-major, session cost cap |
 
 ## Not carried over (OWL-specific)
 

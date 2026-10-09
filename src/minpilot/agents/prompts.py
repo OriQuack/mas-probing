@@ -1,4 +1,8 @@
-"""All prompts of min_pilot, in one place (versioned with PROMPTS_VERSION, recorded per run).
+"""All prompts of min_pilot, in one place, with two versions recorded per run:
+- PROMPTS_VERSION: the orchestrator and worker prompts (what a run and its checkpoints are made of; a restore
+  refuses a different version).
+- REFINER_PROMPTS_VERSION: the probe, review, analysis, verification and rewrite prompts. They act only after a
+  checkpoint, so a restore may use a newer version than the run that recorded the checkpoint.
 
 Written for this framework; nothing is taken from OWL's prompts. The answer-format rule is GAIA's own
 (from the GAIA paper's system prompt).
@@ -7,6 +11,10 @@ Written for this framework; nothing is taken from OWL's prompts. The answer-form
 from __future__ import annotations
 
 PROMPTS_VERSION = "v1"
+# r2 (2026-10-08): the task's premises are given; issues never turn the subtask into "is the task answerable?"
+# r3 (2026-10-09): the rewrite prompt names the executing worker's role and tools (review: a rewrite must stay
+#     doable by the fixed executor)
+REFINER_PROMPTS_VERSION = "r3"
 
 GAIA_ANSWER_FORMAT = (
     "The final answer should be a number OR as few words as possible OR a comma separated list of numbers and/or "
@@ -205,7 +213,10 @@ Answers to review questions about this instruction, {origin}:
 Find issues in the instruction: places where its scope, targets or direction can be misunderstood; important \
 unstated assumptions or wrong premises; likely failures with no stated handling; missing or wrongly ordered steps. \
 Differences between answers point to ambiguity, but neither agreement nor disagreement decides what is correct: \
-judge against the original task. For each issue choose a decision:
+judge against the original task. The original task has one intended answer, and its stated premises define the \
+problem: treat them as given even when they are loose or imprecise about the real world, and resolve doubts \
+about them toward the most plausible intended reading. Never raise an issue whose resolution would make the \
+subtask conclude that the task is invalid, impossible or unanswerable. For each issue choose a decision:
 - resolved_from_task: the original task or the instruction itself settles it; give the resolution.
 - needs_verification: a fact must be checked first (in the files or on the web).
 - not_relevant: it does not affect the result.
@@ -242,7 +253,8 @@ def verify_instruction(check: str) -> str:
             f"what you found, with evidence.\n\nCheck:\n{check}")
 
 
-def rewrite_request(original_task: str, draft: str, issues: list[dict], verifications: list[dict]) -> str:
+def rewrite_request(original_task: str, draft: str, issues: list[dict], verifications: list[dict],
+                    target: dict) -> str:
     import json
 
     ver = "\n\n".join(f"[{v['issue_id']}] check by {v['worker_id']}: {v['instruction']}\nResult:\n{v['report']}"
@@ -252,7 +264,8 @@ def rewrite_request(original_task: str, draft: str, issues: list[dict], verifica
 {original_task}
 >>>
 
-Current subtask instruction:
+Current subtask instruction (it will be executed by {target['role']}, whose tools are: \
+{', '.join(target['tools'])}):
 <<<
 {draft}
 >>>
@@ -264,13 +277,17 @@ Verification results:
 {ver}
 
 Write the final version of the subtask instruction, once. Rules:
-- Keep the subtask's goal and scope unless an issue shows that the instruction contradicts the original task.
+- Keep the subtask's goal and scope unless an issue shows that the instruction contradicts the original task. \
+The rewritten subtask must still produce the result the current instruction asks for; never turn it into deciding \
+whether the task can be answered. Where a premise of the original task is imprecise, tell the worker to follow its \
+most plausible intended reading and to state that reading.
 - Turn resolved issues into explicit criteria, conditions or steps.
 - State verified facts explicitly; the worker will not see this review.
 - Do not state unverified claims as facts or requirements; instead tell the worker to check them first and how to \
 proceed depending on the result.
 - Write a self-contained instruction (the worker sees only the original task and this instruction); do not paste \
 the review. Where it helps, use the parts "Task:", "Criteria:", "Checks:", "Report:".
+- Keep the subtask doable by the executing worker with its tools; do not ask it for work its tools cannot do.
 - If no issue requires a change, return the current instruction unchanged and set `unchanged` to true."""
 
 

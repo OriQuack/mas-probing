@@ -1,0 +1,8 @@
+# B counterpart of C_probe_x2: two predicted answer sets for the same worker, then the shared pipeline.
+name: B_self_review_x2
+kind: self_review
+questions: [understanding, assumptions, failure, plan]
+samples_per_worker: 2
+max_verifications: 2
+verify_max_tool_calls: 10
+budget: {max_llm_calls: 60, max_cost_usd: 1.0, max_worker_calls: 8}

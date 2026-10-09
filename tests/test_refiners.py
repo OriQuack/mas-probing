@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from fakes import ScriptedLLM, delegate, finish
+from fakes import Raw, ScriptedLLM, delegate, finish
 from minpilot.config import RefinerConfig, load_refiner
 from minpilot.runtime.trace import Limits
 from test_harness import make_run
@@ -99,7 +99,7 @@ def test_no_issues_keeps_draft_without_rewrite(tmp_path, task):
 def test_followup_continues_the_probe_conversation(tmp_path, task):
     a1 = analysis(followups=[{"response_id": "r1", "question": "Rows or unique ids?"}])
     llm = ScriptedLLM(base_script(analyze=[a1, analysis()], worker=["I count rows", "unique ids then", "2"]))
-    run = make_run(tmp_path, task, llm, pool="single", refiner="C_probe")
+    run = make_run(tmp_path, task, llm, pool="single", refiner="C_probe_followup")
     run.run_fresh()
     fu = llm.by_kind["worker"][1]["messages"]
     assert "I count rows" in json.dumps(fu) and "Rows or unique ids?" in fu[-1]["content"]
@@ -150,3 +150,78 @@ def test_verification_runs_in_scratch_workspace(tmp_path, task):
     assert list((run.run_dir / "scratch" / "d0").rglob("marker.txt"))
     assert refine_log(run)["verifications"][0]["report"] == "wrote marker"
     assert "wrote marker" in llm.by_kind["rewrite"][0]["messages"][1]["content"]
+
+
+def test_verification_skipped_for_not_relevant_issues(tmp_path, task):
+    nr = {**ISSUE, "id": "i2", "decision": "not_relevant"}
+    ver = [{"issue_id": "i2", "worker_id": "generalist", "instruction": "check x"},
+           {"issue_id": "i1", "worker_id": "generalist", "instruction": "check y"}]
+    llm = ScriptedLLM(base_script(analyze=[analysis(issues=(ISSUE, nr), verifications=ver)],
+                                  worker=["predicted answers", "checked y", "2 unique orders"]))
+    run = make_run(tmp_path, task, llm, pool="single", refiner="C_probe")
+    assert run.run_fresh()["status"] == "ok"
+    log = refine_log(run)
+    assert [v["issue_id"] for v in log["verifications"]] == ["i1"]
+    assert log["verifications_skipped_not_relevant"] == 1
+
+
+def stages(run):
+    return [json.loads(l)["stage"] for l in (run.run_dir / "llm_calls.jsonl").read_text().splitlines()
+            if json.loads(l)["status"] == "ok" and json.loads(l)["stage"].startswith("refine.")]
+
+
+def test_B_and_C_run_the_same_steps_after_collection(tmp_path, task):
+    """Main contrast: with the same analysis, B and C differ only in the collection step (no follow-ups in C)."""
+    a = analysis(followups=[{"response_id": "r1", "question": "Rows or unique ids?"}])
+    runs = {}
+    for cond, worker in (("B_self_review", ["2"]), ("C_probe", ["probe answer", "2"])):
+        llm = ScriptedLLM(base_script(analyze=[a], worker=worker, simulate=["predicted answer"]))
+        runs[cond] = make_run(tmp_path, task, llm, pool="single", refiner=cond, name=cond)
+        assert runs[cond].run_fresh()["status"] == "ok"
+    assert stages(runs["B_self_review"]) == ["refine.review", "refine.analyze", "refine.rewrite"]
+    assert stages(runs["C_probe"]) == ["refine.probe", "refine.analyze", "refine.rewrite"]
+
+
+def test_truncated_analysis_is_refine_error_not_no_issues(tmp_path, task):
+    trunc = Raw('{"issues": [', finish_reason="length")
+    llm = ScriptedLLM(base_script(analyze=[trunc, trunc], worker=["probe answer", "3"]))
+    run = make_run(tmp_path, task, llm, pool="single", refiner="C_probe")
+    assert run.run_fresh()["status"] == "ok"
+    log = refine_log(run)
+    assert log["status"] == "refine_error" and log["refine_error"]["stage"] == "refine.analyze"
+    assert len(log["refine_error"]["problems"]) == 2 and "truncated" in log["refine_error"]["problems"][0]
+    assert DRAFT in llm.by_kind["worker"][-1]["messages"][1]["content"]  # the draft is executed
+
+
+def test_invalid_analysis_is_retried_once(tmp_path, task):
+    bad = analysis(verifications=[{"issue_id": "nope", "worker_id": "generalist", "instruction": "x"}])
+    llm = ScriptedLLM(base_script(analyze=[bad, analysis()], worker=["probe answer", "2"]))
+    run = make_run(tmp_path, task, llm, pool="single", refiner="C_probe")
+    run.run_fresh()
+    log = refine_log(run)
+    assert log["status"] == "rewritten" and "unknown issues" in log["analysis"][0]["retried"][0]
+
+
+def test_empty_rewrite_is_refine_error_not_unchanged(tmp_path, task):
+    empty = {"instruction": "", "changes": [], "unchanged": False}
+    llm = ScriptedLLM(base_script(rewrite=[empty, empty], worker=["probe answer", "3"]))
+    run = make_run(tmp_path, task, llm, pool="single", refiner="C_probe")
+    run.run_fresh()
+    assert refine_log(run)["status"] == "refine_error"
+
+
+def test_answers_only_arm_executes_the_draft_after_a_connected_probe(tmp_path, task):
+    llm = ScriptedLLM({"orchestrator": [delegate("generalist", DRAFT), finish("2")], "worker": ["probe answer", "2"]})
+    run = make_run(tmp_path, task, llm, pool="single", refiner="C_probe_connected_norewrite")
+    assert run.run_fresh()["status"] == "ok"
+    assert refine_log(run)["status"] == "answers_only" and set(llm.by_kind) == {"orchestrator", "worker"}
+    ex = llm.by_kind["worker"][-1]["messages"]
+    assert "probe answer" in json.dumps(ex) and DRAFT in ex[-1]["content"]
+
+
+def test_rewrite_prompt_names_the_executor_tools(tmp_path, task):
+    llm = ScriptedLLM(base_script(worker=["probe answer", "2"]))
+    run = make_run(tmp_path, task, llm, pool="single", refiner="C_probe")
+    run.run_fresh()
+    text = llm.by_kind["rewrite"][0]["messages"][1]["content"]
+    assert "executed by generalist" in text and "web_search" in text

@@ -136,6 +136,8 @@ class Toolbox:
             result = out
         else:
             result = ToolOutput(out)
+        if not extra.get("error") and result.text.startswith("Error:"):
+            extra = {**extra, "error": "tool_error_message"}  # e.g. a wrong file type: the agent saw an error
         status = "error" if extra.get("error") else "ok"
         self.trace.tool({**rec, **extra, "status": status, "latency_s": round(time.monotonic() - t0, 3),
                          "output_chars": len(result.text), "n_images": len(result.images),
@@ -194,17 +196,25 @@ class Toolbox:
         rec: dict = {}
         path = str(path).strip()
         if path.startswith(("http://", "https://")):
-            if reason := blocklist.url_block_reason(path):
+            if reason := self.web._block_reason(path, blocklist.url_block_reason(path)):
                 rec["blocked"] = reason
                 return BLOCKED_MESSAGE, rec
-            from minpilot.tools.backends import BackendError, DirectFetchBackend
+            # Online images are cached like pages: frozen on first success (review 2026-10-09, F9)
+            cached = self.web.cache.get("image", path)
+            if cached is not None:
+                data = base64.b64decode(cached["b64"])
+                rec.update(cache_hit=True, backend="direct")
+            else:
+                from minpilot.tools.backends import BackendError, DirectFetchBackend
 
-            try:
-                data, _, _ = DirectFetchBackend(self.web.cfg).download(path)
-            except BackendError as e:
-                rec["error"] = str(e)[:300]
-                return "Error: could not download the image.", rec
-            rec["backend"] = "direct"
+                try:
+                    data, _, _ = DirectFetchBackend(self.web.cfg).download(path)
+                except BackendError as e:
+                    rec["error"] = str(e)[:300]
+                    return "Error: could not download the image.", rec
+                data = base64.b64decode(self.web.cache.put("image", path, {
+                    "b64": base64.b64encode(data).decode(), "fetched_at": time.time()}, "direct")["b64"])
+                rec.update(cache_hit=False, backend="direct")
             label = path
         else:
             p = self._confine(path)

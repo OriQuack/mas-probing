@@ -1,6 +1,9 @@
 #!/bin/bash
 # Build the doh_minpilot conda env: min_pilot (no camel/OWL) + Chromium for the Playwright page reader.
-# Usage (from the repo root, CPU-only):  bash envs/doh_minpilot/setup.sh
+# Usage (from the repo root, CPU-only):
+#   bash envs/doh_minpilot/setup.sh                  # install the exact versions in requirements.lock (default)
+#   UPDATE_LOCK=1 bash envs/doh_minpilot/setup.sh    # resolve requirements.txt anew and rewrite requirements.lock
+# The lock is the reproducible input; requirements.txt only lists what to resolve when updating it.
 set -euo pipefail
 
 ENV_NAME=doh_minpilot
@@ -16,9 +19,15 @@ conda install -n "$ENV_NAME" -c conda-forge -y alsa-lib at-spi2-atk at-spi2-core
 PREFIX="$HOME/.conda/envs/$ENV_NAME"
 PY="$PREFIX/bin/python"
 
-"$PY" -m pip install -r "$REPO_ROOT/envs/$ENV_NAME/requirements.txt"
+LOCK="$REPO_ROOT/envs/$ENV_NAME/requirements.lock"
+if [ "${UPDATE_LOCK:-0}" = "1" ]; then
+    "$PY" -m pip install -r "$REPO_ROOT/envs/$ENV_NAME/requirements.txt"
+    "$PY" -m pip freeze --exclude-editable > "$LOCK"
+    echo "Rewrote $LOCK; review and commit it."
+else
+    "$PY" -m pip install -r "$LOCK"
+fi
 "$PY" -m pip install --no-deps -e "$REPO_ROOT"
-"$PY" -m pip freeze --exclude-editable > "$REPO_ROOT/envs/$ENV_NAME/requirements.lock"
 "$PY" -m playwright install chromium
 
 # Expose only the 4 Chromium libs (not all of $PREFIX/lib, which would shadow system libs like libtinfo).

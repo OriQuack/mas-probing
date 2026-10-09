@@ -11,6 +11,7 @@ behaviour. Tool names, signatures and descriptions are new (not OWL's).
 
 from __future__ import annotations
 
+import copy
 import json
 import re
 import threading
@@ -51,13 +52,38 @@ class WebTools:
         self.read_backends = read_backends or [readers[n](self.cfg) for n in self.cfg.reader_chain]
         self.wayback = wayback or WaybackBackend(self.cfg)
         self.pinned_search: str | None = None
+        self.blocked_urls: set[str] = set()
         self._lock = threading.Lock()
 
+    def fork(self) -> "WebTools":
+        """A view for a scratch workspace (probe, verification): the same cache and backends, but its own search
+        pin and blocked-URL set, starting from this one's state. Nothing it does changes the main run's web state
+        (review 2026-10-09, F9: a probe's first search used to pin the main run's search backend)."""
+        other = copy.copy(self)
+        other._lock = threading.Lock()
+        other.blocked_urls = set(self.blocked_urls)
+        return other
+
     def state_dict(self) -> dict:
-        return {"pinned_search": self.pinned_search, "cache": str(self.cache.path.resolve())}
+        return {"pinned_search": self.pinned_search, "cache": str(self.cache.path.resolve()),
+                "blocked_urls": sorted(self.blocked_urls)}
 
     def load_state_dict(self, state: dict) -> None:
         self.pinned_search = state.get("pinned_search")
+        self.blocked_urls = set(state.get("blocked_urls", []))
+
+    # -- sticky blocking (blocklist v5): once any rule blocks a URL, it stays blocked for the rest of the run ---
+    @staticmethod
+    def _url_key(url: str) -> str:
+        return (url or "").split("#", 1)[0].rstrip("/").lower()
+
+    def _block_reason(self, url: str, reason: str | None) -> str | None:
+        key = self._url_key(url)
+        with self._lock:
+            if reason:
+                self.blocked_urls.add(key)
+                return reason
+            return "blocked_earlier_in_run" if key in self.blocked_urls else None
 
     # -- tools -------------------------------------------------------------------------------
     def web_search(self, query: str, allowed: tuple[str, ...] = ()) -> tuple[str, dict]:
@@ -68,11 +94,13 @@ class WebTools:
                 return BLOCKED_QUERY_MESSAGE, rec
             hits = self._search(query.strip(), rec)
             if hits is None:
+                rec["error"] = "all_search_backends_failed"
                 return "Error: web search is currently unavailable. Try again later.", rec
             kept, blocked = [], []
             for h in hits:
-                reason = blocklist.url_block_reason(h["url"]) or blocklist.content_block_reason(
+                rule = blocklist.url_block_reason(h["url"]) or blocklist.content_block_reason(
                     f"{h['title']}\n{h['snippet']}", self.question, allowed=allowed)
+                reason = self._block_reason(h["url"], rule)
                 (blocked if reason else kept).append(h if not reason else {"url": h["url"], "reason": reason})
             rec["blocked_results"] = [b["url"] for b in blocked]
             rec["blocked_reasons"] = [b["reason"] for b in blocked]
@@ -93,6 +121,8 @@ class WebTools:
             url = url.strip()
             if not re.match(r"^https?://", url):
                 return "Error: url must start with http:// or https://. Use read_file for local files.", rec
+            if date and _WAYBACK_SNAPSHOT.search(url):
+                date = None  # already a snapshot URL: read it as is (looking up a snapshot of it finds nothing)
             if date:
                 date = str(date).strip()
                 if not re.fullmatch(r"\d{4}(\d{2}(\d{2})?)?", date):
@@ -103,6 +133,7 @@ class WebTools:
                 url = snap["snapshot_url"]
             doc = self._read(url, rec, allowed)
             if doc is None:
+                rec["error"] = "all_readers_failed"
                 return "Error: could not retrieve this page. Try a different source.", rec
             if doc.get("blocked"):
                 return BLOCKED_MESSAGE, rec
@@ -131,6 +162,7 @@ class WebTools:
                 found = self.wayback.closest(url, date)
             except BackendError as e:
                 rec["attempts"].append({"backend": "wayback", "ok": False, "error": str(e)[:300]})
+                rec["error"] = "wayback_unavailable"
                 return "Error: the Wayback Machine is unavailable right now. Try again later."
             rec["attempts"].append({"backend": "wayback", "ok": True, "latency_s": round(time.monotonic() - t0, 2)})
             if found is None:
@@ -242,7 +274,7 @@ class WebTools:
         return blocklist.content_block_reason(f"{title or ''}\n{text or ''}", question, allowed=allowed)
 
     def _read(self, url: str, rec: dict, allowed: tuple[str, ...] = ()) -> dict | None:
-        if reason := blocklist.url_block_reason(url):
+        if reason := self._block_reason(url, blocklist.url_block_reason(url)):
             rec["blocked"] = reason
             return {"blocked": reason}
         cached = self.cache.get("page", url)
@@ -268,6 +300,7 @@ class WebTools:
             else:
                 return None
         if cached.get("blocked"):
+            self._block_reason(url, cached["blocked"])
             rec["blocked"] = cached["blocked"]
             return cached
         reason = self.page_issue(cached.get("url", url), cached.get("title", ""), cached.get("text", ""),
@@ -276,6 +309,8 @@ class WebTools:
             rec["attempts"].append({"backend": "cache", "ok": False, "error": reason})
             return None
         if reason:
+            self._block_reason(url, reason)
+            self._block_reason(cached.get("url", url), reason)
             rec["blocked"] = reason
             return {"blocked": reason}
         return cached

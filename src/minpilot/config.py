@@ -76,10 +76,13 @@ class RefinerConfig:
     samples_per_worker: int = 1              # repeated probes of the same worker (role routing: >1 for variation)
     probe_tools: bool = False                # may probe workers use tools (on a scratch copy) while answering
     probe_max_tool_calls: int = 6
-    max_followups: int = 2                   # C: follow-up questions in total (each continues one probe conversation)
+    max_followups: int = 0                   # C variants only: follow-up questions in total (each continues one
+                                             # probe conversation); 0 in the main B/C contrast
     max_verifications: int = 2               # B and C: verification calls delegated to workers (with tools)
     verify_max_tool_calls: int = 10
     connect_probe_to_execution: bool = False # continue the executor's probe conversation into execution
+    rewrite: bool = True                     # False: collect answers only, execute the draft unchanged (with
+                                             # connect_probe_to_execution: the information-without-rewrite arm)
     budget: Limits = field(default_factory=lambda: Limits(max_llm_calls=60, max_cost_usd=1.0, max_worker_calls=8))
 
     def __post_init__(self):

@@ -29,6 +29,7 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 import time
@@ -44,8 +45,10 @@ from minpilot.data.gaia import GaiaTask
 from minpilot.llm.client import LLMClient, Transport, json_schema_format
 from minpilot.llm.specs import get_spec
 from minpilot.refine.base import RefineRequest, RefineResult, make_refiner
+from minpilot.runtime.costs import COSTS_VERSION, TOOL_USD_PER_CREDIT
 from minpilot.runtime.trace import BudgetExceeded, InfraError, Trace
 from minpilot.tools.config import REPO_ROOT, ToolConfig
+from minpilot.tools.crawl4ai_service import same_identity
 from minpilot.tools.toolbox import Toolbox
 from minpilot.tools.web import WebTools
 
@@ -76,11 +79,48 @@ def _sha(obj: Any) -> str:
 
 
 def dir_digest(root: Path) -> dict[str, str]:
+    """Content hash of every file, and the target of every symlink (review 2026-10-09: links were skipped)."""
     out = {}
     for p in sorted(Path(root).rglob("*")):
-        if p.is_file() and not p.is_symlink():
+        if p.is_symlink():
+            out[str(p.relative_to(root))] = "symlink->" + os.readlink(p)
+        elif p.is_file():
             out[str(p.relative_to(root))] = hashlib.sha256(p.read_bytes()).hexdigest()
     return out
+
+
+def escaping_symlinks(root: Path) -> list[str]:
+    """Symlinks under root whose target resolves outside root (not restored: the workspace must be closed)."""
+    root = Path(root).resolve()
+    bad = []
+    for p in Path(root).rglob("*"):
+        if p.is_symlink():
+            target = (p.parent / os.readlink(p)).resolve()
+            if root not in (target, *target.parents):
+                bad.append(str(p.relative_to(root)))
+    return bad
+
+
+# ToolConfig fields that do not change what a tool returns: where the cache file and the reader service live,
+# and the blocklist version (checked separately: a newer blocklist may continue an older checkpoint, T8).
+TOOL_IDENTITY_EXCLUDE = ("cache_path", "crawl4ai_endpoint", "blocklist_version")
+
+
+def tool_identity(tools: dict) -> dict:
+    return json.loads(json.dumps({k: v for k, v in tools.items() if k not in TOOL_IDENTITY_EXCLUDE}, default=str))
+
+
+def code_hash() -> str:
+    """Hash of the package source (src/minpilot/**/*.py), recorded with runs and checkpoints."""
+    h = hashlib.sha256()
+    pkg = Path(__file__).resolve().parent
+    for p in sorted(pkg.rglob("*.py")):
+        h.update(str(p.relative_to(pkg)).encode() + b"\0" + p.read_bytes() + b"\0")
+    return h.hexdigest()[:16]
+
+
+def _version_num(v: str) -> int:
+    return int("".join(c for c in str(v) if c.isdigit()) or 0)
 
 
 def original_task_of(task: GaiaTask) -> str:
@@ -138,8 +178,10 @@ class Run:
     def _base_info(self, mode: str) -> dict:
         return {"task_id": self.task.task_id, "level": self.task.level, "mode": mode, "label": self.cfg.label,
                 "condition": self.cfg.refiner.name, "refine_at": self.cfg.refine_at, "status": "running",
-                "final_answer": None, "started_at": time.time(), "git_commit": git_commit(),
-                "prompts_version": prompts.PROMPTS_VERSION, "config": self.cfg.to_dict(),
+                "final_answer": None, "started_at": time.time(), "git_commit": git_commit(), "code_hash": code_hash(),
+                "prompts_version": prompts.PROMPTS_VERSION,
+                "refiner_prompts_version": prompts.REFINER_PROMPTS_VERSION, "config": self.cfg.to_dict(),
+                "costs": {"version": COSTS_VERSION, "tool_usd_per_credit": TOOL_USD_PER_CREDIT},
                 "models": self.model_identities(), "tools": self.tool_cfg.to_dict(),
                 "reader_identity": self.reader_identity}
 
@@ -190,9 +232,31 @@ class Run:
         problems = []
         if state["models"] != self.model_identities():
             problems.append("model identities differ from the checkpoint")
-        for k in ("tools_version", "blocklist_version"):
-            if state["tools"][k] != self.tool_cfg.to_dict()[k]:
-                problems.append(f"{k} differs ({state['tools'][k]} vs {self.tool_cfg.to_dict()[k]})")
+        now_tools = self.tool_cfg.to_dict()
+        if state["tools"]["tools_version"] != now_tools["tools_version"]:
+            problems.append(f"tools_version differs ({state['tools']['tools_version']} vs {now_tools['tools_version']})")
+        # every setting that changes what a tool returns (page size, reader chain, timeouts, ...), not only versions
+        old_id, new_id = tool_identity(state["tools"]), tool_identity(now_tools)
+        if diff := sorted(k for k in set(old_id) | set(new_id) if old_id.get(k) != new_id.get(k)):
+            problems.append(f"tool settings differ: {diff}")
+        # the page-reader service (image digest) when the chain uses it
+        if "crawl4ai" in now_tools["reader_chain"]:
+            saved, now = state.get("reader_identity"), self.reader_identity
+            if (saved or now) and not same_identity(saved, now):
+                problems.append("page-reader service identity differs from the checkpoint's")
+        if bad := escaping_symlinks(ck / "work"):
+            problems.append(f"checkpoint workspace has symlinks leading outside it: {bad[:5]}")
+        # code changes are recorded, not refused: the versions above are the restore contract (decision T9)
+        saved_code = state.get("code_hash")
+        self.info["checkpoint_code_hash"] = saved_code
+        # None = unknown (checkpoints recorded before code hashes existed)
+        self.info["code_changed_since_checkpoint"] = None if not saved_code else saved_code != code_hash()
+        # A newer blocklist may continue an older checkpoint (it only removes leak paths, and every condition of a
+        # paired comparison restores under the same one); an older blocklist may not.
+        if _version_num(now_tools["blocklist_version"]) < _version_num(state["tools"]["blocklist_version"]):
+            problems.append(f"blocklist_version is older than the checkpoint's ({now_tools['blocklist_version']} < "
+                            f"{state['tools']['blocklist_version']})")
+        self.info["checkpoint_blocklist_version"] = state["tools"]["blocklist_version"]
         if state["prompts_version"] != prompts.PROMPTS_VERSION:
             problems.append("prompts version differs")
         if problems:
@@ -250,7 +314,7 @@ class Run:
                     action = self.orchestrator.next_action(self.messages, must_finish=must_finish)
                 self.trace.event("action", delegation=k, action=action.kind, worker_id=action.worker_id,
                                  instruction=action.instruction, answer=action.answer, rationale=action.rationale,
-                                 forced=must_finish)
+                                 forced=must_finish, invalid_before=self.orchestrator.last_invalid)
                 if action.kind == "finish":
                     self.info["forced_finish"] = must_finish
                     return action.answer, "ok"
@@ -258,6 +322,18 @@ class Run:
                     self.save_checkpoint(action, k)
             self._delegate(action, k, override)
             override = (None, None)
+
+    # -- the worker interface (spec: call_worker(worker_id, original_task, instruction) -> report) --------
+    def call_worker(self, worker_id: str, original_task: str, instruction: str) -> str:
+        """The spec's interface: run `worker_id` on the main workspace and return its report. Ports to other
+        frameworks implement this; the harness itself uses `run_worker`, which also returns status and tool
+        counts."""
+        return self.run_worker(worker_id, original_task, instruction).report
+
+    def run_worker(self, worker_id: str, original_task: str, instruction: str, *,
+                   history: list[dict] | None = None) -> WorkerCall:
+        self.trace.before_worker_call()
+        return self.workers[worker_id].run(original_task, instruction, self.toolbox, history=history)
 
     def _refine_here(self) -> bool:
         return self.cfg.refine_at == "all" or (self.cfg.refine_at == "first" and self.handled == 0)
@@ -283,9 +359,8 @@ class Run:
                          final=result.instruction, changed=result.changed, refine_status=result.status,
                          refiner=self.cfg.refiner.name, connected=result.execution_history is not None)
         with self.trace.tags(stage="execution", delegation=k, role=role.id, worker=role.executor):
-            self.trace.before_worker_call()
-            call = self.workers[role.executor].run(self.original_task, result.instruction, self.toolbox,
-                                                   history=result.execution_history)
+            call = self.run_worker(role.executor, self.original_task, result.instruction,
+                                   history=result.execution_history)
         self.trace.event("report", delegation=k, worker=role.executor, status=call.status,
                          n_tool_calls=call.n_tool_calls, report=call.report)
         self.delegations.append({"index": k, "role": role.id, "worker": role.executor, "draft": action.instruction,
@@ -318,7 +393,9 @@ class Run:
                  "pending_action": action.__dict__, "messages": self.messages, "delegations": self.delegations,
                  "trace": self.trace.state_dict(), "web": self.web.state_dict(), "toolbox": self.toolbox.state_dict(),
                  "config": self.cfg.to_dict(), "models": self.model_identities(), "tools": self.tool_cfg.to_dict(),
-                 "prompts_version": prompts.PROMPTS_VERSION, "reader_identity": self.reader_identity}
+                 "prompts_version": prompts.PROMPTS_VERSION,
+                 "refiner_prompts_version": prompts.REFINER_PROMPTS_VERSION, "reader_identity": self.reader_identity,
+                 "code_hash": code_hash()}
         (ck / "state.json").write_text(json.dumps(state, indent=1, ensure_ascii=False, default=str))
         (ck / "fingerprint.json").write_text(json.dumps(self.fingerprint(action, k), indent=1))
         role = self.cfg.pool.roles[action.worker_id]
@@ -345,12 +422,13 @@ class _Ctx:
 
     def toolbox(self, label: str) -> Toolbox:
         """A toolbox on a scratch copy of the main workspace as it is now; one per label (a probe and its
-        follow-ups share it). Code-run numbering continues from the main workspace's."""
+        follow-ups share it). Code-run numbering continues from the main workspace's. Web: the shared cache, but
+        a forked search pin and blocked-URL set (WebTools.fork)."""
         label = label or f"call{self.run.trace.next_id()}"
         if label not in self.toolboxes:
             d = self.run.run_dir / "scratch" / f"d{self.k}" / label
             shutil.copytree(self.run.work_dir, d, symlinks=True)
-            tb = Toolbox(d, self.run.web, self.run.trace, question=self.run.task.question)
+            tb = Toolbox(d, self.run.web.fork(), self.run.trace, question=self.run.task.question)
             tb.load_state_dict(self.run.toolbox.state_dict())
             self.toolboxes[label] = tb
         return self.toolboxes[label]

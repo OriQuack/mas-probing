@@ -40,6 +40,7 @@ class Orchestrator:
         self.max_delegations = max_delegations
         self.max_invalid = max_invalid
         self.format = json_schema_format("orchestrator_action", prompts.ORCHESTRATOR_ACTION_SCHEMA)
+        self.last_invalid: list[str] = []
 
     def initial_messages(self, original_task: str) -> list[dict]:
         return [{"role": "system", "content": prompts.orchestrator_system(list(self.roles.values()),
@@ -48,6 +49,7 @@ class Orchestrator:
 
     def next_action(self, messages: list[dict], must_finish: bool = False) -> Action:
         """Appends the assistant turn(s) (and error feedback) to `messages` and returns a valid action."""
+        self.last_invalid = []  # problems of the invalid replies before this action (logged by the harness)
         if must_finish:
             messages.append({"role": "user", "content": prompts.FORCE_FINISH})
         for _ in range(self.max_invalid + 1):
@@ -56,6 +58,7 @@ class Orchestrator:
             problem, action = self._parse(res.parsed, must_finish)
             if action:
                 return action
+            self.last_invalid.append(problem)
             messages.append({"role": "user", "content": prompts.invalid_action_message(problem)})
         raise InvalidAction(problem)
 

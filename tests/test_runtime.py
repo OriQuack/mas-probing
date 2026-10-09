@@ -163,3 +163,180 @@ def test_tasks_carry_no_ground_truth():
     t = load_tasks()[0]
     assert set(GaiaTask.__dataclass_fields__) == {"task_id", "level", "question", "file_name", "file_path"}
     assert t.question
+
+
+def test_error_outputs_are_recorded_as_errors(tmp_path):
+    tb = toolbox(tmp_path)
+    tb.call("read_file", {"path": "missing.txt"}, ("read_file",))
+    recs = [json.loads(l) for l in (tmp_path / "tr" / "tool_calls.jsonl").read_text().splitlines()]
+    done = [r for r in recs if r["status"] != "started"]
+    assert done[-1]["status"] == "error" and done[-1]["error"]
+
+
+def test_blocklist_v4_query_echo_and_qa_aggregator_pages():
+    from minpilot.tools import blocklist
+
+    assert blocklist.url_block_reason("https://nuggetpedia.com/nugget/nw-1") == "qa_aggregator"
+    assert blocklist.url_block_reason("https://www.instagram.com/popular/some-question-words/") == "query_echo_page"
+    assert blocklist.url_block_reason("https://www.instagram.com/natgeo/") is None
+
+
+def test_docx_tables_stay_in_document_order():
+    import io
+
+    import docx
+
+    from minpilot.tools.documents import docx_to_text
+
+    d = docx.Document()
+    d.add_paragraph("Heading A")
+    t = d.add_table(rows=1, cols=2)
+    t.cell(0, 0).text, t.cell(0, 1).text = "x", "y"
+    d.add_paragraph("After table")
+    buf = io.BytesIO()
+    d.save(buf)
+    lines = docx_to_text(buf.getvalue()).splitlines()
+    assert lines == ["Heading A", "[table 1]", "x | y", "After table"]
+
+
+def test_blocklist_v5_rules():
+    from minpilot.tools import blocklist
+
+    q = ("In the endnote found in the second-to-last paragraph of page 11 of the book with the doi 10.2307/j.ctv9b2xdv, "
+         "what date in November was the Wikipedia article accessed?")
+    hyph = ("... In the end- note found in the second-to-last paragraph of page 11 of the book with the doi "
+            "10.2307/j.ctv9b2xdv ...")
+    assert blocklist.content_block_reason(hyph, q) == "quotes_task_question"
+    trace = "# --- Sub-task 1: WebSearch for the endnote Wikipedia article accessed November date"
+    assert blocklist.content_block_reason(trace, q) == "agent_trace_on_task"
+    assert blocklist.content_block_reason("Sub-task 1: buy groceries for the weekend", q) is None
+
+
+def test_blocked_url_stays_blocked_for_the_run(tmp_path):
+    from minpilot.tools.backends import SearchHit
+
+    q = "What is the airspeed velocity of an unladen swallow according to the castle guard in the film?"
+    web = fake_web(tmp_path, q)
+    leak = SearchHit(title="Agent trace", url="https://example.org/paper",
+                     snippet="multi-agent trace: what is the airspeed velocity of an unladen swallow according to")
+    benign = SearchHit(title="Paper", url="https://example.org/paper", snippet="A paper about birds.")
+    web.search_backends[0].results = {"first": [leak], "second": [benign]}
+    out1, rec1 = web.web_search("first")
+    out2, rec2 = web.web_search("second")
+    assert rec1["blocked_reasons"] and rec2["blocked_reasons"] == ["blocked_earlier_in_run"]
+    assert "example.org/paper" not in out2
+    assert web.state_dict()["blocked_urls"] == ["https://example.org/paper"]
+
+
+def test_search_fallback_library_importable():
+    """The DDG fallback imports its library lazily; a missing package only shows up when Serper fails."""
+    try:
+        from ddgs import DDGS  # noqa: F401
+    except ImportError:
+        from duckduckgo_search import DDGS  # noqa: F401
+
+
+def test_read_url_date_ignored_for_snapshot_urls(tmp_path):
+    class NoWayback:
+        def closest(self, url, date):
+            raise AssertionError("a snapshot URL must not be looked up again")
+
+    web = fake_web(tmp_path)
+    web.wayback = NoWayback()
+    url = "https://web.archive.org/web/20210105000000/https://en.wikipedia.org/wiki/Greenland"
+    text, rec = web.read_url(url, date="20210101")
+    assert "Text of" in text and not rec.get("error")
+
+
+def _score_module():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("score_runs", REPO_ROOT / "scripts" / "score_runs.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_scoring_groups_reps_by_condition_and_pairs_checkpoints():
+    import pandas as pd
+
+    sr = _score_module()
+    base = {"mode": "restore", "pool": "role_routing", "override_source": None}
+    rows = [
+        {**base, "task_id": "t1", "condition": "C_probe", "label": "C_r0", "checkpoint": "ck1", "correct": True},
+        {**base, "task_id": "t1", "condition": "C_probe", "label": "C_r1", "checkpoint": "ck1", "correct": False},
+        {**base, "task_id": "t1", "condition": "A_none", "label": "A_r0", "checkpoint": "ck1", "correct": False},
+        {**base, "task_id": "t2", "condition": "C_probe", "label": "C_r0", "checkpoint": "ck2", "correct": True},
+        {**base, "task_id": "t2", "condition": "A_none", "label": "A_r0", "checkpoint": "ck2", "correct": True},
+        {**base, "task_id": "t2", "condition": "A_none", "label": "post", "checkpoint": "ck2", "correct": True,
+         "override_source": "post_hoc"},
+    ]
+    c_rows = [r for r in rows if sr.arm_of(r) == "restore|role_routing|C_probe|override=none"]
+    assert sr.per_task(c_rows) == {"t1": 0.5, "t2": 1.0}          # C_r0 and C_r1 are one condition
+    res = sr.compare(pd.DataFrame(rows), "A_none", "C_probe")["role_routing"]
+    assert res["tasks"] == 2 and res["x"] == 0.5 and res["y"] == 0.75 and res["diff"] == 0.25
+    assert res["ci95"][0] <= 0.25 <= res["ci95"][1]
+
+
+def test_paid_tool_calls_count_in_usd_and_budget(tmp_path):
+    from minpilot.runtime.costs import TOOL_USD_PER_CREDIT
+
+    tr = Trace(tmp_path / "tr", Limits(max_cost_usd=1.0))
+    tr.tool({"tool": "web_search", "status": "ok", "backend": "serper", "credits": {"serper": 1}, "cache_hit": False})
+    tr.tool({"tool": "web_search", "status": "ok", "backend": "serper", "credits": {}, "cache_hit": True})
+    c = tr.run_scope.counters()
+    price = TOOL_USD_PER_CREDIT["serper"]
+    assert c["tool_usd"] == price and c["tool_usd_cold"] == 2 * price and c["cost_usd"] == price
+    tr0 = Trace(tmp_path / "tr0", Limits(max_cost_usd=0.0))
+    with pytest.raises(BudgetExceeded):
+        tr0.before_tool()
+
+
+def test_unbilled_llm_attempts_are_counted(tmp_path):
+    tr = Trace(tmp_path / "tr", Limits())
+    tr.settle_llm(0.01, 0.0, unknown=True)
+    assert tr.run_scope.counters()["unknown_cost_calls"] == 1
+
+
+def test_served_model_must_match_the_request(tmp_path):
+    from minpilot.llm.client import same_model
+
+    assert same_model("openai/gpt-6-luna", "openai/gpt-6-luna-20260922")
+    assert same_model("openai/gpt-4o-2024-08-06", "openai/gpt-4o-2024-08-06")
+    assert not same_model("openai/gpt-4o", "openai/gpt-6-luna-20260922")
+    tr = Trace(tmp_path / "tr", Limits())
+    client = LLMClient(get_spec("luna"), tr, transport=ScriptedLLM({"worker": ["hi"]}, served_model="openai/gpt-4o"),
+                       sleep=lambda s: None)
+    with pytest.raises(InfraError, match="served model"):
+        client.chat([{"role": "user", "content": "x"}])
+
+
+def test_scratch_web_state_does_not_change_the_main_runs(tmp_path):
+    web = fake_web(tmp_path)
+    scratch = web.fork()
+    scratch.web_search("probe query")
+    scratch.blocked_urls.add("https://example.org/x")
+    assert scratch.pinned_search == "serper" and web.pinned_search is None
+    assert web.blocked_urls == set() and scratch.cache is web.cache
+
+
+def test_online_images_are_cached(tmp_path, monkeypatch):
+    import io
+
+    from PIL import Image
+
+    from minpilot.tools import backends
+
+    calls = []
+
+    def download(self, url):
+        buf = io.BytesIO()
+        Image.new("RGB", (10 + len(calls), 10), "red").save(buf, format="PNG")
+        calls.append(url)
+        return buf.getvalue(), "image/png", url
+
+    monkeypatch.setattr(backends.DirectFetchBackend, "download", download)
+    tb = toolbox(tmp_path)
+    a = tb.call("view_image", {"path": "https://example.org/i.png"}, ("view_image",))
+    b = tb.call("view_image", {"path": "https://example.org/i.png"}, ("view_image",))
+    assert len(calls) == 1 and a.images == b.images

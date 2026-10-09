@@ -52,9 +52,9 @@ class ToolConfig:
     # (cached results are frozen on first success and would keep serving the old behaviour).
     # v1 (2026-10-08): the previous pilot's tools v3 behaviour under new tool names (web_search, read_url,
     #     read_file, view_image, run_python); no Wikipedia tools, no browser agent.
-    tools_version: str = "v1"
+    tools_version: str = "v2"
     blocklist_version: str = BLOCKLIST_VERSION
-    cache_path: Path = REPO_ROOT / "outputs" / "cache" / "tools_v1.sqlite"
+    cache_path: Path = REPO_ROOT / "outputs" / "cache" / "tools_v2.sqlite"
     # Page readers, in fallback order (names: crawl4ai, direct, playwright).
     reader_chain: tuple[str, ...] = ("crawl4ai", "direct", "playwright")
     crawl4ai_endpoint: Path = field(default_factory=_crawl4ai_endpoint)

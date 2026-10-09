@@ -135,12 +135,16 @@ class DDGBackend:
         return True
 
     def search(self, query: str) -> list[SearchHit]:
-        from duckduckgo_search import DDGS
+        # min_pilot's env installs the package under its current name `ddgs` (envs/doh_minpilot/requirements.txt);
+        # the old pilot's date-capped env had `duckduckgo_search`. Importing only the old name made this
+        # fallback fail with ModuleNotFoundError in every min_pilot run until 2026-10-08 (tools v2 fixes it).
+        try:
+            from ddgs import DDGS
+        except ImportError:
+            from duckduckgo_search import DDGS
 
         try:
-            # Swallow its "renamed to ddgs" notice (it forces simplefilter("always"), so record instead of
-            # ignore). The old package name is what the date-capped install resolves to.
-            with warnings.catch_warnings(record=True):
+            with warnings.catch_warnings(record=True):  # the old package forces a "renamed" warning
                 rows = DDGS(timeout=int(self.cfg.http_timeout_s)).text(
                     query, region=self.cfg.ddg_region, max_results=self.cfg.num_results
                 )

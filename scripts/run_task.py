@@ -5,7 +5,10 @@
   python scripts/run_task.py restore --checkpoint <run>/checkpoints/d0 --refiner C_probe [--label C_r0]
   python scripts/run_task.py restore --checkpoint ... --query-file q.txt --source post_hoc   # Exp 1 override
 
-Exit codes: 0 run finished (any status recorded in run.json), 3 eval task without --allow-eval,
+The Crawl4AI page-reader service is required only when the reader chain contains it (the default, fixed for the
+GAIA comparisons); `--reader-chain direct,playwright` runs without it.
+
+Exit codes: 0 run finished (any status recorded in run.json; also after the hard deadline), 3 eval task without --allow-eval,
 4 page-reader service not running, 5 error_infra.
 """
 
@@ -13,7 +16,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
+import threading
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -36,6 +41,29 @@ def eval_task_ids() -> set[str]:
         return {r["task_id"] for r in csv.DictReader(f)}
 
 
+HARD_DEADLINE_GRACE_S = 120
+
+
+def start_watchdog(run: Run, wall_s: float | None) -> None:
+    """Hard deadline: the wall budget is checked before every model and tool call, but a call stuck inside a
+    library can overrun it. At budget + grace the process records `budget_exceeded` and exits."""
+    if not wall_s:
+        return
+
+    def fire():
+        try:
+            run.trace.event("budget_exceeded", scope="run", what="hard_deadline")
+            run._finish("budget_exceeded", error=f"hard deadline: wall budget + {HARD_DEADLINE_GRACE_S} s")
+            print(json.dumps({"run_dir": str(run.run_dir), "status": "budget_exceeded", "final_answer": None,
+                              "cost_usd": run.trace.run_scope.cost_usd}), flush=True)
+        finally:
+            os._exit(0)
+
+    t = threading.Timer(max(wall_s, 0) + HARD_DEADLINE_GRACE_S, fire)
+    t.daemon = True
+    t.start()
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="mode", required=True)
@@ -51,6 +79,9 @@ def main() -> int:
     f.add_argument("--max-wall-s", type=float, default=3 * 3600)
     f.add_argument("--max-llm-calls", type=int, default=400)
     f.add_argument("--no-checkpoint", action="store_true")
+    f.add_argument("--reader-chain", default="crawl4ai,direct,playwright",
+                   help="page readers in fallback order; without crawl4ai the service is not required (recorded "
+                        "in the run's tool settings; restores use the checkpoint's chain)")
     r = sub.add_parser("restore")
     r.add_argument("--checkpoint", required=True)
     r.add_argument("--refiner", default=None, help="condition; default: the checkpoint's")
@@ -63,7 +94,11 @@ def main() -> int:
         p.add_argument("--allow-eval", action="store_true", help="Exp 2 only")
     a = ap.parse_args()
 
-    tool_cfg = ToolConfig()
+    if a.mode == "fresh":
+        chain = tuple(x.strip() for x in a.reader_chain.split(",") if x.strip())
+    else:  # a restore must use the checkpoint's reader chain (restores refuse other tool settings)
+        chain = tuple(json.loads((Path(a.checkpoint) / "state.json").read_text())["tools"]["reader_chain"])
+    tool_cfg = ToolConfig(reader_chain=chain)
     reader = crawl4ai_status(tool_cfg.crawl4ai_endpoint) if "crawl4ai" in tool_cfg.reader_chain else None
     if "crawl4ai" in tool_cfg.reader_chain and reader is None:
         print("page-reader service is not running or not the pinned one: bash scripts/crawl4ai/ensure.sh "
@@ -86,7 +121,9 @@ def main() -> int:
                                       max_cost_usd=a.max_cost_usd, max_wall_s=a.max_wall_s),
                         checkpoint=not a.no_checkpoint, label=a.label or refiner.name)
         run_dir = new_run_dir(task_id, cfg.label, a.runs_root)
-        info = Run(cfg, load_task(task_id), run_dir, tool_cfg=tool_cfg, reader_identity=reader).run_fresh()
+        run = Run(cfg, load_task(task_id), run_dir, tool_cfg=tool_cfg, reader_identity=reader)
+        start_watchdog(run, run.trace.run_scope.remaining_wall_s())
+        info = run.run_fresh()
     else:
         override = Path(a.query_file).read_text().strip() if a.query_file else None
         if override is not None and not a.source:
@@ -97,6 +134,7 @@ def main() -> int:
         run_dir = new_run_dir(task_id, label, a.runs_root)
         run = Run.restore(a.checkpoint, run_dir, refiner=refiner, refine_at=a.refine_at, label=label,
                           override=override, override_source=a.source, tool_cfg=tool_cfg, reader_identity=reader)
+        start_watchdog(run, run.trace.run_scope.remaining_wall_s())
         info = run.run_restored()
     print(json.dumps({"run_dir": str(run_dir), "status": info["status"], "final_answer": info.get("final_answer"),
                       "cost_usd": info.get("counters", {}).get("cost_usd")}))

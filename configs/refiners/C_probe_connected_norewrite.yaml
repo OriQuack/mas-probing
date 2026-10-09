@@ -1,0 +1,13 @@
+# Information without rewrite (review 2026-10-09): the executor is probed as in C_probe_connected and the probe
+# conversation continues into execution, but there is no analysis, check or rewrite: the draft is executed
+# unchanged. C_probe_connected - this arm isolates the rewrite; this arm - A isolates what the worker gains from
+# having been asked.
+name: C_probe_connected_norewrite
+kind: probe
+questions: [understanding, assumptions, failure, plan]
+samples_per_worker: 1
+probe_tools: false
+max_followups: 0
+connect_probe_to_execution: true
+rewrite: false
+budget: {max_llm_calls: 60, max_cost_usd: 1.0, max_worker_calls: 8}

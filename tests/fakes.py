@@ -29,15 +29,25 @@ def kind_of(body: dict) -> str:
     return "worker"
 
 
+class Raw:
+    """A reply given verbatim (not JSON-encoded), with a chosen finish_reason, e.g. a truncated JSON reply."""
+
+    def __init__(self, content: str, finish_reason: str = "stop"):
+        self.content = content
+        self.finish_reason = finish_reason
+
+
 class ScriptedLLM:
     """`transport(body, timeout)`. `script[kind]` is a list of replies (consumed in order) or a callable
     (body -> reply). A reply is a str (content), a dict (JSON content for schema calls, or a message with
     `tool_calls`), or an Exception to raise. Every request body is kept in `self.bodies`."""
 
-    def __init__(self, script: dict[str, list | Callable], cost: float = 1e-6, provider: str | None = None):
+    def __init__(self, script: dict[str, list | Callable], cost: float = 1e-6, provider: str | None = None,
+                 served_model: str | None = None):
         self.script = {k: (v if callable(v) else list(v)) for k, v in script.items()}
         self.cost = cost
         self.provider = provider
+        self.served_model = served_model
         self.bodies: list[dict] = []
         self.by_kind: dict[str, list[dict]] = defaultdict(list)
         self._n = 0
@@ -53,7 +63,10 @@ class ScriptedLLM:
         reply = src(body) if callable(src) else src.pop(0)
         if isinstance(reply, Exception):
             raise reply
-        if isinstance(reply, str):
+        finish = "stop"
+        if isinstance(reply, Raw):
+            msg, finish = {"role": "assistant", "content": reply.content}, reply.finish_reason
+        elif isinstance(reply, str):
             msg = {"role": "assistant", "content": reply}
         elif "tool_calls" in reply:
             self._n += 1
@@ -65,7 +78,7 @@ class ScriptedLLM:
             msg = {"role": "assistant", "content": json.dumps(reply)}
         slug = body["provider"]["only"][0]
         return {"id": f"gen-{len(self.bodies)}", "provider": self.provider or PROVIDERS.get(slug, slug),
-                "model": body["model"], "choices": [{"message": msg, "finish_reason": "stop"}],
+                "model": self.served_model or body["model"], "choices": [{"message": msg, "finish_reason": finish}],
                 "usage": {"prompt_tokens": 10, "completion_tokens": 5, "cost": self.cost}}
 
 
@@ -78,13 +91,19 @@ def finish(answer: str) -> dict:
 
 
 class FakeSearch:
+    """Default: one hit per query. `results` (query -> hits) overrides it for specific queries."""
     name = "serper"
     paid = False
+
+    def __init__(self):
+        self.results: dict[str, list] = {}
 
     def available(self):
         return True
 
     def search(self, query):
+        if query in self.results:
+            return list(self.results[query])
         return [SearchHit(f"Result for {query}", "https://example.org/a", "a snippet")]
 
 

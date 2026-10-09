@@ -1,0 +1,13 @@
+# Homogeneous repeated probes (review 2026-10-09): two answers from the same worker (same model, prompt and
+# tools). With the `single` pool it is the homogeneous counterpart of `redundant` (luna + gemini): same number of
+# answers, no model heterogeneity. Its B counterpart is B_self_review_x2 (two predictions).
+name: C_probe_x2
+kind: probe
+questions: [understanding, assumptions, failure, plan]
+samples_per_worker: 2
+probe_tools: false
+max_followups: 0
+max_verifications: 2
+verify_max_tool_calls: 10
+connect_probe_to_execution: false
+budget: {max_llm_calls: 60, max_cost_usd: 1.0, max_worker_calls: 8}
