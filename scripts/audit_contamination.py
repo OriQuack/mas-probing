@@ -34,7 +34,7 @@ URL = re.compile(r"https?://[^\s\"'<>)\]]+")
 
 
 def _lines(p: Path) -> list[dict]:
-    return [json.loads(x) for x in p.read_text().splitlines() if x.strip()] if p.exists() else []
+    return [json.loads(x) for x in p.read_text().split("\n") if x.strip()] if p.exists() else []
 
 
 def _text(m: dict) -> str:
