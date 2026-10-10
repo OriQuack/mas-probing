@@ -29,7 +29,10 @@ from __future__ import annotations
 #     interpretations and assumptions applied; claims not verified go under Unfinished); the orchestrator delegates a
 #     check only for a specific unresolved issue that could change the answer, and the check reports which
 #     observations support or change the current result (decision F22)
-PROMPTS_VERSION = "v6"
+# v7 (2026-10-10; after stage 4): the date line of the task text names the run date and says it is not the task's
+#     time reference (the task may have been written earlier; no filtering or source choice by it); v5-v6 called it
+#     "today's date for this run", and drafts and rewrites applied it to "recent" or "just released" (decision F23)
+PROMPTS_VERSION = "v7"
 # r2 (2026-10-08): the task's premises are given; issues never turn the subtask into "is the task answerable?"
 # r3 (2026-10-09): the rewrite prompt names the executing worker's role and tools (review: a rewrite must stay
 #     doable by the fixed executor)
@@ -86,8 +89,9 @@ def original_task_text(question: str, attachment: str | None, reference_date: st
     checkpoints, so every condition restored from one sees the same date (decision F19)."""
     text = question if not attachment else f"{question}\n\nAttached file: {attachment}"
     if reference_date:
-        text += (f"\n\nRun reference date: {reference_date} (today's date for this run; a date or time stated in the "
-                 "task takes precedence).")
+        text += (f"\n\nRun date: {reference_date} (the day this run takes place). The task may have been written "
+                 "earlier: do not take the run date as the task's time reference, and do not filter data or choose "
+                 "sources by it; take the time frame from the task itself.")
     return text
 
 

@@ -48,7 +48,8 @@ def test_reference_date_is_kept_by_checkpoints(tmp_path, task):
     script = {"orchestrator": [delegate("worker", DRAFT), finish("2")], "worker": ["2"]}
     run1 = make_run(tmp_path, task, ScriptedLLM(script), pool="single", name="rec")
     run1.run_fresh()
-    assert f"Run reference date: {run1.reference_date}" in run1.original_task
+    assert f"Run date: {run1.reference_date} (the day this run takes place)" in run1.original_task
+    assert "not take the run date as the task's time reference" in run1.original_task
     ck = run1.run_dir / "checkpoints" / "d0"
     state = json.loads((ck / "state.json").read_text())
     assert state["reference_date"] == run1.reference_date

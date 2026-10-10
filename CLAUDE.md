@@ -30,7 +30,7 @@ then stage 4 (`stage4-serper-*`, Serper, 1 rep) restores the v6 d0 checkpoints u
 rewrite rules after stage 4's traces. Next (E5): freeze (the validation passes `v3-*-check` and older run
 outputs were deleted on 2026-10-09), record the new baseline on `data/splits/baseline_v1.csv` (50 tasks, L1:L2:L3 = 8:25:17, contains the 12 dev
 tasks; E6) × 1 rep with checkpoints, on the `multi` pool (P7: condition 3's probe-only worker must be in the
-checkpoint's pool) with prompts v6 (F22) and refiner prompts r9 (R24); then restore under c1/c2/c3 (E7, E8); open items in `docs/decisions.md` (F14, K8–K14, R3);
+checkpoint's pool) with prompts v7 (F23: the run date is not the task's time reference) and refiner prompts r9 (R24); then restore under c1/c2/c3 (E7, E8); open items in `docs/decisions.md` (F14, K8–K14, R3);
 more exploration tasks for Exp 1 headroom.
 
 ## Do not bring OWL back
