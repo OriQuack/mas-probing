@@ -5,7 +5,7 @@
 # Equalising access and total budget with c2_direct_check is deferred (R21); the c2 budget as is.
 name: c2_probe_tools
 kind: probe
-prompts: r8
+prompts: r9
 probe_workers: executor
 samples_per_worker: 1
 probe_tools: true

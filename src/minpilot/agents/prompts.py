@@ -58,7 +58,14 @@ PROMPTS_VERSION = "v6"
 # r8 (2026-10-09; user's decision): probe answers are shown without worker ids or model names ("respondent k"),
 #     the probe workers answer in an order shuffled per delegation (logged), against the orchestrator model's
 #     self-preference; otherwise r7 (decision R23). r7 ran in stages 1-2 and is not kept.
-REFINER_PROMPTS_VERSION = "r8"
+# r9 (2026-10-10; after the stage-4 traces and the user's review): the analysis keeps what an answer observed apart
+#     from what it concludes, resolves issues toward the reading the task's wording and purpose support, never
+#     narrows the task's target, scope or conditions (and restores them where the instruction narrowed them), and a
+#     deferred check says how its outcome, or its failure, leads to the requested result. The rewrite changes only the
+#     work, interpretations or checks the issues need, gives one reading, keeps its own rules out of the instruction,
+#     adds no conditions for withholding the result, and `context_additions` carries observations, not conclusions
+#     (decision R24). r8 ran in stage 4 and is not kept.
+REFINER_PROMPTS_VERSION = "r9"
 
 TOOL_LINES = {
     "web_search": "web_search: search the web (Google results); returns titles, URLs and snippets",
@@ -387,7 +394,9 @@ def analyze_request(target: dict, responses: list[dict], source: str, max_verifi
         step3 = (f"\n3. The answers: compare the reading, choices and plan they report with what you intend. A "
                  f"difference is an issue when it could change the result.{compare} An answer reports how a worker "
                  "would read and do the subtask: neither an answer nor agreement between answers is evidence of a "
-                 f"fact.{obs}")
+                 f"fact.{obs} Keep what an answer observed (what a file or source says) apart from what it concludes "
+                 "from that, such as that the task is ambiguous or that several results must be given: the "
+                 "conclusion is the worker's interpretation, which you judge yourself.")
     ctx_issue = (" An issue can also lie in a context claim the instruction relies on (wrong, unverified or applied "
                  "wrongly)." if has_context else "")
     sees = "the original task, the context and the instruction" if has_context else \
@@ -410,13 +419,18 @@ Accept an issue only when you can state:
 Do not accept generic risks, points the task or the instruction already handles adequately, or other possible \
 interpretations that do not affect the requested result.{ctx_issue}
 
+Resolve an accepted issue toward the reading that the original task's wording and purpose support, as a careful \
+reader would take it. A resolution must not narrow the task's target, scope or conditions beyond what the original \
+task states; where the instruction narrows them, the resolution restores the task's wording.
+
 For each issue choose a decision:
 - clarify: you settle it from the original task, this conversation or your intention for this subtask; give the \
 resolution, to be stated in the instruction.
 - needs_verification: a fact must be checked before execution, because the correct instruction depends on the \
 result.
 - defer_to_execution: the executing worker can check it during execution; give, as the resolution, the check and \
-how to proceed for each relevant outcome. Request no check for it.
+how its outcome is used to produce the requested result, including when the check cannot be completed (the worker \
+then proceeds with the best available evidence). Request no check for it.
 - not_relevant: it does not affect this subtask's result or completion; no change.
 Request checks only for needs_verification issues, most important first; checks for other issues are not run. \
 You may request up to {max_verifications} checks, each delegated to one of these workers (it receives {receives}; \
@@ -468,17 +482,21 @@ Results of checks run before this delegation:
 Write the final version of the instruction of your delegation above, once, addressing the issues you accepted \
 (those not marked not_relevant). It will be executed by {target['role']}, whose tools are: \
 {', '.join(target['tools'])}. Rules:
-- Preserve the result requested by the original task. Revise only what is needed to address the accepted issues.
+- Preserve the result requested by the original task. Change only the work, interpretations or checks that the \
+accepted issues require; keep the rest of the instruction.
 - Resolve interpretations using the task, context, this conversation and the evidence, or specify the targeted \
-check needed to resolve them.
+check needed to resolve them. State the one reading the worker should apply; do not ask for results under several \
+readings.
 - Keep evidence requirements appropriate to the task. Do not demand explicit statements or a separate proof of \
 uniqueness when a supported inference is sufficient.
-- Report that the result cannot be derived only when a specific missing or conflicting piece of evidence prevents \
-deriving the requested result. Another conceivable interpretation is not sufficient.
+- These rules are for writing the instruction and are not part of it. Do not add conditions under which the worker \
+should withhold the result or report that it cannot be determined; where a check may fail, the worker gives the \
+result best supported by the available evidence and states what it could not check.
 - The executor sees only {sees}, not this conversation; the context is sent as you wrote it. Put what it should do \
 in the instruction. Put facts it needs that the task and context do not already contain (from the checks, probe \
 observations or reports in this conversation) in `context_additions`, with their source and whether they were \
-verified. Do not restate the task or the context there, and do not present unverified claims as facts.
+verified: what was observed, not conclusions drawn from it (such as that the task is ambiguous). Do not restate the \
+task or the context there, and do not present unverified claims as facts.
 - Write the instruction for use with the original task and context, within the executor's tool capabilities.
 If no accepted issue requires a change, return the current instruction unchanged, leave `context_additions` empty \
 and set `unchanged` to true."""

@@ -18,6 +18,8 @@ isolates where the answers come from. The prompt set is the condition's `prompts
 - r8 (decision R23): as r7, and the answers are anonymous: "respondent k" in an order shuffled per delegation
   (`probe_order` in the log; each response keeps its `worker_id` for the record), so neither a name nor a position
   tells the orchestrator's model which answer came from which model.
+- r9 (decision R24): as r8, with the analysis and rewrite rules revised after stage 4 (observations apart from
+  conclusions; the task's reading and scope kept; no conditions for withholding the result in the instruction).
 
 Stopping rules (same for B and C): no issue that needs a change -> the draft is kept without a rewrite call
 (`no_issues`); the refinement budget runs out -> the draft is kept (`budget_exceeded`); a structured reply

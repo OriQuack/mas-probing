@@ -3,7 +3,7 @@
 # -> rewrite (the same steps, prompts and limits as conditions 2 and 3).
 name: c1_self_review
 kind: self_review
-prompts: r8
+prompts: r9
 probe_workers: executor
 samples_per_worker: 1
 max_verifications: 2
