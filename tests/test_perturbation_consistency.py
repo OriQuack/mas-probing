@@ -54,6 +54,16 @@ def test_extract_answer_takes_the_last_answer_line():
     assert extract_answer("the answer is 4") is None
 
 
+@pytest.mark.parametrize("gold,predicted", [
+    ("52", "\\(52\\)"), ("52", "**52**"), ("52", "$52$"), ("52", "\\boxed{52}"), ("13", "13."),
+    ("8/9", "\\dfrac{8}{9}"), ("20/13", "\\tfrac{20}{13}"), ("4056195/4", "\\(\\frac{4\\,056\\,195}{4}\\)"),
+    ("12-4\\sqrt{2}", "\\(12-4\\sqrt2\\)"), ("4p(p-1)", "\\(4p(p-1)\\)"),
+])
+def test_notation_does_not_change_the_value(gold, predicted):
+    assert longcot_math.compare(gold, predicted) == "match"
+    assert extract_answer(f"work\nanswer = {predicted}") is not None
+
+
 def test_grouping_uses_longcot_equivalence():
     assert longcot_math.group(["0.5", "1/2", "3", None, "\\frac{1}{2}"]) == [[0, 1, 4], [2], [3]]
     assert longcot_math.compare_answer_lists(["16", "1/2"], ["16", "0.5"]) == "match"

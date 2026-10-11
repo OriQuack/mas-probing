@@ -13,6 +13,8 @@ import types
 from functools import lru_cache
 from pathlib import Path
 
+from perturbation_consistency.longcot_nodes import clean_answer
+
 LONGCOT_SRC = Path.home() / "data2/datasets/LongCoT/repo/src"
 
 
@@ -30,8 +32,8 @@ def _math():
 
 
 def compare(expected: str, predicted: str) -> str:
-    """'match' | 'mismatch' | 'unresolved' | 'textual' for two single values."""
-    return _math()._compare_component(str(expected), str(predicted))
+    """'match' | 'mismatch' | 'unresolved' | 'textual' for two single values (notation cleaned first)."""
+    return _math()._compare_component(clean_answer(str(expected)), clean_answer(str(predicted)))
 
 
 def same(a: str | None, b: str | None) -> bool:
@@ -48,7 +50,7 @@ def compare_answer_lists(expected: object, predicted: list[str | None]) -> str:
     parts = _math()._answer_components(expected)
     if parts is None or any(p is None for p in predicted):
         return "mismatch"
-    return _math()._compare_components(parts, [str(p) for p in predicted])
+    return _math()._compare_components([clean_answer(p) for p in parts], [clean_answer(str(p)) for p in predicted])
 
 
 def group(values: list[str | None]) -> list[list[int]]:

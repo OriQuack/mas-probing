@@ -90,10 +90,30 @@ def node_prompt(node: Node, values: dict[str, str], variant: int = 0) -> str:
     return VARIANTS[variant].format(body=body)
 
 
+_DELIMITERS = (("\\(", "\\)"), ("\\[", "\\]"), ("$$", "$$"), ("$", "$"))
+
+
+def clean_answer(value: str) -> str:
+    """Strip notation that does not change the value: markdown emphasis, math delimiters (\\( \\), $ $), \\boxed{},
+    LaTeX spacing (\\, \\! \\; \\:), \\dfrac/\\tfrac (as \\frac), unbraced \\sqrt2 (as \\sqrt{2}) and a trailing period. LongCoT's own comparison leaves
+    these to an LLM fallback judge, which this harness does not use."""
+    s = value.strip()
+    for _ in range(3):  # wrappers can nest, e.g. **\(52\)**
+        s = re.sub(r"^[*_`]+|[*_`]+$", "", s).strip()
+        for a, b in _DELIMITERS:
+            if len(s) >= len(a) + len(b) and s.startswith(a) and s.endswith(b):
+                s = s[len(a):len(s) - len(b)].strip()
+        if m := re.fullmatch(r"\\boxed\{(.*)\}", s):
+            s = m.group(1).strip()
+    s = s.replace("\\dfrac", "\\frac").replace("\\tfrac", "\\frac")
+    s = re.sub(r"\\[,!;:]|\\ ", "", s)
+    s = re.sub(r"\\sqrt([0-9A-Za-z])", r"\\sqrt{\1}", s)  # LaTeX: \sqrt2 is the root of one token
+    return s.rstrip(".").strip()
+
+
 def extract_answer(text: str | None) -> str | None:
-    """The value on the last `answer = ...` line, or None."""
+    """The value on the last `answer = ...` line (notation cleaned), or None."""
     found = _ANSWER_LINE.findall(text or "")
     if not found:
         return None
-    value = found[-1].strip().strip("$").strip()
-    return value or None
+    return clean_answer(found[-1]) or None

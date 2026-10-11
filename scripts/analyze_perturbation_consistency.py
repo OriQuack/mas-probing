@@ -50,6 +50,15 @@ def majority(records: list[dict], requested: list[str], seed: str) -> list | Non
     return finals[random.Random(seed).choice([g for g in groups if len(g) == top])[0]]
 
 
+def recompute(probe: dict | None) -> float | None:
+    """Consistency from the raw samples with the current comparison (the recorded value is what routing used)."""
+    if not probe:
+        return None
+    answers = [s["answer"] for s in probe["samples"]]
+    groups = [g for g in longcot_math.group(answers) if answers[g[0]] is not None]
+    return len(groups[0]) / len(answers) if groups else 0.0
+
+
 def bootstrap(diffs: list[float], n: int = 10_000, seed: int = 0) -> list[float]:
     if not diffs:
         return [0.0, 0.0]
@@ -101,6 +110,7 @@ def main() -> None:
         qrows.append(row)
         for w in workers:
             wrows.append({"question_id": qid, "worker": w, "consistency": (probes[w] or {}).get("consistency"),
+                          "consistency_recomputed": recompute(probes[w]),
                           "fixed_acc": acc[w], "chosen": int(w == chosen)})
     n = len(qrows)
     mean = lambda key: sum(r[key] for r in qrows) / n  # noqa: E731
