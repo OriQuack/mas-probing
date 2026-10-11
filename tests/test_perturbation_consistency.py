@@ -54,6 +54,18 @@ def test_extract_answer_takes_the_last_answer_line():
     assert extract_answer("the answer is 4") is None
 
 
+@pytest.mark.parametrize("tail,value", [  # luna-high response endings that the line pattern missed
+    ("Thus\n\\[\n\\boxed{\\text{answer}=\\frac{13}{3}}\n\\]", "\\frac{13}{3}"),
+    ("column.\n\n\\[\n\\boxed{\\text{answer = 14}}\n\\]", "14"),
+    ("\\[\n\\boxed{\\text{answer}=\\{-\\sqrt{86},\\sqrt{71}\\}}\n\\]", "\\{-\\sqrt{86},\\sqrt{71}\\}"),
+    ("\\[\n\\boxed{\\displaystyle \\text{answer}=\\sum_{k=0}^{3}k}\n\\]", "\\sum_{k=0}^{3}k"),
+    ("answer = 2 at first\n\\boxed{\\text{answer = 3}}", "3"),
+    ("\\boxed{\\text{answer = 3}}\nOn reflection:\nanswer = 5", "5"),
+])
+def test_extract_answer_reads_boxed_text_answers(tail, value):
+    assert extract_answer(tail) == value
+
+
 @pytest.mark.parametrize("gold,predicted", [
     ("52", "\\(52\\)"), ("52", "**52**"), ("52", "$52$"), ("52", "\\boxed{52}"), ("13", "13."),
     ("8/9", "\\dfrac{8}{9}"), ("20/13", "\\tfrac{20}{13}"), ("4056195/4", "\\(\\frac{4\\,056\\,195}{4}\\)"),
@@ -62,6 +74,14 @@ def test_extract_answer_takes_the_last_answer_line():
 def test_notation_does_not_change_the_value(gold, predicted):
     assert longcot_math.compare(gold, predicted) == "match"
     assert extract_answer(f"work\nanswer = {predicted}") is not None
+
+
+def test_a_parser_crash_counts_as_not_equal():
+    # a real luna-high node_0 answer that made sympy's tokenizer raise IndexError (linear_easy_15)
+    weird = ("\\(c_{2020}(0)+2c_{2020}(1)+\\displaystyle\\sum_{r=1}^{2020}\\bigl(2^{r-1}+c_{r-1}(0)\\bigr)\\), where "
+             "\\(c_m(d)=\\displaystyle\\sum_{i=0}^{\\lfloor(m-d)/2\\rfloor}\\frac{m!}{(i+d)!i!(m-2i-d)!}\\)")
+    assert longcot_math.compare("3^{2021}-2^{2021}", weird) in ("unresolved", "mismatch", "textual")
+    assert longcot_math.group(["3^{2021}-2^{2021}", weird, "3^{2021}-2^{2021}"]) == [[0, 2], [1]]
 
 
 def test_grouping_uses_longcot_equivalence():

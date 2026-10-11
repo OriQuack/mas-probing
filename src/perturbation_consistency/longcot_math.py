@@ -32,8 +32,12 @@ def _math():
 
 
 def compare(expected: str, predicted: str) -> str:
-    """'match' | 'mismatch' | 'unresolved' | 'textual' for two single values (notation cleaned first)."""
-    return _math()._compare_component(clean_answer(str(expected)), clean_answer(str(predicted)))
+    """'match' | 'mismatch' | 'unresolved' | 'textual' for two single values (notation cleaned first). sympy can
+    raise on long free-form answers (seen: IndexError in its tokenizer); such a pair is 'unresolved'."""
+    try:
+        return _math()._compare_component(clean_answer(str(expected)), clean_answer(str(predicted)))
+    except Exception:  # noqa: BLE001 - any parser failure means the values could not be shown equal
+        return "unresolved"
 
 
 def same(a: str | None, b: str | None) -> bool:
@@ -50,7 +54,11 @@ def compare_answer_lists(expected: object, predicted: list[str | None]) -> str:
     parts = _math()._answer_components(expected)
     if parts is None or any(p is None for p in predicted):
         return "mismatch"
-    return _math()._compare_components([clean_answer(p) for p in parts], [clean_answer(str(p)) for p in predicted])
+    try:
+        return _math()._compare_components([clean_answer(p) for p in parts],
+                                           [clean_answer(str(p)) for p in predicted])
+    except Exception:  # noqa: BLE001 - see compare()
+        return "unresolved"
 
 
 def group(values: list[str | None]) -> list[list[int]]:
