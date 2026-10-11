@@ -1,10 +1,11 @@
 """Current prompts. Complete message bodies: role modules. JSON contracts: schemas.py.
 
-Version identifiers are provenance, independent of experiment names. Text is unchanged by the layout refactor.
+Version identifiers are provenance, independent of experiment names.
+v10 clarifies delegation boundaries and context evidence; r12 simplifies probe and refiner guidance.
 """
 
-PROMPTS_VERSION = "v7"
-REFINER_PROMPTS_VERSION = "r9"
+PROMPTS_VERSION = "v10"
+REFINER_PROMPTS_VERSION = "r12"
 
 from .task import (
     original_task_text,
@@ -29,16 +30,21 @@ from .worker import (
     IMAGES_FOLLOW,
 )
 
-from .refiner import (
+from .probe import (
+    probe_system,
+    PROBE_TOOL_LIMIT_REACHED,
+    PROBE_LABELS,
     probe_tool_policy,
     probe_instruction,
     parse_probe,
     followup_message,
+)
+
+from .refiner import (
     simulate_request,
     analyze_request,
     verify_instruction,
     rewrite_request,
-    PROBE_LABELS,
     REVIEW_HEAD,
     DECISIONS,
 )

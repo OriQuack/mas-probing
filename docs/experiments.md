@@ -20,7 +20,7 @@
 
 ## 현재 조건
 
-모든 현재 preset은 refiner `r9`를 사용합니다. `configs/refiners/`에 있습니다.
+모든 현재 preset은 refiner `r12`을 사용합니다. `configs/refiners/`에 있습니다.
 
 | 설정 이름 | 수집 방법 | Probe 도구 |
 |---|---|---|
@@ -29,11 +29,9 @@
 | executor_probe | executor 실제 응답 1회 | 없음 |
 | executor_probe_tools | executor 실제 응답 1회 | 최대 3회 |
 | multi_worker_probe | executor와 Haiku 독립 응답 | 각 최대 3회 |
-| direct_check | 응답 수집 없이 검토·필요한 확인 | probe 없음 |
 
 수집 뒤 analysis → 필요한 verification → rewrite는 공유합니다. 기본 설정의 검토 예산과 사전 확인 한도는
 동일하지만 실제 사용량, 모델, 응답 수·도구 기회는 다를 수 있습니다. 함께 기록하고 비교합니다.
-`direct_check`는 비교를 위한 기능이며 현재 전체 성능 결과가 없습니다.
 
 `variants/`에는 pool 전체 probe/예측, executor 2회 probe, 후속 질문, 대화 연결, 연결 후 재작성 생략
 기능 preset이 있습니다. 현재 프롬프트로 동작하며 과거 r5 조건의 재현이라고 부르면 안 됩니다.
@@ -45,8 +43,8 @@ Pool 이름은 `multi`(일반 역할 하나 + executor/probe-only worker), `sing
 
 | 식별자 | 축 | 현재 값 / 규칙 |
 |---|---|---|
-| `PROMPTS_VERSION` | orchestrator·worker 및 원 문제 포장 | `v7`; restore 시 동일해야 함 |
-| `REFINER_PROMPTS_VERSION` | probe·예측·분석·확인·재작성 | `r9`; 위임 후 개입이므로 더 최신 버전 사용 가능 |
+| `PROMPTS_VERSION` | orchestrator·worker 및 원 문제 포장 | `v10`; restore 시 동일해야 함 |
+| `REFINER_PROMPTS_VERSION` | probe·예측·분석·확인·재작성 | `r12`; 위임 후 개입이므로 더 최신 버전 사용 가능 |
 | `tools_version` | 도구 동작 | ToolConfig에 기록; restore 동일성 검사 |
 | `blocklist_version` | 오염 필터 | 별도 축; 더 최신 필터는 허용 |
 
@@ -54,7 +52,13 @@ Pool 이름은 `multi`(일반 역할 하나 + executor/probe-only worker), `sing
 과거 코드별 세부 변경은 [역사적 결정 기록](history/decisions-before-cleanup.md), 결과 해석은
 [최신 종합 보고서](reports/2026-10-10-synthesis.ko.md)를 봅니다.
 현재 runtime에는 이전 prompt 구현이 없습니다. 과거 실행의 당시 코드 snapshot은 해당 실험에 보존합니다.
-v5/v6 checkpoint를 현재 v7 코드로 복원하는 것은 지원하지 않습니다.
+v8은 orchestrator의 작업 선택·분해·보고 판단 문구를 재작성한 버전입니다.
+v9은 실행 worker 문구를 재작성하고, r10은 별도 probe system prompt와 assumptions label을 도입합니다.
+r10에서는 refiner 정책을 유지하고 analysis의 항목 명칭만 맞췄습니다.
+r11은 refiner의 검토·수정 문구를 재작성합니다. 정상적인 subtask 범위를 보존하고, 미해결 해석은 확인으로 처리하며 실제 근거 부족은 보고하도록 명확히 했습니다. Pipeline과 응답 스키마는 유지합니다.
+
+실행 v10 / refiner r12에서는 위임 경계와 context 근거 확인 기준을 구체화하고, probe 중복과 refiner 추상 표현을 줄였습니다. 결과에 영향 없는 구체적 우려는 `not_relevant`로 기록합니다. 역할·pipeline·응답 스키마는 유지하며 행동 효과는 아직 평가하지 않았습니다.
+v5/v6/v7/v8/v9 checkpoint를 현재 v10 코드로 복원하는 것은 지원하지 않습니다.
 
 ## 과거 이름 대응
 
@@ -72,6 +76,20 @@ v5/v6 checkpoint를 현재 v7 코드로 복원하는 것은 지원하지 않습�
 | c3_probe_multi | multi_worker_probe |
 | 역사적 B / C | 예측 응답 / 실제 응답. 당시 버전은 기록을 확인; 현재 preset과 동일하다고 가정하지 않음 |
 | r5 | 삭제한 과거 refiner 구현. 현재 코드에서 선택 불가 |
+
+### 과거 실험을 다시 쓸 때
+
+- **채점·짝지은 비교:** 원본 run의 `condition`은 당시 이름(`A_none`, `c2_probe_tools`, `c3_probe_multi` 등)으로
+  남아 있습니다. 과거 실험에 `score_runs.py --compare`를 쓸 때는 당시 이름을 씁니다
+  (예: `--compare A_none c3_probe_multi`). 기록에 없는 이름을 주면 비교 결과가 출력되지 않습니다.
+- **Restore:** `run_batch.py --checkpoints`와 `run_task.py restore`는 이동 대응표를 쓰지 않고 주어진 경로를
+  그대로 엽니다. 과거 실험의 `cks*.txt`는 정리 전 `outputs/sessions/...` 경로이므로 먼저 현재 경로로 바꿉니다.
+  현재 코드(v10)에서는 기존 v7 `2026-10-10_updated-prompt-diagnostics/base`의 checkpoint도 restore할 수 없습니다. 당시 코드 snapshot을 사용하거나 v10으로 새 checkpoint를 생성해야 합니다.
+
+```bash
+while read -r ck; do python scripts/experiments.py resolve "$ck"; done \
+  < outputs/experiments/2026-10-10_updated-prompt-diagnostics/cks.txt > checkpoints.txt
+```
 
 ## 산출물 규칙
 

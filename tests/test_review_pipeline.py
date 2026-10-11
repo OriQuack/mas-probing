@@ -43,7 +43,7 @@ def test_probe_has_four_labels_and_the_tool_policy():
     p = prompts.probe_instruction("do x", False, 0)
     assert p.startswith("Before executing the subtask, explain how you would approach it.\n"
                         "Do not use tools or execute the subtask.\n\nSubtask instruction:\n<<<\ndo x\n>>>")
-    for label in ("understanding:", "choices:", "risks:", "plan:"):
+    for label in ("understanding:", "assumptions:", "risks:", "plan:"):
         assert f"\n{label}\n" in p
     assert "Do not invent items to fill the form." in p
     t = prompts.probe_instruction("do x", True, 3)
@@ -52,32 +52,33 @@ def test_probe_has_four_labels_and_the_tool_policy():
 
 
 def test_parse_probe():
-    got = prompts.parse_probe("**understanding:** the count of unique ids\nchoices:\n- ids, not rows\nrisks:\n"
+    got = prompts.parse_probe("**understanding:** the count of unique ids\nassumptions:\n- ids, not rows\nrisks:\n"
                               "(none)\nplan:\n1. read the file\n2. count")
-    assert got == {"understanding": "the count of unique ids", "choices": ["ids, not rows"], "risks": [],
+    assert got == {"understanding": "the count of unique ids", "assumptions": ["ids, not rows"], "risks": [],
                    "plan": ["read the file", "count"]}
     assert prompts.parse_probe("no labels here") is None
 
 
 def test_analysis_and_rewrite_texts(tmp_path, task):
-    llm = ScriptedLLM(script(worker=["understanding: x\nchoices:\nrisks:\nplan:\n- a", "ids repeat", "2"]))
+    llm = ScriptedLLM(script(worker=["understanding: x\nassumptions:\nrisks:\nplan:\n- a", "ids repeat", "2"]))
     run = make_run(tmp_path, task, llm, pool="multi", refiner="executor_probe")
     assert run.run_fresh()["status"] == "ok"
     a = text(llm.by_kind["analyze"][0])
     assert a.index("1. The original task") < a.index("2. The instruction") < a.index("3. The answers")
-    assert "neither an answer nor agreement between answers is evidence of a fact" in a
-    assert "Do not accept generic risks" in a and "Compare the answer sets" not in a  # one answer set
+    assert "Neither a claim nor agreement between answers establishes an external fact" in a
+    assert "Omit generic or speculative concerns" in a and "Compare the answer sets" not in a  # one answer set
     r = text(llm.by_kind["rewrite"][0])
-    assert "Preserve the result requested by the original task." in r
-    assert "Do not demand explicit statements or a separate proof of uniqueness" in r
+    assert "Preserve the result requested by the original task and the assigned subtask's scope." in r
+    assert "Allow a supported inference" in r
     assert "Another conceivable interpretation is not sufficient." not in r  # r8 rule removed (R24)
-    assert "do not ask for results under several readings" in r and "are not part of it" in r
-    assert "what was observed, not conclusions drawn from it" in r
-    assert "restores the task's wording" in a and "best available evidence" in a
-    assert "Keep what an answer observed" in a
+    assert "rather than forcing an unsupported choice" in r and "not instructions to copy" in r
+    assert "Keep observations separate from interpretations" in r
+    assert "A subtask may cover only part of the original task" in a
+    assert "missing evidence as confirmation" in a
+    assert "predicted answers indicate how you expect it" in a
     log = refine_log(run)
-    assert log["prompts"] == "r9" and log["responses"][0]["parsed"]["plan"] == ["a"]
-    assert json.loads((run.run_dir / "run.json").read_text())["refiner_prompts_version"] == "r9"
+    assert log["prompts"] == "r12" and log["responses"][0]["parsed"]["plan"] == ["a"]
+    assert json.loads((run.run_dir / "run.json").read_text())["refiner_prompts_version"] == "r12"
     assert "[r1] (respondent 1)\n" in a and "gen_luna" not in a and log["probe_order"] == ["gen_luna"]
 
 
@@ -120,7 +121,7 @@ def test_probe_tools_record_observations(tmp_path, task):
     assert len(obs) == 1 and obs[0]["tool"] == "web_search" and obs[0]["response_id"] == "r1"
     assert "orders 2025" in obs[0]["args"]
     assert "up to 3 tool calls" in text(llm.by_kind["worker"][0])
-    assert "Tool observations that answers report" in text(llm.by_kind["analyze"][0])
+    assert "cite the reported tool observation and its source" in text(llm.by_kind["analyze"][0])
     assert isinstance(log["observations_in_rewrite"], list)
 
 
@@ -132,26 +133,15 @@ def test_observation_overlap():
     assert got == ["37", "https://a.org/x", "table 3"]
 
 
-def test_direct_check_asks_no_worker_before_checks(tmp_path, task):
-    llm = ScriptedLLM(script(worker=["ids repeat", "2"]))
-    run = make_run(tmp_path, task, llm, pool="multi", refiner="direct_check")
-    assert run.run_fresh()["status"] == "ok"
-    check, execution = (text(b) for b in llm.by_kind["worker"])
-    assert "Do only this check" in check and NEW in execution and FACT in execution
-    a = text(llm.by_kind["analyze"][0])
-    assert "Answers about" not in a and "3. The answers" not in a
-    assert refine_log(run)["responses"] == []
-
-
 def test_config_rules():
     with pytest.raises(TypeError):
         RefinerConfig(name="x", kind="probe", questions=("plan",))
-    with pytest.raises(ValueError):
-        RefinerConfig(name="x", kind="direct_check", prompts="r5")
+    with pytest.raises(ValueError, match="unknown refiner kind"):
+        RefinerConfig(name="x", kind="direct_check")
     with pytest.raises(ValueError, match="no prompt version"):
         refiner_from_dict({"name": "old", "kind": "probe"})
-    assert refiner_from_dict({"name": "current", "kind": "probe", "prompts": "r9",
-                              "questions": ["understanding", "assumptions", "failure", "plan"]}).prompts == "r9"
+    assert refiner_from_dict({"name": "current", "kind": "probe", "prompts": "r12",
+                              "questions": ["understanding", "assumptions", "failure", "plan"]}).prompts == "r12"
     with pytest.raises(ValueError):
         RefinerConfig(name="x", kind="probe", prompts="r7")  # not kept (R23)
     with pytest.raises(ValueError):
@@ -169,7 +159,7 @@ def test_review_continues_a_discarded_copy_of_the_orchestrator_conversation(tmp_
     assert analyze[-1]["content"].startswith(prompts.REVIEW_HEAD) and len(analyze) == len(first) + 2
     rewrite = llm.by_kind["rewrite"][0]["messages"]
     assert rewrite[:len(analyze)] == analyze and rewrite[len(analyze)]["role"] == "assistant"  # the analysis reply
-    assert "Results of checks run before this delegation" in rewrite[-1]["content"]
+    assert "## Check results" in rewrite[-1]["content"]
     # the copy is discarded: the orchestrator's next turn has no review turn, only the report
     nxt = llm.by_kind["orchestrator"][1]["messages"]
     assert not any(prompts.REVIEW_HEAD in (m.get("content") or "") for m in nxt)
@@ -182,7 +172,7 @@ def test_prediction_starts_from_the_conversation(tmp_path, task):
     run.run_fresh()
     sim = llm.by_kind["simulate"][0]["messages"]
     assert sim[0]["content"].startswith("You are the orchestrator") and DRAFT in sim[-2]["content"]
-    assert "The worker sees only the message below, not this conversation" in sim[-1]["content"]
+    assert "The worker sees only its system prompt and the message below, not this conversation" in sim[-1]["content"]
 
 
 def test_decisions():

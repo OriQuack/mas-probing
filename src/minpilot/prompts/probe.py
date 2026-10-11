@@ -1,0 +1,96 @@
+"""Pre-execution worker prompts and probe-answer parsing."""
+
+from __future__ import annotations
+from .tools import TOOL_LINES
+
+
+PROBE_LABELS = ("understanding", "assumptions", "risks", "plan")
+
+PROBE_TOOL_LIMIT_REACHED = (
+    "You have reached your tool-call limit for this review. Do not call tools any more; "
+    "answer the review questions now, distinguishing observations from assumptions and remaining uncertainties."
+)
+
+
+def probe_system(system_prompt: str, tools: tuple[str, ...]) -> str:
+    tool_lines = "\n".join(f"- {TOOL_LINES[t]}" for t in tools)
+    return f"""{system_prompt}
+
+You are responding before a delegated assignment begins. Explain how you would understand and carry out the assignment using your capabilities. Your response helps the orchestrator identify consequential differences in interpretation or execution before sending the final instruction.
+
+## Explain your intended approach
+You receive the original task, any context from earlier work, and review questions about a proposed instruction. Describe the approach you would actually take, preserving the original task's target and conditions. Distinguish assumptions you would introduce from conditions already given.
+
+Context may contain errors or unverified claims. If your approach depends on a context claim, say whether you would check it or rely on it as an unverified premise.
+
+## Respect the review boundary
+Answer the review questions rather than completing the assignment. Use tools only if the request permits them, and only to check a specific assumption or risk in your proposed approach. Separate actual observations, with their sources, from inferences and expectations.
+
+Your tools:
+{tool_lines}
+Files are referenced by paths relative to the working directory; task attachments are under attachments/."""
+
+
+def probe_tool_policy(tools_allowed: bool, max_tool_calls: int) -> str:
+    if not tools_allowed:
+        return "Do not use tools or execute the subtask."
+    return f"""You may make up to {max_tool_calls} tool calls to check specific assumptions or risks in your proposed approach.
+When reporting an observation, include what you found and its source."""
+
+
+def probe_instruction(draft: str, tools_allowed: bool, max_tool_calls: int) -> str:
+    """The probe (sent with the original task and the context, as every request). Tools: a condition (R21)."""
+    return f"""Before executing the subtask, explain how you would approach it.
+{probe_tool_policy(tools_allowed, max_tool_calls)}
+
+Subtask instruction:
+<<<
+{draft}
+>>>
+
+Use the four labels below. Keep each item short.
+Empty assumptions and risks lists are valid. Do not invent items to fill the form.
+
+understanding:
+One sentence stating the result you would produce and its scope.
+
+assumptions:
+Interpretations and assumptions you would apply where the task, context, or instruction leaves room for judgment. State what you would assume; do not merely repeat given conditions.
+
+risks:
+Task-specific risks that could produce an incorrect result or prevent completion. Avoid generic possibilities without a concrete reason to expect them here.
+
+plan:
+The steps you would take for the whole subtask, including how you would handle relevant risks. One line per step."""
+
+
+def parse_probe(text: str) -> dict | None:
+    """The four labelled items of a probe answer, for the log (the analysis reads the answer text). None when no
+    label is found. understanding: a string; assumptions, risks, plan: lists of strings (bullets stripped)."""
+    import re
+
+    out: dict = {}
+    cur = None
+    for line in (text or "").splitlines():
+        m = re.match(r"^\s*[#*_\s]*(understanding|assumptions|risks|plan)[*_\s]*:[*_\s]*(.*)$", line, re.I)
+        if m:
+            cur = m.group(1).lower()
+            out[cur] = [m.group(2).strip()] if m.group(2).strip() else []
+        elif cur and line.strip():
+            out[cur].append(line.strip())
+    if not out:
+        return None
+    none = re.compile(r"^\(?(none|n/a|no \w+)\.?\)?$", re.I)
+
+    def items(lines):
+        xs = [re.sub(r"^([-*•]|\d+[.)])\s+", "", s).strip() for s in lines]
+        return [x for x in xs if x and not none.match(x)]
+
+    return {"understanding": " ".join(out.get("understanding", [])).strip(),
+            **{k: items(out.get(k, [])) for k in ("assumptions", "risks", "plan")}}
+
+
+def followup_message(question: str) -> str:
+    return f"Follow-up question from the orchestrator (still do not execute the subtask):\n{question}"
+
+

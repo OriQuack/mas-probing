@@ -12,7 +12,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
 
-from minpilot.artifacts import find_run_records
+from minpilot.artifacts import find_run_records, migrate_path
 
 
 def main() -> int:
@@ -26,16 +26,8 @@ def main() -> int:
     verify.add_argument("--root", type=Path, default=REPO / "outputs/experiments")
     args = parser.parse_args()
     if args.command == "resolve":
-        mapping = json.loads((REPO / "docs/reports/retention.json").read_text())["path_migrations"]
-        value = args.path
-        if value.startswith(str(REPO) + "/"):
-            value = str(Path(value).relative_to(REPO))
-        for old, new in sorted(mapping.items(), key=lambda item: -len(item[0])):
-            if value == old or value.startswith(old + "/"):
-                target = REPO / (new + value[len(old):])
-                print(target)
-                return 0 if target.exists() else 1
-        target = Path(value) if Path(value).is_absolute() else REPO / value
+        value = Path(args.path) if Path(args.path).is_absolute() else REPO / args.path
+        target = migrate_path(value) or value.resolve()
         print(target)
         return 0 if target.exists() else 1
     checked = 0

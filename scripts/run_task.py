@@ -2,7 +2,7 @@
 """Run one GAIA task fresh, or continue a checkpoint under a condition.
 
   python scripts/run_task.py fresh --task-id <id> [--pool multi] [--refiner baseline] [--refine-at first]
-  python scripts/run_task.py restore --checkpoint <run>/checkpoints/d0 --refiner multi_worker_probe [--label c3_r0]
+  python scripts/run_task.py restore --checkpoint <run>/checkpoints/d0 --refiner multi_worker_probe [--label multi_worker_probe_r0]
   python scripts/run_task.py restore --checkpoint ... --query-file q.txt --source post_hoc   # Exp 1 override
 
 The Crawl4AI page-reader service is required only when the reader chain contains it (the default, fixed for the

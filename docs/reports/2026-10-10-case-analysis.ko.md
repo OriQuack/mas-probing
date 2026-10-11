@@ -504,12 +504,12 @@ GAIA validation의 일부 task는 지금 시점에 실행하면 정답에 닿을
 - **이전 report에 정정 표시는 하지 않았음.** 이 report의 §4.5가 정정 기록임.
 
 ## 8. 파일
-`docs/reports/cases/` 아래에 있음.
-- `analysis/<task>.md`: task별 분석. 실행 경로, 실패 지점과 transcript 줄 번호, 원인, 수정 가능성, refiner 기록, JSON 요약.
-- `analysis/_allcorrect.md`: 정답 22개 task의 refiner 기록 44개 분석.
-- `cards/<task>.md`: 질문, gold, annotator 풀이 단계, run 목록.
-- `RUBRIC.md`: 분석 기준.
-- `agg_runs.csv`: run별 원인과 수정 가능성.
-- `agg_issues.csv`: issue별 출처, decision, 품질.
-- `aggregate.py`: 집계 스크립트.
+2026-10-11 정리 이후 위치입니다.
+- `docs/reports/cases/analysis/<task>.md`: task별 분석. 실행 경로, 실패 지점과 transcript 줄 번호, 원인, 수정 가능성, refiner 기록, JSON 요약.
+- `docs/reports/cases/analysis/_allcorrect.md`: 정답 22개 task의 refiner 기록 44개 분석.
+- `docs/reports/cases/RUBRIC.md`: 분석 기준.
+- `outputs/analysis/2026-10-10-case-analysis/cards/<task>.md`: 질문, gold, annotator 풀이 단계, run 목록.
+- `outputs/analysis/2026-10-10-case-analysis/agg_runs.csv`: run별 원인과 수정 가능성.
+- `outputs/analysis/2026-10-10-case-analysis/agg_issues.csv`: issue별 출처, decision, 품질.
+- `scripts/aggregate_case_analysis.py`: 집계 스크립트(당시 `aggregate.py`).
 - transcript는 크기 때문에 넣지 않았음(scratchpad `deep/tr/`, 49 MB). `scripts/render_trace.py RUN_DIR`로 다시 만들 수 있음.

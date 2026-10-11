@@ -114,10 +114,10 @@ def tool_identity(tools: dict) -> dict:
 
 
 def code_hash() -> str:
-    """Hash Python source and any text resources, recorded with runs and checkpoints."""
+    """Hash of the package source (src/minpilot/**/*.py, prompts included), recorded with runs and checkpoints."""
     h = hashlib.sha256()
     pkg = Path(__file__).resolve().parent
-    for p in sorted(p for p in pkg.rglob("*") if p.is_file() and p.suffix in (".py", ".txt")):
+    for p in sorted(pkg.rglob("*.py")):
         h.update(str(p.relative_to(pkg)).encode() + b"\0" + p.read_bytes() + b"\0")
     return h.hexdigest()[:16]
 

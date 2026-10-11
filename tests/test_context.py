@@ -71,7 +71,7 @@ def test_every_c3_step_reads_the_context_and_execution_gets_it_unchanged(tmp_pat
     assert "the original task, the context and the instruction of that delegation" in analysis
     assert "the original task, the context and your check instruction" in analysis
     rewrite = user_text(llm.by_kind["rewrite"][0])
-    assert "the context is sent as you wrote it" in rewrite
+    assert "The context is sent as you wrote it" in rewrite
     sent = user_text(execution)
     assert sent.count(CTX) == 1 and REWRITTEN in sent and DRAFT not in sent
     d = json.loads((run.run_dir / "run.json").read_text())["delegations"][0]

@@ -1,7 +1,7 @@
 """Shared pre-delegation review: collect -> analyze -> optional follow-ups -> verify -> rewrite.
 
-ProbeRefiner collects real worker answers, SelfReviewRefiner predicts them, and DirectCheckRefiner skips
-collection. Review turns use a discarded copy of the orchestrator conversation. Answers are anonymous and
+ProbeRefiner collects real worker answers and SelfReviewRefiner predicts them. Both share the review pipeline.
+Review turns use a discarded copy of the orchestrator conversation. Answers are anonymous and
 shuffled; probes and checks use isolated workspaces. Budget or validation failures execute the original draft.
 """
 
@@ -97,7 +97,7 @@ def observation_overlap(final: str, before: list[str], observed: list[str]) -> l
 
 
 class _ReviewRefiner:
-    source = ""  # "probe" | "self_review" | "direct"
+    source = ""  # "probe" | "self_review"
     retries = 1  # one more attempt for an unusable structured reply
 
     def __init__(self, cfg: RefinerConfig):
@@ -332,13 +332,3 @@ class SelfReviewRefiner(_ReviewRefiner):
                 out.append({"id": rid, "who": who, "worker_id": w,
                             "sample": s, "text": text, **self._parsed(text)})
         return out
-
-
-class DirectCheckRefiner(_ReviewRefiner):
-    """No answers: the analysis reads the original task, the context and the draft, chooses issues and the checks
-    to delegate, and the rewrite follows (R21; the comparison arm of the probe-tools condition)."""
-
-    source = "direct"
-
-    def collect(self, req: RefineRequest, ctx: RefineContext, log: dict) -> list[dict]:
-        return []

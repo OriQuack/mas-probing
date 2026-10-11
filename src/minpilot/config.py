@@ -69,7 +69,7 @@ class PoolConfig:
 @dataclass(frozen=True)
 class RefinerConfig:
     name: str
-    kind: str = "none"                       # none | self_review | probe | direct_check
+    kind: str = "none"                       # none | self_review | probe
     prompts: str = REFINER_PROMPTS_VERSION   # recorded refiner version; current implementation only
     # Who answers (decision P5): "pool" = the role's registered probe_workers; "executor" = the role's executor
     # only; or a list of worker ids of the pool ("executor" allowed as an entry). The pool, the executor and the
@@ -88,7 +88,7 @@ class RefinerConfig:
     budget: Limits = field(default_factory=lambda: Limits(max_llm_calls=60, max_cost_usd=1.0, max_worker_calls=8))
 
     def __post_init__(self):
-        if self.kind not in ("none", "self_review", "probe", "direct_check"):
+        if self.kind not in ("none", "self_review", "probe"):
             raise ValueError(f"unknown refiner kind {self.kind!r}")
         if self.prompts != REFINER_PROMPTS_VERSION:
             raise ValueError(f"unsupported refiner prompts {self.prompts!r}; "

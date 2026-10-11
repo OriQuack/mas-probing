@@ -27,7 +27,7 @@ def main() -> None:
     parser.add_argument("--instruction", default="Count unique order IDs in attachments/orders.csv for 2025.")
     parser.add_argument("--context", default="")
     parser.add_argument("--probe-tools", action="store_true")
-    parser.add_argument("--source", choices=("probe", "self_review", "direct"), default="probe")
+    parser.add_argument("--source", choices=("probe", "self_review"), default="probe")
     args = parser.parse_args()
     pool = load_pool(args.pool)
     role = pool.roles[args.role] if args.role else next(iter(pool.roles.values()))
@@ -38,14 +38,15 @@ def main() -> None:
               "description": role.description, "tools": list(worker.tools), "system_prompt": worker.system_prompt}
     probe = prompts.probe_instruction(args.instruction, args.probe_tools, 3)
     responses = [{"id": "r1", "who": "respondent 1",
-                  "text": "understanding: Count unique orders in 2025.\nchoices:\nrisks:\nplan:\n- Read and count."}]
+                  "text": "understanding: Count unique orders in 2025.\nassumptions:\nrisks:\nplan:\n- Read and count."}]
     examples = {
         "orchestrator": [("System", prompts.orchestrator_system(roles, 12, ANSWER_FORMAT)),
                          ("Task", prompts.orchestrator_task_message(args.task))],
         "worker": [("System", prompts.worker_system(worker.system_prompt, worker.tools)),
                    ("Request", prompts.worker_request(args.task, args.instruction, context=args.context,
                                                       tool_limit=worker.max_tool_calls))],
-        "probe": [("Request", prompts.worker_request(args.task, probe, context=args.context, kind="probe"))],
+        "probe": [("System", prompts.probe_system(worker.system_prompt, worker.tools)),
+                  ("Request", prompts.worker_request(args.task, probe, context=args.context, kind="probe"))],
         "self-review": [("Review turn", prompts.simulate_request(args.task, args.instruction, target, args.context))],
         "analysis": [("Review turn", prompts.analyze_request(target, responses, args.source, 2, roles, 0,
                                                             bool(args.context.strip()), args.probe_tools))],

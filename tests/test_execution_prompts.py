@@ -18,4 +18,4 @@ def test_orchestrator_recheck_rule():
     assert ("Delegate a check only for a specific unresolved issue that could change the answer, and have the check "
             "report which observations support or change the current result.") in s
     assert "When an important result is in doubt" not in s
-    assert prompts.PROMPTS_VERSION == "v7"
+    assert prompts.PROMPTS_VERSION == "v10"

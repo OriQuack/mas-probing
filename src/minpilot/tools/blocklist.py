@@ -30,7 +30,8 @@ run_python output.
 v3 (2026-10-08) adds agent_eval_on_task and the URL rule `known_task_discussion` (papers found discussing GAIA
 tasks; extended when the audit finds one).
 v5 (2026-10-08, min_pilot; v4 was an intermediate never used for recorded results) closes gaps found by labelling
-the first min_pilot baseline (outputs/sessions/pilot-base-20261008T155247Z/labels):
+the first min_pilot baseline (session pilot-base-20261008T155247Z, no longer retained; summary in
+docs/reports/2026-10-08-initial-pilot.ko.md):
   - URL rules for query-echo and Q/A-aggregator pages (`query_echo_page`, `qa_aggregator`) and more known task
     discussions (a blog, two OpenReview agent-trace attachments);
   - quotes_task_question compares letters and digits only, so hyphenation and line breaks ("end- note") do not

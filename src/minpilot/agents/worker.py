@@ -3,7 +3,7 @@
 Workers keep no state between calls: each call starts from the system prompt, unless the caller passes an earlier
 conversation (`history`) to continue (probe follow-ups; the "connected" condition, where execution continues the
 executor's probe conversation). Files are a separate matter: they live in the workspace the caller's toolbox is
-bound to.
+bound to. The active system prompt follows the request kind, including when continuing a conversation.
 
 Tool loop: the model may call tools until it answers without a tool call (the report) or reaches
 `max_tool_calls`; then it is told to report now and called once more with `tool_choice="none"`. Images returned
@@ -38,8 +38,9 @@ class Worker:
     def id(self) -> str:
         return self.spec.id
 
-    def system_message(self) -> dict:
-        return {"role": "system", "content": prompts.worker_system(self.spec.system_prompt, self.spec.tools)}
+    def system_message(self, kind: str = "task") -> dict:
+        render = prompts.probe_system if kind == "probe" else prompts.worker_system
+        return {"role": "system", "content": render(self.spec.system_prompt, self.spec.tools)}
 
     def run(self, original_task: str, instruction: str, toolbox: Toolbox, *, allow_tools: bool = True,
             max_tool_calls: int | None = None, history: list[dict] | None = None,
@@ -50,14 +51,18 @@ class Worker:
         the original task and the instruction."""
         limit = self.spec.max_tool_calls if max_tool_calls is None else max_tool_calls
         tools = tool_schemas(self.spec.tools) if allow_tools and self.spec.tools else None
-        msgs = list(history) if history else [self.system_message()]
+        msgs = list(history) if history else [self.system_message(kind)]
+        # Follow-ups retain probe policy; connected execution switches policy while retaining prior turns.
+        if history:
+            msgs[0] = self.system_message(kind)
         msgs.append({"role": "user", "content": user_message or prompts.worker_request(
             original_task, instruction, context=context, kind=kind, tool_limit=limit if tools is not None else None)})
         n, used, status = 0, [], "ok"
         for _ in range(limit + 2):
             forced = tools is not None and n >= limit
             if forced:
-                msgs.append({"role": "user", "content": prompts.TOOL_LIMIT_REACHED})
+                limit_message = prompts.PROBE_TOOL_LIMIT_REACHED if kind == "probe" else prompts.TOOL_LIMIT_REACHED
+                msgs.append({"role": "user", "content": limit_message})
                 status = "tool_limit"
             res = self.client.chat(msgs, tools=tools, tool_choice="none" if forced else None)
             message = dict(res.message)

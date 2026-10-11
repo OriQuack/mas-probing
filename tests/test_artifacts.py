@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from minpilot.artifacts import find_run_records, resolve_artifact_path
+from minpilot.artifacts import find_run_records, migrate_path, resolve_artifact_path
 
 
 def record(root, relative):
@@ -39,6 +39,16 @@ def test_historical_checkpoint_paths_resolve_without_rewriting_records(tmp_path)
     saved = old / "runs/task/run/checkpoints/d0"
     assert resolve_artifact_path(saved, {str(old): str(new)}) == checkpoint
     assert not old.exists()
+
+
+def test_stored_path_migrates_even_when_a_new_file_took_its_name(tmp_path):
+    reused = tmp_path / "decisions.md"
+    reused.write_text("current decisions")
+    moved = tmp_path / "history/decisions.md"
+    mapping = {str(reused): str(moved)}
+    assert migrate_path(reused, mapping) == moved
+    assert resolve_artifact_path(reused, mapping) == reused
+    assert migrate_path(tmp_path / "unrelated.md", mapping) is None
 
 
 def test_batch_refuses_to_append_to_frozen_evidence_before_writing(tmp_path, monkeypatch):

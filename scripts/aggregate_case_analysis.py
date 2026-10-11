@@ -1,5 +1,7 @@
-"""Aggregate the JSON summary blocks of deep/analysis/<task>.md (+ _allcorrect.md) into tables.
-usage: python scripts/aggregate_case_analysis.py > outputs/analysis/case-summary.txt ; writes agg_runs.csv, agg_issues.csv"""
+"""Aggregate the JSON summary blocks of docs/reports/cases/analysis/<task>.md (+ _allcorrect.md) into tables.
+usage: python scripts/aggregate_case_analysis.py > outputs/analysis/case-summary.txt
+writes agg_runs.csv, agg_issues.csv into outputs/analysis/2026-10-10-case-analysis/ (overwrites the retained copies;
+the 2026-10-11 cleanup checked that the moved analysis files reproduce them byte for byte)"""
 import csv, json, re, collections, sys
 from pathlib import Path
 

@@ -3,7 +3,7 @@
 # Stage 3–4 report (2026-10-09)
 
 코드: commit `438339a` (prompts v6, refiner r8), `a254fcd` (Serper credit을 key별로 세기, K18). 둘 다 local commit이고 push 안 함.
-이 report와 STATUS는 gitignored (`outputs/sessions/`).
+작성 당시 이 report와 STATUS는 gitignored `outputs/sessions/`에 있었음. 2026-10-11 정리에서 report는 `docs/reports/`로 옮겼고 STATUS는 삭제함.
 
 ## 요약
 - **3단계 (v5 → v6, 50 tasks × 1, 검색은 DDG로 degraded)**

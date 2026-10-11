@@ -125,7 +125,7 @@ def test_one_role_is_named_the_worker_in_prompts(tmp_path, task):
     run.run_fresh()
     report = llm.by_kind["orchestrator"][1]["messages"][-1]["content"]
     assert "Report from the worker (delegation 1)" in report and "actually sent to the worker" in report
-    assert "sent to the worker, review its instruction" in llm.by_kind["analyze"][0]["messages"][-1]["content"]
+    assert "Review the pending instruction for the worker" in llm.by_kind["analyze"][0]["messages"][-1]["content"]
     assert "executed by the worker," in llm.by_kind["rewrite"][0]["messages"][-1]["content"]
 
 

@@ -287,8 +287,8 @@
 
 ## 10. 파일
 - **이전 report:** `docs/reports/2026-10-09-baseline-and-probe-comparison.ko.md` (§9 해석 정정, §10 재실행 원 기록)
-- **상태:** `outputs/sessions/STATUS_20261009.md` (2026-10-10 절)
-- **trace**
-  - stage 4: `outputs/experiments/2026-10-09_probe-condition-comparison/analysis/selected-traces/` (+ `key_traces_stage4.zip`)
-  - 재실행: `outputs/analysis/2026-10-10-followup-traces/` (+ `.zip`). README에 task × phase 결과표, `runs.csv`에 run별 답, gold, refine 결과가 있음.
+- **상태:** 당시 `outputs/sessions/STATUS_20261009.md`(2026-10-10 절). 2026-10-11 정리에서 삭제했고 내용은 최신 종합 보고서로 대체함(`docs/reports/retention.json`).
+- **trace** (ZIP 묶음은 2026-10-11 정리에서 삭제)
+  - stage 4: `outputs/experiments/2026-10-09_probe-condition-comparison/analysis/selected-traces/`. 현재 색인은 `index.csv`, 당시 표는 `historical-cases.csv`.
+  - 재실행: `outputs/analysis/2026-10-10-followup-traces/`. README에 task × phase 결과표, `historical-runs.csv`(당시 `runs.csv`)에 run별 답, gold, refine 결과가 있음. 현재 색인은 `index.csv`.
 - **결정 기록:** `docs/history/decisions-before-cleanup.md`의 R24(r9), F23(v7), E10(재실행 범위)

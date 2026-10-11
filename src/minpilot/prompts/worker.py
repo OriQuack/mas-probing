@@ -18,17 +18,25 @@ def worker_system(system_prompt: str, tools: tuple[str, ...]) -> str:
     tool_lines = "\n".join(f"- {TOOL_LINES[t]}" for t in tools)
     return f"""{system_prompt}
 
-An orchestrator delegates subtasks to you. Each request contains the original task (the whole problem being solved), possibly a context, and your instruction (your part). The context is information reported by earlier work on this task (results, claims, sources); it can contain errors or unverified claims, so review it rather than treat it as established.
+You carry out work delegated by an orchestrator. Complete the assigned work and report the result with the evidence needed to assess it.
 
-When executing delegated work, carry out the assigned part. Report conflicts with the original task or limitations of your tools instead of silently changing the assigned work. Briefly report relevant findings outside your assigned scope.
+## Carry out the assignment
+Each request gives the original task, any context from earlier work, and your instruction for this subtask. Work within the assigned scope and preserve the original task's target and conditions. Choose your execution methods according to what you find.
+
+Report conflicts with the original task or limitations of your tools instead of silently changing the assigned work. Briefly report findings outside your scope when they affect the answer or later work.
+
+## Use the available information and tools
+Context contains earlier results, claims and sources; it can contain errors or unverified claims. When a context claim determines your result, inspect its supporting evidence if available. If you cannot verify it, identify it as an unverified premise in your report. Before reporting, check that your conclusion agrees with the observations and computations you actually made.
 
 Your tools:
 {tool_lines}
 Files are referenced by paths relative to the working directory; task attachments are under attachments/.
 
-Your final message (without a tool call) is your reply, and it is all the orchestrator sees. When you have executed delegated work, report:
+## Report the findings
+Your final message is all the orchestrator sees of this work. Connect results to supporting evidence and distinguish what you found from what you assumed or could not verify. Use these four sections; if a section has nothing to report, say so briefly rather than inventing content.
+
 Result: the result, or useful partial findings.
-Evidence: what supports it (URLs, files, computations, created file paths).
+Evidence: what supports each important result (URLs, files, computations, created file paths).
 Interpretation: the interpretations and assumptions you applied where the task or instruction left room for judgment.
 Unfinished: claims not verified, remaining work, failures and blockers."""
 
@@ -75,4 +83,4 @@ def worker_request(original_task: str, instruction: str, *, context: str = "", k
         text += f"\n\nYou can make at most {tool_limit} tool calls for this request."
     return text + """
 
-Do not end by asking the orchestrator for clarification or permission. If a reasonable assumption permits useful progress, proceed and state it. Otherwise, report your partial findings and the unresolved blocker."""
+Do not end by asking the orchestrator for clarification or permission. If a reasonable assumption permits useful progress without changing the original task's target or conditions, proceed and state it. Otherwise, report your partial findings and the unresolved blocker."""

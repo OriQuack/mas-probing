@@ -103,6 +103,9 @@ def test_followup_continues_the_probe_conversation(tmp_path, task):
     run.run_fresh()
     fu = llm.by_kind["worker"][1]["messages"]
     assert "I count rows" in json.dumps(fu) and "Rows or unique ids?" in fu[-1]["content"]
+    worker = run.workers["gen_luna"]
+    assert fu[0] == worker.system_message("probe")
+    assert llm.by_kind["worker"][-1]["messages"][0] == worker.system_message()
     assert len(llm.by_kind["analyze"]) == 2 and "unique ids then" in llm.by_kind["analyze"][1]["messages"][-1]["content"]
 
 
@@ -112,6 +115,9 @@ def test_connected_condition_continues_probe_into_execution(tmp_path, task):
     run.run_fresh()
     ex = llm.by_kind["worker"][-1]["messages"]
     assert "probe answer" in json.dumps(ex) and REWRITTEN in ex[-1]["content"]
+    worker = run.workers["gen_luna"]
+    assert ex[0] == worker.system_message()
+    assert llm.by_kind["worker"][0]["messages"][0] == worker.system_message("probe")
 
 
 def test_refine_budget_exceeded_keeps_draft(tmp_path, task):
@@ -227,6 +233,7 @@ def test_answers_only_arm_executes_the_draft_after_a_connected_probe(tmp_path, t
     assert refine_log(run)["status"] == "answers_only" and set(llm.by_kind) == {"orchestrator", "worker"}
     ex = llm.by_kind["worker"][-1]["messages"]
     assert "probe answer" in json.dumps(ex) and DRAFT in ex[-1]["content"]
+    assert ex[0] == run.workers["gen_luna"].system_message()
 
 
 def test_rewrite_prompt_names_the_executor_tools(tmp_path, task):

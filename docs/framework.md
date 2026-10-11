@@ -33,6 +33,8 @@ call_worker(worker_id, original_task, instruction, context="") -> report
 - `instruction`: 현재 subtask의 작업·범위·해석·가정·확인 절차·완료 기준.
 - `report`: 자유 텍스트 결과. 실행 보고에는 Result / Evidence / Interpretation / Unfinished를 요구합니다.
 
+실행은 `worker_system`, probe와 probe 후속 질문은 `probe_system`을 사용합니다.
+둘은 등록된 전문 역할·도구·환경을 공유하며 행동 지침은 분리합니다.
 Worker는 호출 간 대화를 유지하지 않습니다. 필요한 이전 결과는 orchestrator가 context에 명시합니다.
 생성 파일은 workspace에 남고 경로를 보고합니다. 원 질문과 지시가 충돌하면 worker가 이를 보고합니다.
 
@@ -46,7 +48,7 @@ Probe는 현재 subtask에 대해 네 가지를 묻습니다.
 | 항목 | 확인하는 것 |
 |---|---|
 | understanding | 산출물과 담당 범위의 이해 |
-| choices | 입력이 명시하지 않은 해석·가정과 선택 |
+| assumptions | 입력이 명시하지 않은 부분에 적용할 해석·가정 |
 | risks | 잘못된 결과나 미완료를 낳을 구체적인 위험 |
 | plan | 전체 subtask의 실행 단계와 위험 대응 |
 

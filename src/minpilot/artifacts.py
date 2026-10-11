@@ -18,17 +18,25 @@ def _path_migrations() -> dict[str, str]:
     return json.loads(record.read_text())["path_migrations"] if record.exists() else {}
 
 
-def resolve_artifact_path(value: Path | str, migrations: dict[str, str] | None = None) -> Path:
-    """Locate moved evidence without rewriting paths inside immutable historical records."""
+def migrate_path(value: Path | str, migrations: dict[str, str] | None = None) -> Path | None:
+    """Where a stored pre-cleanup path lives now (longest matching migration), or None when no migration covers it.
+    Applies the migration even when the old path still exists (e.g. `docs/decisions.md` is a new file now)."""
     path = Path(value).resolve()
-    if path.exists():
-        return path
     key = str(path.relative_to(REPO)) if path.is_relative_to(REPO) else str(path)
     mapping = _path_migrations() if migrations is None else migrations
     for old, new in sorted(mapping.items(), key=lambda item: -len(item[0])):
         if key == old or key.startswith(old + "/"):
             return (REPO / (new + key[len(old):])).resolve()
-    return path
+    return None
+
+
+def resolve_artifact_path(value: Path | str, migrations: dict[str, str] | None = None) -> Path:
+    """Locate moved evidence without rewriting paths inside immutable historical records: an existing path as is,
+    otherwise its migrated location (run and checkpoint paths only; see `migrate_path` for stored doc paths)."""
+    path = Path(value).resolve()
+    if path.exists():
+        return path
+    return migrate_path(path, migrations) or path
 
 
 def find_run_records(path: Path | str) -> list[Path]:

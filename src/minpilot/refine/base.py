@@ -93,7 +93,6 @@ class NoRefiner:
 
 
 def make_refiner(cfg: RefinerConfig) -> InstructionRefiner:
-    from minpilot.refine.review import DirectCheckRefiner, ProbeRefiner, SelfReviewRefiner
+    from minpilot.refine.review import ProbeRefiner, SelfReviewRefiner
 
-    return {"none": NoRefiner, "self_review": SelfReviewRefiner, "probe": ProbeRefiner,
-            "direct_check": DirectCheckRefiner}[cfg.kind](cfg)
+    return {"none": NoRefiner, "self_review": SelfReviewRefiner, "probe": ProbeRefiner}[cfg.kind](cfg)
