@@ -61,6 +61,11 @@ def test_extract_answer_takes_the_last_answer_line():
     ("\\[\n\\boxed{\\displaystyle \\text{answer}=\\sum_{k=0}^{3}k}\n\\]", "\\sum_{k=0}^{3}k"),
     ("answer = 2 at first\n\\boxed{\\text{answer = 3}}", "3"),
     ("\\boxed{\\text{answer = 3}}\nOn reflection:\nanswer = 5", "5"),
+    # hard-batch endings: answer mid-line, trailing markdown/period, display-math wrapper around \text{answer}
+    ("Both conditions force the first guess to be \\(859\\).answer = 859", "859"),
+    ("Assuming the vertices are distinct (labeled), **answer = 30016**.", "30016"),
+    ("## Final answer\n\n$$\\text{answer} = 738$$", "738"),
+    ("The answer to node_18 is 5, which is irrational.", None),
 ])
 def test_extract_answer_reads_boxed_text_answers(tail, value):
     assert extract_answer(tail) == value

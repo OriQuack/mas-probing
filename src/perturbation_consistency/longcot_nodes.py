@@ -14,7 +14,9 @@ _NODE_LINE = re.compile(r"(?m)^Problem (node_\d+):[ \t]*")
 _PLACEHOLDER = re.compile(r"\[For this value[^\[\]]*\]")
 _NODE_REF = re.compile(r"node_\d+")
 _REQUEST = re.compile(r"(?m)^What are the answers to problem (.+?)\?\s*$")
-_ANSWER_LINE = re.compile(r"(?im)^[ \t>*_`#-]*answer[ \t*_`]*(?:\\\([ \t]*)?=[ \t]*(.+?)[ \t*_`]*$")
+# `answer = value` anywhere in a line, e.g. `answer = 7`, `**answer = 7**.`, `...so it is 859.answer = 859`,
+# `$$\text{answer} = 738$$`, `answer \(= 5\)`; the value runs to the end of the line.
+_ANSWER_LINE = re.compile(r"(?i)(?:\\text\{[ \t]*)?\banswer\b[ \t]*\}?[ \t*_`]*(?:\\\([ \t]*)?=[ \t]*([^\n]+)")
 
 
 @dataclass(frozen=True)
@@ -98,11 +100,13 @@ def clean_answer(value: str) -> str:
     LaTeX spacing (\\, \\! \\; \\:), \\dfrac/\\tfrac (as \\frac), unbraced \\sqrt2 (as \\sqrt{2}) and a trailing period. LongCoT's own comparison leaves
     these to an LLM fallback judge, which this harness does not use."""
     s = value.strip()
-    for _ in range(3):  # wrappers can nest, e.g. **\(52\)**
-        s = re.sub(r"^[*_`]+|[*_`]+$", "", s).strip()
+    for _ in range(3):  # wrappers can nest, e.g. **\(52\)**.
+        s = re.sub(r"^[*_`]+|[*_`]+$", "", s).strip().rstrip(".").strip()
         for a, b in _DELIMITERS:
             if len(s) >= len(a) + len(b) and s.startswith(a) and s.endswith(b):
                 s = s[len(a):len(s) - len(b)].strip()
+            elif s.endswith(b) and a not in s[:-len(b)]:  # closer left over from the surrounding line
+                s = s[:-len(b)].strip()
         if m := re.fullmatch(r"\\boxed\{(.*)\}", s):
             s = m.group(1).strip()
     s = s.replace("\\dfrac", "\\frac").replace("\\tfrac", "\\frac")
@@ -125,14 +129,17 @@ def _boxed_answers(text: str):
             continue
         inner = re.sub(r"^\\displaystyle\s*", "", text[m.end():i - 1].strip())
         if found := _BOXED_TEXT_ANSWER.match(inner):
-            yield m.start(), (found.group(1) or found.group(2) or "").strip()
+            yield m.start(), i, (found.group(1) or found.group(2) or "").strip()
 
 
 def extract_answer(text: str | None) -> str | None:
-    """The last answer given as an `answer = ...` line or as \\boxed{\\text{answer}=...} (luna-high writes the
-    latter), notation cleaned; None when there is neither."""
+    """The last answer given as `answer = ...` or as \\boxed{\\text{answer}=...} (luna-high writes the latter),
+    notation cleaned; None when there is neither. A line match inside a boxed answer defers to the boxed reading."""
     text = text or ""
-    found = [(m.start(), m.group(1)) for m in _ANSWER_LINE.finditer(text)] + list(_boxed_answers(text))
+    boxed = list(_boxed_answers(text))
+    found = [(start, value) for start, _, value in boxed]
+    found += [(m.start(), m.group(1)) for m in _ANSWER_LINE.finditer(text)
+              if not any(s <= m.start() < e for s, e, _ in boxed)]
     if not found:
         return None
     return clean_answer(max(found)[1]) or None
