@@ -1,0 +1,10 @@
+# Review the draft without probe answers; delegate necessary checks and rewrite.
+name: direct_check
+kind: direct_check
+probe_workers: executor
+max_verifications: 2
+verify_max_tool_calls: 10
+budget:
+  max_llm_calls: 60
+  max_cost_usd: 1.0
+  max_worker_calls: 8

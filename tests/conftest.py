@@ -69,7 +69,7 @@ def task(tmp_path) -> GaiaTask:
 
 @pytest.fixture(autouse=True)
 def _configured_probe_order(monkeypatch):
-    """r8 shuffles the probe workers per delegation (R23); tests keep the configured order unless they set one."""
+    """Runtime shuffles probe workers; tests keep configured order unless they explicitly change it."""
     from minpilot.refine import review
 
     class Configured:

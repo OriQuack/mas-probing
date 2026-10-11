@@ -4,7 +4,7 @@
 import json
 
 from fakes import ScriptedLLM, delegate, finish
-from minpilot.agents import prompts, prompts_r5
+from minpilot import prompts
 from minpilot.harness import Run
 from minpilot.tools.config import ToolConfig
 from test_harness import fake_web, make_run
@@ -22,7 +22,7 @@ def test_execution_and_check_requests_state_the_limit_probes_do_not(tmp_path, ta
                                                        "instruction": "check ids"}]}],
                        "rewrite": [{"instruction": "new", "changes": [], "unchanged": False}],
                        "worker": ["probe answers", "checked", "2"]})
-    run = make_run(tmp_path, task, llm, pool="single", refiner="C_probe")
+    run = make_run(tmp_path, task, llm, pool="single", refiner="variants/pool_probe")
     run.run_fresh()
     probe, check, execution = (b["messages"][1]["content"] for b in llm.by_kind["worker"])
     assert NO_QUESTION not in probe and "tool calls for this request" not in probe
@@ -31,16 +31,15 @@ def test_execution_and_check_requests_state_the_limit_probes_do_not(tmp_path, ta
     assert NO_QUESTION not in llm.by_kind["worker"][0]["messages"][0]["content"]  # not in the system prompt
 
 
-def test_b_sees_the_real_system_prompt_and_probe_message(tmp_path, task):
+def test_self_review_sees_the_real_system_prompt_and_probe_message(tmp_path, task):
     llm = ScriptedLLM({"orchestrator": [delegate("worker", DRAFT), finish("2")], "simulate": ["predicted"],
                        "analyze": [{"issues": [], "followups": [], "verifications": []}], "worker": ["2"]})
-    run = make_run(tmp_path, task, llm, pool="single", refiner="B_self_review")
+    run = make_run(tmp_path, task, llm, pool="single", refiner="variants/pool_self_review")
     run.run_fresh()
-    sim = llm.by_kind["simulate"][0]["messages"][1]["content"]
+    sim = llm.by_kind["simulate"][0]["messages"][-1]["content"]
     worker = run.workers["gen_luna"]
     assert worker.system_message()["content"] in sim
-    real_probe = prompts.worker_request(run.original_task, prompts_r5.probe_instruction(  # B_self_review: r5
-        DRAFT, run.cfg.refiner.questions, False, 0), kind="probe")
+    real_probe = prompts.worker_request(run.original_task, prompts.probe_instruction(DRAFT, False, 0), kind="probe")
     assert real_probe in sim and "model" not in sim.lower().replace("reader model", "")
 
 

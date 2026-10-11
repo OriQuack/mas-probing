@@ -10,7 +10,7 @@ checks, rewrite) sees it, and the harness sends it unchanged, with the additions
 Decomposition, assignment and the final synthesis belong to the harness; this module is the unit that is ported
 to other frameworks and compared across conditions.
 
-The refiner speaks for the orchestrator: from refiner prompts r7 its steps (prediction, analysis, rewrite) are turns
+The refiner speaks for the orchestrator: its steps (prediction, analysis, rewrite) are turns
 of a copy of the orchestrator's conversation up to this delegation (`orchestrator_messages`), so it knows what the
 orchestrator knows and intends; the copy is discarded and only the result reaches the orchestrator's history
 (decision R22). Workers asked by the refiner still get only the original task, the context and their instruction.
@@ -42,8 +42,8 @@ class RefineRequest:
     target_worker: str             # the fixed executing worker of that role
     probe_workers: tuple[str, ...]
     context: str = ""              # the orchestrator's context for this delegation (read-only, F21)
-    # the orchestrator's conversation up to and including the pending delegate action (role/content only); from
-    # refiner prompts r7 the review runs as turns of a copy of it, discarded afterwards (decision R22)
+    # The conversation through the pending delegate action (role/content only).
+    # Review turns run in a discarded copy.
     orchestrator_messages: tuple[dict, ...] = ()
 
 
@@ -55,7 +55,7 @@ class RefineResult:
     log: dict = field(default_factory=dict)
     # "connected" condition only: the executor's probe conversation, continued by the execution call
     execution_history: list[dict] | None = None
-    # facts for the executor from the review (r7), appended after the unchanged context; "" = none
+    # facts for the executor from the review, appended after the unchanged context; "" = none
     context_additions: str = ""
 
 

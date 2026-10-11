@@ -1,0 +1,1369 @@
+{
+  "date": "2026-10-11",
+  "basis": "docs/reports/2026-10-10-synthesis.ko.md",
+  "retained_run_count": 317,
+  "experiments": [
+    {
+      "path": "outputs/experiments/2026-10-09_baseline-original-reporting",
+      "purpose": "Original worker reporting baseline",
+      "historical_name": "stage3-v5-base-20261009T160339Z",
+      "run_roots": [
+        "runs"
+      ],
+      "run_count": 50,
+      "execution_prompt_versions": [
+        "v5"
+      ],
+      "refiner_prompt_versions": [
+        "r7"
+      ]
+    },
+    {
+      "path": "outputs/experiments/2026-10-09_baseline-interpretation-reporting",
+      "purpose": "Interpretation reporting baseline",
+      "historical_name": "stage3-v6-base-20261009T173855Z",
+      "run_roots": [
+        "runs"
+      ],
+      "run_count": 50,
+      "execution_prompt_versions": [
+        "v6"
+      ],
+      "refiner_prompt_versions": [
+        "r8"
+      ]
+    },
+    {
+      "path": "outputs/experiments/2026-10-09_probe-condition-comparison",
+      "purpose": "Paired probe conditions with Serper",
+      "historical_name": "stage4-serper-20261009T192620Z",
+      "run_roots": [
+        "runs"
+      ],
+      "run_count": 141,
+      "execution_prompt_versions": [
+        "v6"
+      ],
+      "refiner_prompt_versions": [
+        "r8"
+      ]
+    },
+    {
+      "path": "outputs/experiments/2026-10-10_refiner-regression-check",
+      "purpose": "Refiner regression checks on existing drafts",
+      "historical_name": "rerunA-r9-v6ck-20261010T053207Z",
+      "run_roots": [
+        "runs"
+      ],
+      "run_count": 42,
+      "execution_prompt_versions": [
+        "v6"
+      ],
+      "refiner_prompt_versions": [
+        "r9"
+      ]
+    },
+    {
+      "path": "outputs/experiments/2026-10-10_updated-prompt-diagnostics",
+      "purpose": "Updated execution prompts and paired diagnostic restores",
+      "historical_name": "rerunB-v7-r9-20261010T062005Z",
+      "run_roots": [
+        "base/runs",
+        "restore/runs",
+        "restore_serper_redo/runs"
+      ],
+      "run_count": 34,
+      "execution_prompt_versions": [
+        "v7"
+      ],
+      "refiner_prompt_versions": [
+        "r9"
+      ]
+    }
+  ],
+  "path_migrations": {
+    "docs/report_synthesis_20261010_ko.md": "docs/reports/2026-10-10-synthesis.ko.md",
+    "outputs/sessions/REPORT_stage34_20261009.md": "docs/reports/2026-10-09-baseline-and-probe-comparison.ko.md",
+    "outputs/sessions/REPORT_r9v7_20261010.md": "docs/reports/2026-10-10-refiner-diagnostics.ko.md",
+    "outputs/sessions/REPORT_deep_traces_20261010.md": "docs/reports/2026-10-10-case-analysis.ko.md",
+    "outputs/sessions/REPORT_20261008.md": "docs/reports/2026-10-08-initial-pilot.ko.md",
+    "outputs/sessions/stage3-v5-base-20261009T160339Z": "outputs/experiments/2026-10-09_baseline-original-reporting",
+    "outputs/sessions/stage3-v6-base-20261009T173855Z": "outputs/experiments/2026-10-09_baseline-interpretation-reporting",
+    "outputs/sessions/stage4-serper-20261009T192620Z": "outputs/experiments/2026-10-09_probe-condition-comparison",
+    "outputs/sessions/rerunA-r9-v6ck-20261010T053207Z": "outputs/experiments/2026-10-10_refiner-regression-check",
+    "outputs/sessions/rerunB-v7-r9-20261010T062005Z": "outputs/experiments/2026-10-10_updated-prompt-diagnostics",
+    "outputs/sessions/deep_traces_20261010": "docs/reports/cases",
+    "outputs/sessions/rerun_traces_20261010": "outputs/analysis/2026-10-10-followup-traces",
+    "docs/cluster/slurm.md": "docs/operations/slurm.md",
+    "docs/failure_codebook.md": "docs/evaluation/failure-codebook.md",
+    "docs/labelling_protocol.md": "docs/evaluation/labelling-protocol.md",
+    "minimal framework.md": "docs/framework.md",
+    "docs/decisions.md": "docs/history/decisions-before-cleanup.md",
+    "outputs/sessions/stage4-serper-20261009T192620Z/key_traces": "outputs/experiments/2026-10-09_probe-condition-comparison/analysis/selected-traces",
+    "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/07_16d825ff/v6_baseline_fresh_DDG.md": "outputs/experiments/2026-10-09_probe-condition-comparison/analysis/selected-traces/07_16d825ff/baseline-recording.md",
+    "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/07_16d825ff/c3_probe_multi.md": "outputs/experiments/2026-10-09_probe-condition-comparison/analysis/selected-traces/07_16d825ff/multi_worker_probe.md",
+    "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/07_16d825ff/c2_probe_tools.md": "outputs/experiments/2026-10-09_probe-condition-comparison/analysis/selected-traces/07_16d825ff/executor_probe_tools.md",
+    "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/07_16d825ff/A_none.md": "outputs/experiments/2026-10-09_probe-condition-comparison/analysis/selected-traces/07_16d825ff/baseline.md",
+    "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/04_a7feb290/c3_probe_multi.md": "outputs/experiments/2026-10-09_probe-condition-comparison/analysis/selected-traces/04_a7feb290/multi_worker_probe.md",
+    "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/04_a7feb290/c2_probe_tools.md": "outputs/experiments/2026-10-09_probe-condition-comparison/analysis/selected-traces/04_a7feb290/executor_probe_tools.md",
+    "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/04_a7feb290/A_none.md": "outputs/experiments/2026-10-09_probe-condition-comparison/analysis/selected-traces/04_a7feb290/baseline.md",
+    "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/03_9e1fc53b/c3_probe_multi.md": "outputs/experiments/2026-10-09_probe-condition-comparison/analysis/selected-traces/03_9e1fc53b/multi_worker_probe.md",
+    "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/03_9e1fc53b/c2_probe_tools.md": "outputs/experiments/2026-10-09_probe-condition-comparison/analysis/selected-traces/03_9e1fc53b/executor_probe_tools.md",
+    "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/03_9e1fc53b/A_none.md": "outputs/experiments/2026-10-09_probe-condition-comparison/analysis/selected-traces/03_9e1fc53b/baseline.md",
+    "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/01_cffe0e32/c3_probe_multi.md": "outputs/experiments/2026-10-09_probe-condition-comparison/analysis/selected-traces/01_cffe0e32/multi_worker_probe.md",
+    "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/01_cffe0e32/c2_probe_tools.md": "outputs/experiments/2026-10-09_probe-condition-comparison/analysis/selected-traces/01_cffe0e32/executor_probe_tools.md",
+    "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/01_cffe0e32/A_none.md": "outputs/experiments/2026-10-09_probe-condition-comparison/analysis/selected-traces/01_cffe0e32/baseline.md",
+    "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/10_384d0dd8/c3_probe_multi.md": "outputs/experiments/2026-10-09_probe-condition-comparison/analysis/selected-traces/10_384d0dd8/multi_worker_probe.md",
+    "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/10_384d0dd8/c2_probe_tools.md": "outputs/experiments/2026-10-09_probe-condition-comparison/analysis/selected-traces/10_384d0dd8/executor_probe_tools.md",
+    "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/10_384d0dd8/A_none.md": "outputs/experiments/2026-10-09_probe-condition-comparison/analysis/selected-traces/10_384d0dd8/baseline.md",
+    "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/02_9b54f9d9/c3_probe_multi.md": "outputs/experiments/2026-10-09_probe-condition-comparison/analysis/selected-traces/02_9b54f9d9/multi_worker_probe.md",
+    "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/02_9b54f9d9/c2_probe_tools.md": "outputs/experiments/2026-10-09_probe-condition-comparison/analysis/selected-traces/02_9b54f9d9/executor_probe_tools.md",
+    "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/02_9b54f9d9/A_none.md": "outputs/experiments/2026-10-09_probe-condition-comparison/analysis/selected-traces/02_9b54f9d9/baseline.md",
+    "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/08_3da89939/c3_probe_multi.md": "outputs/experiments/2026-10-09_probe-condition-comparison/analysis/selected-traces/08_3da89939/multi_worker_probe.md",
+    "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/08_3da89939/c2_probe_tools.md": "outputs/experiments/2026-10-09_probe-condition-comparison/analysis/selected-traces/08_3da89939/executor_probe_tools.md",
+    "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/08_3da89939/A_none.md": "outputs/experiments/2026-10-09_probe-condition-comparison/analysis/selected-traces/08_3da89939/baseline.md",
+    "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/06_676e5e31/c3_probe_multi.md": "outputs/experiments/2026-10-09_probe-condition-comparison/analysis/selected-traces/06_676e5e31/multi_worker_probe.md",
+    "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/06_676e5e31/c2_probe_tools.md": "outputs/experiments/2026-10-09_probe-condition-comparison/analysis/selected-traces/06_676e5e31/executor_probe_tools.md",
+    "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/06_676e5e31/A_none.md": "outputs/experiments/2026-10-09_probe-condition-comparison/analysis/selected-traces/06_676e5e31/baseline.md",
+    "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/05_56137764/c3_probe_multi.md": "outputs/experiments/2026-10-09_probe-condition-comparison/analysis/selected-traces/05_56137764/multi_worker_probe.md",
+    "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/05_56137764/c2_probe_tools.md": "outputs/experiments/2026-10-09_probe-condition-comparison/analysis/selected-traces/05_56137764/executor_probe_tools.md",
+    "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/05_56137764/A_none.md": "outputs/experiments/2026-10-09_probe-condition-comparison/analysis/selected-traces/05_56137764/baseline.md",
+    "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/09_4d51c4bf/c3_probe_multi.md": "outputs/experiments/2026-10-09_probe-condition-comparison/analysis/selected-traces/09_4d51c4bf/multi_worker_probe.md",
+    "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/09_4d51c4bf/c2_probe_tools.md": "outputs/experiments/2026-10-09_probe-condition-comparison/analysis/selected-traces/09_4d51c4bf/executor_probe_tools.md",
+    "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/09_4d51c4bf/A_none.md": "outputs/experiments/2026-10-09_probe-condition-comparison/analysis/selected-traces/09_4d51c4bf/baseline.md",
+    "outputs/sessions/rerun_traces_20261010/384d0dd8/B_v7_fresh__fresh_A_none.md": "outputs/analysis/2026-10-10-followup-traces/384d0dd8/updated-baseline-recording__baseline-recording.md",
+    "outputs/sessions/rerun_traces_20261010/384d0dd8/B_v7_r9__A_none_r0.md": "outputs/analysis/2026-10-10-followup-traces/384d0dd8/updated-prompt-comparison__baseline__rep-0.md",
+    "outputs/sessions/rerun_traces_20261010/384d0dd8/B_v7_r9__c2_probe_tools_r0.md": "outputs/analysis/2026-10-10-followup-traces/384d0dd8/updated-prompt-comparison__executor_probe_tools__rep-0.md",
+    "outputs/sessions/rerun_traces_20261010/384d0dd8/B_v7_r9__c3_probe_multi_r0.md": "outputs/analysis/2026-10-10-followup-traces/384d0dd8/updated-prompt-comparison__multi_worker_probe__rep-0.md",
+    "outputs/sessions/rerun_traces_20261010/4d51c4bf/A_r9_v6ck__A_none_r0.md": "outputs/analysis/2026-10-10-followup-traces/4d51c4bf/refiner-regression-check__baseline__rep-0.md",
+    "outputs/sessions/rerun_traces_20261010/4d51c4bf/A_r9_v6ck__A_none_r1.md": "outputs/analysis/2026-10-10-followup-traces/4d51c4bf/refiner-regression-check__baseline__rep-1.md",
+    "outputs/sessions/rerun_traces_20261010/4d51c4bf/A_r9_v6ck__c2_probe_tools_r0.md": "outputs/analysis/2026-10-10-followup-traces/4d51c4bf/refiner-regression-check__executor_probe_tools__rep-0.md",
+    "outputs/sessions/rerun_traces_20261010/4d51c4bf/A_r9_v6ck__c2_probe_tools_r1.md": "outputs/analysis/2026-10-10-followup-traces/4d51c4bf/refiner-regression-check__executor_probe_tools__rep-1.md",
+    "outputs/sessions/rerun_traces_20261010/4d51c4bf/A_r9_v6ck__c3_probe_multi_r0.md": "outputs/analysis/2026-10-10-followup-traces/4d51c4bf/refiner-regression-check__multi_worker_probe__rep-0.md",
+    "outputs/sessions/rerun_traces_20261010/4d51c4bf/A_r9_v6ck__c3_probe_multi_r1.md": "outputs/analysis/2026-10-10-followup-traces/4d51c4bf/refiner-regression-check__multi_worker_probe__rep-1.md",
+    "outputs/sessions/rerun_traces_20261010/4d51c4bf/B_v7_fresh__fresh_A_none.md": "outputs/analysis/2026-10-10-followup-traces/4d51c4bf/updated-baseline-recording__baseline-recording.md",
+    "outputs/sessions/rerun_traces_20261010/4d51c4bf/B_v7_r9__A_none_r0.md": "outputs/analysis/2026-10-10-followup-traces/4d51c4bf/updated-prompt-comparison__baseline__rep-0.md",
+    "outputs/sessions/rerun_traces_20261010/4d51c4bf/B_v7_r9__c2_probe_tools_r0.md": "outputs/analysis/2026-10-10-followup-traces/4d51c4bf/updated-prompt-comparison__executor_probe_tools__rep-0.md",
+    "outputs/sessions/rerun_traces_20261010/4d51c4bf/B_v7_r9__c3_probe_multi_r0.md": "outputs/analysis/2026-10-10-followup-traces/4d51c4bf/updated-prompt-comparison__multi_worker_probe__rep-0.md",
+    "outputs/sessions/rerun_traces_20261010/56137764/A_r9_v6ck__A_none_r0.md": "outputs/analysis/2026-10-10-followup-traces/56137764/refiner-regression-check__baseline__rep-0.md",
+    "outputs/sessions/rerun_traces_20261010/56137764/A_r9_v6ck__A_none_r1.md": "outputs/analysis/2026-10-10-followup-traces/56137764/refiner-regression-check__baseline__rep-1.md",
+    "outputs/sessions/rerun_traces_20261010/56137764/A_r9_v6ck__c2_probe_tools_r0.md": "outputs/analysis/2026-10-10-followup-traces/56137764/refiner-regression-check__executor_probe_tools__rep-0.md",
+    "outputs/sessions/rerun_traces_20261010/56137764/A_r9_v6ck__c2_probe_tools_r1.md": "outputs/analysis/2026-10-10-followup-traces/56137764/refiner-regression-check__executor_probe_tools__rep-1.md",
+    "outputs/sessions/rerun_traces_20261010/56137764/A_r9_v6ck__c3_probe_multi_r0.md": "outputs/analysis/2026-10-10-followup-traces/56137764/refiner-regression-check__multi_worker_probe__rep-0.md",
+    "outputs/sessions/rerun_traces_20261010/56137764/A_r9_v6ck__c3_probe_multi_r1.md": "outputs/analysis/2026-10-10-followup-traces/56137764/refiner-regression-check__multi_worker_probe__rep-1.md",
+    "outputs/sessions/rerun_traces_20261010/56137764/B_v7_fresh__fresh_A_none.md": "outputs/analysis/2026-10-10-followup-traces/56137764/updated-baseline-recording__baseline-recording.md",
+    "outputs/sessions/rerun_traces_20261010/56137764/B_v7_r9__A_none_r0.md": "outputs/analysis/2026-10-10-followup-traces/56137764/updated-prompt-comparison__baseline__rep-0.md",
+    "outputs/sessions/rerun_traces_20261010/56137764/B_v7_r9__c2_probe_tools_r0.md": "outputs/analysis/2026-10-10-followup-traces/56137764/updated-prompt-comparison__executor_probe_tools__rep-0.md",
+    "outputs/sessions/rerun_traces_20261010/56137764/B_v7_r9__c3_probe_multi_r0.md": "outputs/analysis/2026-10-10-followup-traces/56137764/updated-prompt-comparison__multi_worker_probe__rep-0.md",
+    "outputs/sessions/rerun_traces_20261010/676e5e31/A_r9_v6ck__A_none_r0.md": "outputs/analysis/2026-10-10-followup-traces/676e5e31/refiner-regression-check__baseline__rep-0.md",
+    "outputs/sessions/rerun_traces_20261010/676e5e31/A_r9_v6ck__A_none_r1.md": "outputs/analysis/2026-10-10-followup-traces/676e5e31/refiner-regression-check__baseline__rep-1.md",
+    "outputs/sessions/rerun_traces_20261010/676e5e31/A_r9_v6ck__c2_probe_tools_r0.md": "outputs/analysis/2026-10-10-followup-traces/676e5e31/refiner-regression-check__executor_probe_tools__rep-0.md",
+    "outputs/sessions/rerun_traces_20261010/676e5e31/A_r9_v6ck__c2_probe_tools_r1.md": "outputs/analysis/2026-10-10-followup-traces/676e5e31/refiner-regression-check__executor_probe_tools__rep-1.md",
+    "outputs/sessions/rerun_traces_20261010/676e5e31/A_r9_v6ck__c3_probe_multi_r0.md": "outputs/analysis/2026-10-10-followup-traces/676e5e31/refiner-regression-check__multi_worker_probe__rep-0.md",
+    "outputs/sessions/rerun_traces_20261010/676e5e31/A_r9_v6ck__c3_probe_multi_r1.md": "outputs/analysis/2026-10-10-followup-traces/676e5e31/refiner-regression-check__multi_worker_probe__rep-1.md",
+    "outputs/sessions/rerun_traces_20261010/676e5e31/B_v7_fresh__fresh_A_none.md": "outputs/analysis/2026-10-10-followup-traces/676e5e31/updated-baseline-recording__baseline-recording.md",
+    "outputs/sessions/rerun_traces_20261010/676e5e31/B_v7_r9__A_none_r0.md": "outputs/analysis/2026-10-10-followup-traces/676e5e31/updated-prompt-comparison__baseline__rep-0.md",
+    "outputs/sessions/rerun_traces_20261010/676e5e31/B_v7_r9__c2_probe_tools_r0.md": "outputs/analysis/2026-10-10-followup-traces/676e5e31/updated-prompt-comparison__executor_probe_tools__rep-0.md",
+    "outputs/sessions/rerun_traces_20261010/676e5e31/B_v7_r9__c3_probe_multi_r0.md": "outputs/analysis/2026-10-10-followup-traces/676e5e31/updated-prompt-comparison__multi_worker_probe__rep-0.md",
+    "outputs/sessions/rerun_traces_20261010/9b54f9d9/A_r9_v6ck__A_none_r0.md": "outputs/analysis/2026-10-10-followup-traces/9b54f9d9/refiner-regression-check__baseline__rep-0.md",
+    "outputs/sessions/rerun_traces_20261010/9b54f9d9/A_r9_v6ck__A_none_r1.md": "outputs/analysis/2026-10-10-followup-traces/9b54f9d9/refiner-regression-check__baseline__rep-1.md",
+    "outputs/sessions/rerun_traces_20261010/9b54f9d9/A_r9_v6ck__c2_probe_tools_r0.md": "outputs/analysis/2026-10-10-followup-traces/9b54f9d9/refiner-regression-check__executor_probe_tools__rep-0.md",
+    "outputs/sessions/rerun_traces_20261010/9b54f9d9/A_r9_v6ck__c2_probe_tools_r1.md": "outputs/analysis/2026-10-10-followup-traces/9b54f9d9/refiner-regression-check__executor_probe_tools__rep-1.md",
+    "outputs/sessions/rerun_traces_20261010/9b54f9d9/A_r9_v6ck__c3_probe_multi_r0.md": "outputs/analysis/2026-10-10-followup-traces/9b54f9d9/refiner-regression-check__multi_worker_probe__rep-0.md",
+    "outputs/sessions/rerun_traces_20261010/9b54f9d9/A_r9_v6ck__c3_probe_multi_r1.md": "outputs/analysis/2026-10-10-followup-traces/9b54f9d9/refiner-regression-check__multi_worker_probe__rep-1.md",
+    "outputs/sessions/rerun_traces_20261010/9b54f9d9/B_v7_fresh__fresh_A_none.md": "outputs/analysis/2026-10-10-followup-traces/9b54f9d9/updated-baseline-recording__baseline-recording.md",
+    "outputs/sessions/rerun_traces_20261010/9b54f9d9/B_v7_r9__A_none_r0.md": "outputs/analysis/2026-10-10-followup-traces/9b54f9d9/updated-prompt-comparison__baseline__rep-0.md",
+    "outputs/sessions/rerun_traces_20261010/9b54f9d9/B_v7_r9__c2_probe_tools_r0.md": "outputs/analysis/2026-10-10-followup-traces/9b54f9d9/updated-prompt-comparison__executor_probe_tools__rep-0.md",
+    "outputs/sessions/rerun_traces_20261010/9b54f9d9/B_v7_r9__c3_probe_multi_r0.md": "outputs/analysis/2026-10-10-followup-traces/9b54f9d9/updated-prompt-comparison__multi_worker_probe__rep-0.md",
+    "outputs/sessions/rerun_traces_20261010/9e1fc53b/A_r9_v6ck__A_none_r0.md": "outputs/analysis/2026-10-10-followup-traces/9e1fc53b/refiner-regression-check__baseline__rep-0.md",
+    "outputs/sessions/rerun_traces_20261010/9e1fc53b/A_r9_v6ck__A_none_r1.md": "outputs/analysis/2026-10-10-followup-traces/9e1fc53b/refiner-regression-check__baseline__rep-1.md",
+    "outputs/sessions/rerun_traces_20261010/9e1fc53b/A_r9_v6ck__c2_probe_tools_r0.md": "outputs/analysis/2026-10-10-followup-traces/9e1fc53b/refiner-regression-check__executor_probe_tools__rep-0.md",
+    "outputs/sessions/rerun_traces_20261010/9e1fc53b/A_r9_v6ck__c2_probe_tools_r1.md": "outputs/analysis/2026-10-10-followup-traces/9e1fc53b/refiner-regression-check__executor_probe_tools__rep-1.md",
+    "outputs/sessions/rerun_traces_20261010/9e1fc53b/A_r9_v6ck__c3_probe_multi_r0.md": "outputs/analysis/2026-10-10-followup-traces/9e1fc53b/refiner-regression-check__multi_worker_probe__rep-0.md",
+    "outputs/sessions/rerun_traces_20261010/9e1fc53b/A_r9_v6ck__c3_probe_multi_r1.md": "outputs/analysis/2026-10-10-followup-traces/9e1fc53b/refiner-regression-check__multi_worker_probe__rep-1.md",
+    "outputs/sessions/rerun_traces_20261010/9e1fc53b/B_v7_fresh__fresh_A_none.md": "outputs/analysis/2026-10-10-followup-traces/9e1fc53b/updated-baseline-recording__baseline-recording.md",
+    "outputs/sessions/rerun_traces_20261010/9e1fc53b/B_v7_r9__A_none_r0.md": "outputs/analysis/2026-10-10-followup-traces/9e1fc53b/updated-prompt-comparison__baseline__rep-0.md",
+    "outputs/sessions/rerun_traces_20261010/9e1fc53b/B_v7_r9__c2_probe_tools_r0.md": "outputs/analysis/2026-10-10-followup-traces/9e1fc53b/updated-prompt-comparison__executor_probe_tools__rep-0.md",
+    "outputs/sessions/rerun_traces_20261010/9e1fc53b/B_v7_r9__c3_probe_multi_r0.md": "outputs/analysis/2026-10-10-followup-traces/9e1fc53b/updated-prompt-comparison__multi_worker_probe__rep-0.md",
+    "outputs/sessions/rerun_traces_20261010/a7feb290/A_r9_v6ck__A_none_r0.md": "outputs/analysis/2026-10-10-followup-traces/a7feb290/refiner-regression-check__baseline__rep-0.md",
+    "outputs/sessions/rerun_traces_20261010/a7feb290/A_r9_v6ck__A_none_r1.md": "outputs/analysis/2026-10-10-followup-traces/a7feb290/refiner-regression-check__baseline__rep-1.md",
+    "outputs/sessions/rerun_traces_20261010/a7feb290/A_r9_v6ck__c2_probe_tools_r0.md": "outputs/analysis/2026-10-10-followup-traces/a7feb290/refiner-regression-check__executor_probe_tools__rep-0.md",
+    "outputs/sessions/rerun_traces_20261010/a7feb290/A_r9_v6ck__c2_probe_tools_r1.md": "outputs/analysis/2026-10-10-followup-traces/a7feb290/refiner-regression-check__executor_probe_tools__rep-1.md",
+    "outputs/sessions/rerun_traces_20261010/a7feb290/A_r9_v6ck__c3_probe_multi_r0.md": "outputs/analysis/2026-10-10-followup-traces/a7feb290/refiner-regression-check__multi_worker_probe__rep-0.md",
+    "outputs/sessions/rerun_traces_20261010/a7feb290/A_r9_v6ck__c3_probe_multi_r1.md": "outputs/analysis/2026-10-10-followup-traces/a7feb290/refiner-regression-check__multi_worker_probe__rep-1.md",
+    "outputs/sessions/rerun_traces_20261010/a7feb290/B_v7_fresh__fresh_A_none.md": "outputs/analysis/2026-10-10-followup-traces/a7feb290/updated-baseline-recording__baseline-recording.md",
+    "outputs/sessions/rerun_traces_20261010/a7feb290/B_v7_r9__A_none_r0.md": "outputs/analysis/2026-10-10-followup-traces/a7feb290/updated-prompt-comparison__baseline__rep-0.md",
+    "outputs/sessions/rerun_traces_20261010/a7feb290/B_v7_r9__c2_probe_tools_r0.md": "outputs/analysis/2026-10-10-followup-traces/a7feb290/updated-prompt-comparison__executor_probe_tools__rep-0.md",
+    "outputs/sessions/rerun_traces_20261010/a7feb290/B_v7_r9__c3_probe_multi_r0.md": "outputs/analysis/2026-10-10-followup-traces/a7feb290/updated-prompt-comparison__multi_worker_probe__rep-0.md",
+    "outputs/sessions/rerun_traces_20261010/a7feb290/B_v7_r9_serper_redo__c2_probe_tools_r1.md": "outputs/analysis/2026-10-10-followup-traces/a7feb290/search-backend-retry__executor_probe_tools__rep-1.md",
+    "outputs/sessions/rerun_traces_20261010/a7feb290/B_v7_r9_serper_redo__c3_probe_multi_r1.md": "outputs/analysis/2026-10-10-followup-traces/a7feb290/search-backend-retry__multi_worker_probe__rep-1.md",
+    "outputs/sessions/rerun_traces_20261010/cffe0e32/A_r9_v6ck__A_none_r0.md": "outputs/analysis/2026-10-10-followup-traces/cffe0e32/refiner-regression-check__baseline__rep-0.md",
+    "outputs/sessions/rerun_traces_20261010/cffe0e32/A_r9_v6ck__A_none_r1.md": "outputs/analysis/2026-10-10-followup-traces/cffe0e32/refiner-regression-check__baseline__rep-1.md",
+    "outputs/sessions/rerun_traces_20261010/cffe0e32/A_r9_v6ck__c2_probe_tools_r0.md": "outputs/analysis/2026-10-10-followup-traces/cffe0e32/refiner-regression-check__executor_probe_tools__rep-0.md",
+    "outputs/sessions/rerun_traces_20261010/cffe0e32/A_r9_v6ck__c2_probe_tools_r1.md": "outputs/analysis/2026-10-10-followup-traces/cffe0e32/refiner-regression-check__executor_probe_tools__rep-1.md",
+    "outputs/sessions/rerun_traces_20261010/cffe0e32/A_r9_v6ck__c3_probe_multi_r0.md": "outputs/analysis/2026-10-10-followup-traces/cffe0e32/refiner-regression-check__multi_worker_probe__rep-0.md",
+    "outputs/sessions/rerun_traces_20261010/cffe0e32/A_r9_v6ck__c3_probe_multi_r1.md": "outputs/analysis/2026-10-10-followup-traces/cffe0e32/refiner-regression-check__multi_worker_probe__rep-1.md",
+    "outputs/sessions/rerun_traces_20261010/cffe0e32/B_v7_fresh__fresh_A_none.md": "outputs/analysis/2026-10-10-followup-traces/cffe0e32/updated-baseline-recording__baseline-recording.md",
+    "outputs/sessions/rerun_traces_20261010/cffe0e32/B_v7_r9__A_none_r0.md": "outputs/analysis/2026-10-10-followup-traces/cffe0e32/updated-prompt-comparison__baseline__rep-0.md",
+    "outputs/sessions/rerun_traces_20261010/cffe0e32/B_v7_r9__c2_probe_tools_r0.md": "outputs/analysis/2026-10-10-followup-traces/cffe0e32/updated-prompt-comparison__executor_probe_tools__rep-0.md",
+    "outputs/sessions/rerun_traces_20261010/cffe0e32/B_v7_r9__c3_probe_multi_r0.md": "outputs/analysis/2026-10-10-followup-traces/cffe0e32/updated-prompt-comparison__multi_worker_probe__rep-0.md",
+    "src/minpilot/agents/prompts.py": "src/minpilot/prompts/README.md",
+    "outputs/sessions/deep_traces_20261010/cards": "outputs/analysis/2026-10-10-case-analysis/cards",
+    "outputs/sessions/deep_traces_20261010/runs.json": "outputs/analysis/2026-10-10-case-analysis/runs.json",
+    "outputs/sessions/deep_traces_20261010/agg_runs.csv": "outputs/analysis/2026-10-10-case-analysis/agg_runs.csv",
+    "outputs/sessions/deep_traces_20261010/agg_issues.csv": "outputs/analysis/2026-10-10-case-analysis/agg_issues.csv",
+    "outputs/sessions/deep_traces_20261010/aggregate.py": "scripts/aggregate_case_analysis.py"
+  },
+  "deleted": [
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/07_16d825ff/raw/c2_probe_tools/tool_calls.jsonl",
+      "bytes": 296530,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/07_16d825ff/raw/c2_probe_tools/restore_check.json",
+      "bytes": 211,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/07_16d825ff/raw/c2_probe_tools/llm_calls.jsonl",
+      "bytes": 354558,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/07_16d825ff/raw/c2_probe_tools/messages.jsonl",
+      "bytes": 925713,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/07_16d825ff/raw/c2_probe_tools/events.jsonl",
+      "bytes": 59257,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/07_16d825ff/raw/c2_probe_tools/run.json",
+      "bytes": 31268,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/07_16d825ff/raw/c2_probe_tools/refine/d0.json",
+      "bytes": 8837,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/07_16d825ff/raw/c3_probe_multi/tool_calls.jsonl",
+      "bytes": 205074,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/07_16d825ff/raw/c3_probe_multi/restore_check.json",
+      "bytes": 211,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/07_16d825ff/raw/c3_probe_multi/llm_calls.jsonl",
+      "bytes": 259816,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/07_16d825ff/raw/c3_probe_multi/messages.jsonl",
+      "bytes": 790401,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/07_16d825ff/raw/c3_probe_multi/events.jsonl",
+      "bytes": 45682,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/07_16d825ff/raw/c3_probe_multi/run.json",
+      "bytes": 26223,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/07_16d825ff/raw/c3_probe_multi/refine/d0.json",
+      "bytes": 19852,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/07_16d825ff/raw/v6_baseline_fresh_DDG/tool_calls.jsonl",
+      "bytes": 199663,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/07_16d825ff/raw/v6_baseline_fresh_DDG/llm_calls.jsonl",
+      "bytes": 292764,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/07_16d825ff/raw/v6_baseline_fresh_DDG/messages.jsonl",
+      "bytes": 734785,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/07_16d825ff/raw/v6_baseline_fresh_DDG/events.jsonl",
+      "bytes": 39778,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/07_16d825ff/raw/v6_baseline_fresh_DDG/run.json",
+      "bytes": 22699,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/07_16d825ff/raw/v6_baseline_fresh_DDG/refine/d0.json",
+      "bytes": 523,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/07_16d825ff/raw/A_none/tool_calls.jsonl",
+      "bytes": 300741,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/07_16d825ff/raw/A_none/restore_check.json",
+      "bytes": 211,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/07_16d825ff/raw/A_none/llm_calls.jsonl",
+      "bytes": 372016,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/07_16d825ff/raw/A_none/messages.jsonl",
+      "bytes": 1224076,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/07_16d825ff/raw/A_none/events.jsonl",
+      "bytes": 57259,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/07_16d825ff/raw/A_none/run.json",
+      "bytes": 31091,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/07_16d825ff/raw/A_none/refine/d0.json",
+      "bytes": 523,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/04_a7feb290/raw/c2_probe_tools/tool_calls.jsonl",
+      "bytes": 166217,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/04_a7feb290/raw/c2_probe_tools/restore_check.json",
+      "bytes": 211,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/04_a7feb290/raw/c2_probe_tools/llm_calls.jsonl",
+      "bytes": 331631,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/04_a7feb290/raw/c2_probe_tools/messages.jsonl",
+      "bytes": 1172466,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/04_a7feb290/raw/c2_probe_tools/events.jsonl",
+      "bytes": 30823,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/04_a7feb290/raw/c2_probe_tools/run.json",
+      "bytes": 18211,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/04_a7feb290/raw/c2_probe_tools/refine/d0.json",
+      "bytes": 9376,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/04_a7feb290/raw/c3_probe_multi/tool_calls.jsonl",
+      "bytes": 92089,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/04_a7feb290/raw/c3_probe_multi/restore_check.json",
+      "bytes": 211,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/04_a7feb290/raw/c3_probe_multi/llm_calls.jsonl",
+      "bytes": 182686,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/04_a7feb290/raw/c3_probe_multi/messages.jsonl",
+      "bytes": 633313,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/04_a7feb290/raw/c3_probe_multi/events.jsonl",
+      "bytes": 18652,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/04_a7feb290/raw/c3_probe_multi/run.json",
+      "bytes": 13450,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/04_a7feb290/raw/c3_probe_multi/refine/d0.json",
+      "bytes": 19510,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/04_a7feb290/raw/A_none/tool_calls.jsonl",
+      "bytes": 215183,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/04_a7feb290/raw/A_none/restore_check.json",
+      "bytes": 211,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/04_a7feb290/raw/A_none/llm_calls.jsonl",
+      "bytes": 361801,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/04_a7feb290/raw/A_none/messages.jsonl",
+      "bytes": 987711,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/04_a7feb290/raw/A_none/events.jsonl",
+      "bytes": 29535,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/04_a7feb290/raw/A_none/run.json",
+      "bytes": 18768,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/04_a7feb290/raw/A_none/refine/d0.json",
+      "bytes": 584,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/03_9e1fc53b/raw/c2_probe_tools/tool_calls.jsonl",
+      "bytes": 61242,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/03_9e1fc53b/raw/c2_probe_tools/restore_check.json",
+      "bytes": 211,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/03_9e1fc53b/raw/c2_probe_tools/llm_calls.jsonl",
+      "bytes": 100884,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/03_9e1fc53b/raw/c2_probe_tools/messages.jsonl",
+      "bytes": 383630,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/03_9e1fc53b/raw/c2_probe_tools/events.jsonl",
+      "bytes": 15445,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/03_9e1fc53b/raw/c2_probe_tools/run.json",
+      "bytes": 12135,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/03_9e1fc53b/raw/c2_probe_tools/refine/d0.json",
+      "bytes": 13920,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/03_9e1fc53b/raw/c3_probe_multi/tool_calls.jsonl",
+      "bytes": 82988,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/03_9e1fc53b/raw/c3_probe_multi/restore_check.json",
+      "bytes": 211,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/03_9e1fc53b/raw/c3_probe_multi/llm_calls.jsonl",
+      "bytes": 120882,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/03_9e1fc53b/raw/c3_probe_multi/messages.jsonl",
+      "bytes": 483542,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/03_9e1fc53b/raw/c3_probe_multi/events.jsonl",
+      "bytes": 22431,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/03_9e1fc53b/raw/c3_probe_multi/run.json",
+      "bytes": 14704,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/03_9e1fc53b/raw/c3_probe_multi/refine/d0.json",
+      "bytes": 20488,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/03_9e1fc53b/raw/A_none/tool_calls.jsonl",
+      "bytes": 53594,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/03_9e1fc53b/raw/A_none/restore_check.json",
+      "bytes": 211,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/03_9e1fc53b/raw/A_none/llm_calls.jsonl",
+      "bytes": 64438,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/03_9e1fc53b/raw/A_none/messages.jsonl",
+      "bytes": 381113,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/03_9e1fc53b/raw/A_none/events.jsonl",
+      "bytes": 11596,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/03_9e1fc53b/raw/A_none/run.json",
+      "bytes": 10565,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/03_9e1fc53b/raw/A_none/refine/d0.json",
+      "bytes": 763,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/01_cffe0e32/raw/c2_probe_tools/tool_calls.jsonl",
+      "bytes": 908,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/01_cffe0e32/raw/c2_probe_tools/restore_check.json",
+      "bytes": 211,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/01_cffe0e32/raw/c2_probe_tools/llm_calls.jsonl",
+      "bytes": 13997,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/01_cffe0e32/raw/c2_probe_tools/messages.jsonl",
+      "bytes": 16963,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/01_cffe0e32/raw/c2_probe_tools/events.jsonl",
+      "bytes": 4451,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/01_cffe0e32/raw/c2_probe_tools/run.json",
+      "bytes": 8093,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/01_cffe0e32/raw/c2_probe_tools/refine/d0.json",
+      "bytes": 4819,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/01_cffe0e32/raw/c3_probe_multi/tool_calls.jsonl",
+      "bytes": 9356,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/01_cffe0e32/raw/c3_probe_multi/restore_check.json",
+      "bytes": 211,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/01_cffe0e32/raw/c3_probe_multi/llm_calls.jsonl",
+      "bytes": 44551,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/01_cffe0e32/raw/c3_probe_multi/messages.jsonl",
+      "bytes": 111007,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/01_cffe0e32/raw/c3_probe_multi/events.jsonl",
+      "bytes": 12579,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/01_cffe0e32/raw/c3_probe_multi/run.json",
+      "bytes": 11163,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/01_cffe0e32/raw/c3_probe_multi/refine/d0.json",
+      "bytes": 14195,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/01_cffe0e32/raw/A_none/tool_calls.jsonl",
+      "bytes": 907,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/01_cffe0e32/raw/A_none/restore_check.json",
+      "bytes": 211,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/01_cffe0e32/raw/A_none/llm_calls.jsonl",
+      "bytes": 8644,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/01_cffe0e32/raw/A_none/messages.jsonl",
+      "bytes": 11674,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/01_cffe0e32/raw/A_none/events.jsonl",
+      "bytes": 3966,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/01_cffe0e32/raw/A_none/run.json",
+      "bytes": 7652,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/01_cffe0e32/raw/A_none/refine/d0.json",
+      "bytes": 492,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/10_384d0dd8/raw/c2_probe_tools/tool_calls.jsonl",
+      "bytes": 321303,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/10_384d0dd8/raw/c2_probe_tools/restore_check.json",
+      "bytes": 211,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/10_384d0dd8/raw/c2_probe_tools/llm_calls.jsonl",
+      "bytes": 675395,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/10_384d0dd8/raw/c2_probe_tools/messages.jsonl",
+      "bytes": 4300952,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/10_384d0dd8/raw/c2_probe_tools/events.jsonl",
+      "bytes": 76912,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/10_384d0dd8/raw/c2_probe_tools/run.json",
+      "bytes": 37125,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/10_384d0dd8/raw/c2_probe_tools/refine/d0.json",
+      "bytes": 9478,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/10_384d0dd8/raw/c3_probe_multi/tool_calls.jsonl",
+      "bytes": 351828,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/10_384d0dd8/raw/c3_probe_multi/restore_check.json",
+      "bytes": 211,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/10_384d0dd8/raw/c3_probe_multi/llm_calls.jsonl",
+      "bytes": 649353,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/10_384d0dd8/raw/c3_probe_multi/messages.jsonl",
+      "bytes": 8774660,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/10_384d0dd8/raw/c3_probe_multi/events.jsonl",
+      "bytes": 85666,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/10_384d0dd8/raw/c3_probe_multi/run.json",
+      "bytes": 40711,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/10_384d0dd8/raw/c3_probe_multi/refine/d0.json",
+      "bytes": 16726,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/10_384d0dd8/raw/A_none/tool_calls.jsonl",
+      "bytes": 197333,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/10_384d0dd8/raw/A_none/restore_check.json",
+      "bytes": 211,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/10_384d0dd8/raw/A_none/llm_calls.jsonl",
+      "bytes": 355940,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/10_384d0dd8/raw/A_none/messages.jsonl",
+      "bytes": 7137110,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/10_384d0dd8/raw/A_none/events.jsonl",
+      "bytes": 44831,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/10_384d0dd8/raw/A_none/run.json",
+      "bytes": 24480,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/10_384d0dd8/raw/A_none/refine/d0.json",
+      "bytes": 589,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/02_9b54f9d9/raw/c2_probe_tools/tool_calls.jsonl",
+      "bytes": 4511,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/02_9b54f9d9/raw/c2_probe_tools/restore_check.json",
+      "bytes": 211,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/02_9b54f9d9/raw/c2_probe_tools/llm_calls.jsonl",
+      "bytes": 19953,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/02_9b54f9d9/raw/c2_probe_tools/messages.jsonl",
+      "bytes": 54156,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/02_9b54f9d9/raw/c2_probe_tools/events.jsonl",
+      "bytes": 3676,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/02_9b54f9d9/raw/c2_probe_tools/run.json",
+      "bytes": 8288,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/02_9b54f9d9/raw/c2_probe_tools/refine/d0.json",
+      "bytes": 3983,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/02_9b54f9d9/raw/c3_probe_multi/tool_calls.jsonl",
+      "bytes": 50242,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/02_9b54f9d9/raw/c3_probe_multi/restore_check.json",
+      "bytes": 211,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/02_9b54f9d9/raw/c3_probe_multi/llm_calls.jsonl",
+      "bytes": 96769,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/02_9b54f9d9/raw/c3_probe_multi/messages.jsonl",
+      "bytes": 552140,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/02_9b54f9d9/raw/c3_probe_multi/events.jsonl",
+      "bytes": 15041,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/02_9b54f9d9/raw/c3_probe_multi/run.json",
+      "bytes": 10999,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/02_9b54f9d9/raw/c3_probe_multi/refine/d0.json",
+      "bytes": 14914,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/02_9b54f9d9/raw/A_none/tool_calls.jsonl",
+      "bytes": 9089,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/02_9b54f9d9/raw/A_none/restore_check.json",
+      "bytes": 211,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/02_9b54f9d9/raw/A_none/llm_calls.jsonl",
+      "bytes": 18423,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/02_9b54f9d9/raw/A_none/messages.jsonl",
+      "bytes": 88786,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/02_9b54f9d9/raw/A_none/events.jsonl",
+      "bytes": 3112,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/02_9b54f9d9/raw/A_none/run.json",
+      "bytes": 7829,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/02_9b54f9d9/raw/A_none/refine/d0.json",
+      "bytes": 574,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/08_3da89939/raw/c2_probe_tools/tool_calls.jsonl",
+      "bytes": 215346,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/08_3da89939/raw/c2_probe_tools/restore_check.json",
+      "bytes": 211,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/08_3da89939/raw/c2_probe_tools/llm_calls.jsonl",
+      "bytes": 334934,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/08_3da89939/raw/c2_probe_tools/messages.jsonl",
+      "bytes": 956933,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/08_3da89939/raw/c2_probe_tools/events.jsonl",
+      "bytes": 56394,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/08_3da89939/raw/c2_probe_tools/run.json",
+      "bytes": 28745,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/08_3da89939/raw/c2_probe_tools/refine/d0.json",
+      "bytes": 8698,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/08_3da89939/raw/c3_probe_multi/tool_calls.jsonl",
+      "bytes": 196955,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/08_3da89939/raw/c3_probe_multi/restore_check.json",
+      "bytes": 211,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/08_3da89939/raw/c3_probe_multi/llm_calls.jsonl",
+      "bytes": 310433,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/08_3da89939/raw/c3_probe_multi/messages.jsonl",
+      "bytes": 926328,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/08_3da89939/raw/c3_probe_multi/events.jsonl",
+      "bytes": 50052,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/08_3da89939/raw/c3_probe_multi/run.json",
+      "bytes": 26915,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/08_3da89939/raw/c3_probe_multi/refine/d0.json",
+      "bytes": 17186,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/08_3da89939/raw/A_none/tool_calls.jsonl",
+      "bytes": 246773,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/08_3da89939/raw/A_none/restore_check.json",
+      "bytes": 211,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/08_3da89939/raw/A_none/llm_calls.jsonl",
+      "bytes": 339889,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/08_3da89939/raw/A_none/messages.jsonl",
+      "bytes": 932801,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/08_3da89939/raw/A_none/events.jsonl",
+      "bytes": 51631,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/08_3da89939/raw/A_none/run.json",
+      "bytes": 26669,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/08_3da89939/raw/A_none/refine/d0.json",
+      "bytes": 660,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/06_676e5e31/raw/c2_probe_tools/tool_calls.jsonl",
+      "bytes": 56139,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/06_676e5e31/raw/c2_probe_tools/restore_check.json",
+      "bytes": 211,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/06_676e5e31/raw/c2_probe_tools/llm_calls.jsonl",
+      "bytes": 367396,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/06_676e5e31/raw/c2_probe_tools/messages.jsonl",
+      "bytes": 1695884,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/06_676e5e31/raw/c2_probe_tools/events.jsonl",
+      "bytes": 14049,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/06_676e5e31/raw/c2_probe_tools/run.json",
+      "bytes": 11759,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/06_676e5e31/raw/c2_probe_tools/refine/d0.json",
+      "bytes": 14636,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/06_676e5e31/raw/c3_probe_multi/tool_calls.jsonl",
+      "bytes": 86954,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/06_676e5e31/raw/c3_probe_multi/restore_check.json",
+      "bytes": 211,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/06_676e5e31/raw/c3_probe_multi/llm_calls.jsonl",
+      "bytes": 152862,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/06_676e5e31/raw/c3_probe_multi/messages.jsonl",
+      "bytes": 455841,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/06_676e5e31/raw/c3_probe_multi/events.jsonl",
+      "bytes": 23794,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/06_676e5e31/raw/c3_probe_multi/run.json",
+      "bytes": 15108,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/06_676e5e31/raw/c3_probe_multi/refine/d0.json",
+      "bytes": 21216,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/06_676e5e31/raw/A_none/tool_calls.jsonl",
+      "bytes": 76583,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/06_676e5e31/raw/A_none/restore_check.json",
+      "bytes": 211,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/06_676e5e31/raw/A_none/llm_calls.jsonl",
+      "bytes": 132432,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/06_676e5e31/raw/A_none/messages.jsonl",
+      "bytes": 482012,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/06_676e5e31/raw/A_none/events.jsonl",
+      "bytes": 29076,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/06_676e5e31/raw/A_none/run.json",
+      "bytes": 16772,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/06_676e5e31/raw/A_none/refine/d0.json",
+      "bytes": 866,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/05_56137764/raw/c2_probe_tools/tool_calls.jsonl",
+      "bytes": 50786,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/05_56137764/raw/c2_probe_tools/restore_check.json",
+      "bytes": 211,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/05_56137764/raw/c2_probe_tools/llm_calls.jsonl",
+      "bytes": 111060,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/05_56137764/raw/c2_probe_tools/messages.jsonl",
+      "bytes": 989125,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/05_56137764/raw/c2_probe_tools/events.jsonl",
+      "bytes": 12246,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/05_56137764/raw/c2_probe_tools/run.json",
+      "bytes": 11397,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/05_56137764/raw/c2_probe_tools/refine/d0.json",
+      "bytes": 9395,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/05_56137764/raw/c3_probe_multi/tool_calls.jsonl",
+      "bytes": 125462,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/05_56137764/raw/c3_probe_multi/restore_check.json",
+      "bytes": 211,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/05_56137764/raw/c3_probe_multi/llm_calls.jsonl",
+      "bytes": 162442,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/05_56137764/raw/c3_probe_multi/messages.jsonl",
+      "bytes": 1240174,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/05_56137764/raw/c3_probe_multi/events.jsonl",
+      "bytes": 29596,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/05_56137764/raw/c3_probe_multi/run.json",
+      "bytes": 18816,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/05_56137764/raw/c3_probe_multi/refine/d0.json",
+      "bytes": 17857,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/05_56137764/raw/A_none/tool_calls.jsonl",
+      "bytes": 25865,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/05_56137764/raw/A_none/restore_check.json",
+      "bytes": 211,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/05_56137764/raw/A_none/llm_calls.jsonl",
+      "bytes": 49388,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/05_56137764/raw/A_none/messages.jsonl",
+      "bytes": 406568,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/05_56137764/raw/A_none/events.jsonl",
+      "bytes": 3559,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/05_56137764/raw/A_none/run.json",
+      "bytes": 8080,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/05_56137764/raw/A_none/refine/d0.json",
+      "bytes": 561,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/09_4d51c4bf/raw/c2_probe_tools/tool_calls.jsonl",
+      "bytes": 4435,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/09_4d51c4bf/raw/c2_probe_tools/restore_check.json",
+      "bytes": 211,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/09_4d51c4bf/raw/c2_probe_tools/llm_calls.jsonl",
+      "bytes": 22879,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/09_4d51c4bf/raw/c2_probe_tools/messages.jsonl",
+      "bytes": 31326,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/09_4d51c4bf/raw/c2_probe_tools/events.jsonl",
+      "bytes": 3898,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/09_4d51c4bf/raw/c2_probe_tools/run.json",
+      "bytes": 8548,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/09_4d51c4bf/raw/c2_probe_tools/refine/d0.json",
+      "bytes": 8281,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/09_4d51c4bf/raw/c3_probe_multi/tool_calls.jsonl",
+      "bytes": 2758,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/09_4d51c4bf/raw/c3_probe_multi/restore_check.json",
+      "bytes": 211,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/09_4d51c4bf/raw/c3_probe_multi/llm_calls.jsonl",
+      "bytes": 22649,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/09_4d51c4bf/raw/c3_probe_multi/messages.jsonl",
+      "bytes": 31253,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/09_4d51c4bf/raw/c3_probe_multi/events.jsonl",
+      "bytes": 6651,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/09_4d51c4bf/raw/c3_probe_multi/run.json",
+      "bytes": 8367,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/09_4d51c4bf/raw/c3_probe_multi/refine/d0.json",
+      "bytes": 13228,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/09_4d51c4bf/raw/A_none/tool_calls.jsonl",
+      "bytes": 890,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/09_4d51c4bf/raw/A_none/restore_check.json",
+      "bytes": 211,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/09_4d51c4bf/raw/A_none/llm_calls.jsonl",
+      "bytes": 6015,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/09_4d51c4bf/raw/A_none/messages.jsonl",
+      "bytes": 10655,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/09_4d51c4bf/raw/A_none/events.jsonl",
+      "bytes": 2632,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/09_4d51c4bf/raw/A_none/run.json",
+      "bytes": 7819,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage4-serper-20261009T192620Z/key_traces/09_4d51c4bf/raw/A_none/refine/d0.json",
+      "bytes": 559,
+      "reason": "Byte-identical copy of retained canonical run file"
+    },
+    {
+      "path": "outputs/sessions/stage1-r6-20261009T133333Z",
+      "bytes": 14154013,
+      "reason": "Superseded exploratory or aborted experiment; outside synthesis primary evidence"
+    },
+    {
+      "path": "outputs/sessions/stage1-r7-20261009T141438Z",
+      "bytes": 4587905,
+      "reason": "Superseded exploratory or aborted experiment; outside synthesis primary evidence"
+    },
+    {
+      "path": "outputs/sessions/stage1-rep1-20261009T150931Z",
+      "bytes": 13377702,
+      "reason": "Superseded exploratory or aborted experiment; outside synthesis primary evidence"
+    },
+    {
+      "path": "outputs/sessions/stage2-tools-20261009T150238Z",
+      "bytes": 4809568,
+      "reason": "Superseded exploratory or aborted experiment; outside synthesis primary evidence"
+    },
+    {
+      "path": "outputs/sessions/c2-insight-20261009T111120Z",
+      "bytes": 9425331,
+      "reason": "Superseded exploratory or aborted experiment; outside synthesis primary evidence"
+    },
+    {
+      "path": "outputs/sessions/stage4-20261009T191048Z",
+      "bytes": 8785898,
+      "reason": "Superseded exploratory or aborted experiment; outside synthesis primary evidence"
+    },
+    {
+      "path": "outputs/sessions/deep_traces_20261010.zip",
+      "bytes": 380956,
+      "reason": "Superseded status or duplicate archive; extracted evidence retained"
+    },
+    {
+      "path": "outputs/sessions/rerun_traces_20261010.zip",
+      "bytes": 7522912,
+      "reason": "Superseded status or duplicate archive; extracted evidence retained"
+    },
+    {
+      "path": "outputs/sessions/STATUS_20261009.md",
+      "bytes": 15366,
+      "reason": "Superseded status or duplicate archive; extracted evidence retained"
+    },
+    {
+      "path": "outputs/experiments/2026-10-09_probe-condition-comparison/key_traces_stage4.zip",
+      "bytes": 14258612,
+      "reason": "Duplicate trace archive; extracted traces and canonical runs retained"
+    },
+    {
+      "path": "outputs/analysis/2026-10-10-followup-traces/*/raw",
+      "bytes": 0,
+      "reason": "Removed remaining byte-identical raw trace copies; canonical runs retained",
+      "size_note": "Bytes not included in the deletion total; total is a lower bound"
+    },
+    {
+      "path": "outputs/runs/3ff6b7a9-a5bd-4412-ad92-0cd0d45c0fee",
+      "bytes": 846363,
+      "reason": "Old prompt-v5 smoke run, outside latest synthesis primary evidence"
+    }
+  ],
+  "deleted_bytes": 126820686,
+  "verification": "SHA-256 of every canonical run file unchanged after relocation; per-experiment checksums.json retained.",
+  "deleted_bytes_is_lower_bound": true,
+  "source_cleanup": [
+    "Removed prompts_r5.py and its condition-specific runtime branches and tests.",
+    "Removed obsolete refiner preset files; current optional capabilities use current prompts under variants/.",
+    "Merged current requirements from implementation review and reuse notes into framework and working instructions.",
+    "Original tracked documents and source remain available in Git history; retained experiments keep code snapshots."
+  ]
+}

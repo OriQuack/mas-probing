@@ -39,7 +39,7 @@ import traceback
 from pathlib import Path
 from typing import Any
 
-from minpilot.agents import prompts
+from minpilot import prompts
 from minpilot.agents.orchestrator import Action, InvalidAction, Orchestrator
 from minpilot.agents.worker import Worker, WorkerCall
 from minpilot.config import RefinerConfig, RunConfig, run_config_from_dict
@@ -114,10 +114,10 @@ def tool_identity(tools: dict) -> dict:
 
 
 def code_hash() -> str:
-    """Hash of the package source (src/minpilot/**/*.py), recorded with runs and checkpoints."""
+    """Hash Python source and any text resources, recorded with runs and checkpoints."""
     h = hashlib.sha256()
     pkg = Path(__file__).resolve().parent
-    for p in sorted(pkg.rglob("*.py")):
+    for p in sorted(p for p in pkg.rglob("*") if p.is_file() and p.suffix in (".py", ".txt")):
         h.update(str(p.relative_to(pkg)).encode() + b"\0" + p.read_bytes() + b"\0")
     return h.hexdigest()[:16]
 
@@ -208,9 +208,7 @@ class Run:
                 "condition": self.cfg.refiner.name, "refine_at": self.cfg.refine_at, "status": "running",
                 "final_answer": None, "started_at": time.time(), "git_commit": git_commit(), "code_hash": code_hash(),
                 "prompts_version": prompts.PROMPTS_VERSION,
-                # the condition's prompt set (r5 is kept frozen for the earlier-refiner arm; R21)
-                "refiner_prompts_version": ("r5" if self.cfg.refiner.prompts == "r5"
-                                            else prompts.REFINER_PROMPTS_VERSION), "config": self.cfg.to_dict(),
+                "refiner_prompts_version": prompts.REFINER_PROMPTS_VERSION, "config": self.cfg.to_dict(),
                 "costs": {"version": COSTS_VERSION, "tool_usd_per_credit": TOOL_USD_PER_CREDIT},
                 "models": self.model_identities(), "tools": self.tool_cfg.to_dict(),
                 "reader_identity": self.reader_identity, "reference_date": self.reference_date}

@@ -41,22 +41,22 @@ def test_multi_pool_has_a_fixed_executor_and_a_probe_only_haiku():
     assert spec.model == HAIKU and spec.provider == "anthropic" and spec.reasoning == {"effort": "high"}
     assert spec.tools_allowed and spec.preserve_reasoning and not spec.sampling
     assert [load_refiner(c).probe_workers_for(role, pool) for c in
-            ("c1_self_review", "c2_probe_executor", "c3_probe_multi")] == \
+            ("self_review", "executor_probe", "multi_worker_probe")] == \
         [("gen_luna",), ("gen_luna",), ("gen_luna", "gen_haiku")]
 
 
 def test_orchestrator_does_not_see_the_probe_only_worker(tmp_path, task):
     llm = ScriptedLLM({"orchestrator": [delegate("worker", DRAFT), finish("3")], "worker": ["3 orders"]})
-    run = make_run(tmp_path, task, llm, pool="multi", refiner="A_none")
+    run = make_run(tmp_path, task, llm, pool="multi", refiner="baseline")
     run.run_fresh()
     system = llm.by_kind["orchestrator"][0]["messages"][0]["content"]
     assert "gen_haiku" not in system and "haiku" not in system.lower()
     assert [b["model"] for b in llm.by_kind["worker"]] == [LUNA]
 
 
-def test_c1_predicts_the_executor_once_without_worker_calls(tmp_path, task):
+def test_self_review_predicts_the_executor_once_without_worker_calls(tmp_path, task):
     llm = ScriptedLLM(script(simulate=["predicted answers"], worker=["2 unique orders"]))
-    run = make_run(tmp_path, task, llm, pool="multi", refiner="c1_self_review")
+    run = make_run(tmp_path, task, llm, pool="multi", refiner="self_review")
     run.run_fresh()
     assert len(llm.by_kind["simulate"]) == 1
     assert [b["model"] for b in llm.by_kind["worker"]] == [LUNA]  # execution only
@@ -65,19 +65,19 @@ def test_c1_predicts_the_executor_once_without_worker_calls(tmp_path, task):
                               "orchestrator"]
 
 
-def test_c2_probes_only_the_executor(tmp_path, task):
+def test_executor_probe_probes_only_the_executor(tmp_path, task):
     llm = ScriptedLLM(script(worker=["probe answer luna", "2 unique orders"]))
-    run = make_run(tmp_path, task, llm, pool="multi", refiner="c2_probe_executor")
+    run = make_run(tmp_path, task, llm, pool="multi", refiner="executor_probe")
     run.run_fresh()
     assert [b["model"] for b in llm.by_kind["worker"]] == [LUNA, LUNA]
     assert ok_stages(run) == ["orchestrator", "refine.probe", "refine.analyze", "refine.rewrite", "execution",
                               "orchestrator"]
 
 
-def test_c3_probes_luna_and_haiku_independently_and_executes_on_luna(tmp_path, task):
+def test_multi_worker_probe_probes_luna_and_haiku_independently_and_executes_on_luna(tmp_path, task):
     llm = ScriptedLLM(script(**{f"worker:{LUNA}": ["probe answer luna", "2 unique orders"],
                                 f"worker:{HAIKU}": ["probe answer haiku"]}))
-    run = make_run(tmp_path, task, llm, pool="multi", refiner="c3_probe_multi")
+    run = make_run(tmp_path, task, llm, pool="multi", refiner="multi_worker_probe")
     info = run.run_fresh()
     assert info["status"] == "ok"
     probes, execution = llm.by_kind["worker"][:2], llm.by_kind["worker"][2]
@@ -91,14 +91,14 @@ def test_c3_probes_luna_and_haiku_independently_and_executes_on_luna(tmp_path, t
                               "execution", "orchestrator"]
 
 
-def test_c3_checks_run_through_the_executor(tmp_path, task):
+def test_multi_worker_probe_checks_run_through_the_executor(tmp_path, task):
     issue = {**ISSUE, "decision": "needs_verification"}
     llm = ScriptedLLM(script(
         analyze=[{"issues": [issue], "followups": [],
                   "verifications": [{"issue_id": "i1", "worker_id": "worker", "instruction": "check ids"}]}],
         **{f"worker:{LUNA}": ["probe answer luna", "ids repeat", "2 unique orders"],
            f"worker:{HAIKU}": ["probe answer haiku"]}))
-    run = make_run(tmp_path, task, llm, pool="multi", refiner="c3_probe_multi")
+    run = make_run(tmp_path, task, llm, pool="multi", refiner="multi_worker_probe")
     run.run_fresh()
     log = json.loads((run.run_dir / "refine" / "d0.json").read_text())
     assert [v["executed_by"] for v in log["verifications"]] == ["gen_luna"]
@@ -121,7 +121,7 @@ def test_score_runs_cost_columns():
 def test_one_role_is_named_the_worker_in_prompts(tmp_path, task):
     llm = ScriptedLLM(script(**{f"worker:{LUNA}": ["probe answer luna", "2 unique orders"],
                                 f"worker:{HAIKU}": ["probe answer haiku"]}))
-    run = make_run(tmp_path, task, llm, pool="multi", refiner="c3_probe_multi")
+    run = make_run(tmp_path, task, llm, pool="multi", refiner="multi_worker_probe")
     run.run_fresh()
     report = llm.by_kind["orchestrator"][1]["messages"][-1]["content"]
     assert "Report from the worker (delegation 1)" in report and "actually sent to the worker" in report
@@ -129,7 +129,7 @@ def test_one_role_is_named_the_worker_in_prompts(tmp_path, task):
     assert "executed by the worker," in llm.by_kind["rewrite"][0]["messages"][-1]["content"]
 
 
-def test_c3_answers_are_anonymous_in_a_shuffled_order(tmp_path, task, monkeypatch):
+def test_multi_worker_probe_answers_are_anonymous_in_a_shuffled_order(tmp_path, task, monkeypatch):
     """R23: the analysis sees "respondent k" in the order the workers answered (shuffled per delegation); the log
     keeps the order and each answer's worker; probes of every condition use tools (stage 4)."""
     from minpilot.refine import review
@@ -141,7 +141,7 @@ def test_c3_answers_are_anonymous_in_a_shuffled_order(tmp_path, task, monkeypatc
     monkeypatch.setattr(review, "ORDER_RNG", Reverse())
     llm = ScriptedLLM(script(**{f"worker:{LUNA}": ["probe answer luna", "2 unique orders"],
                                 f"worker:{HAIKU}": ["probe answer haiku"]}))
-    run = make_run(tmp_path, task, llm, pool="multi", refiner="c3_probe_multi")
+    run = make_run(tmp_path, task, llm, pool="multi", refiner="multi_worker_probe")
     assert run.run_fresh()["status"] == "ok"
     assert [b["model"] for b in llm.by_kind["worker"]] == [HAIKU, LUNA, LUNA]
     a = llm.by_kind["analyze"][0]["messages"][-1]["content"]
@@ -151,4 +151,4 @@ def test_c3_answers_are_anonymous_in_a_shuffled_order(tmp_path, task, monkeypatc
     log = json.loads((run.run_dir / "refine" / "d0.json").read_text())
     assert log["probe_order"] == ["gen_haiku", "gen_luna"]
     assert [(r["id"], r["worker_id"]) for r in log["responses"]] == [("r1", "gen_haiku"), ("r2", "gen_luna")]
-    assert all(load_refiner(c).probe_tools for c in ("c2_probe_tools", "c3_probe_multi"))
+    assert all(load_refiner(c).probe_tools for c in ("executor_probe_tools", "multi_worker_probe"))

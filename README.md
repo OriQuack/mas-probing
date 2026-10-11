@@ -1,47 +1,62 @@
 # min_pilot
 
-Does it help an orchestrator to **probe its workers before delegating** (ask how they read the instruction,
-what they assume, what could fail, and how they plan to work) and then rewrite the delegation instruction?
+Worker에게 작업을 위임하기 전에 이해·가정·위험·계획을 물으면, 더 나은 지시문을 만들 수 있는지
+검증하는 최소 orchestrator–worker 프레임워크입니다. GAIA를 사용하며 실행 worker를 고정해
+지시문 변경 효과를 비교합니다.
 
-This is the second GAIA pilot of the mas-uncertainty project. It uses a **minimal orchestrator–worker framework
-written from scratch** (no OWL), so the method can be tested without framework side effects, compared across
-pool designs and conditions, and later ported to other frameworks.
+## 어디부터 읽나
 
-| | Question | How |
-|---|---|---|
-| RQ1 | Is there headroom in fixing a delegation instruction? | Restore the pre-delegation checkpoint; run the original vs a revised instruction |
-| RQ2 | Do real worker answers beat orchestrator-only review at the same budget? | A (none) vs B (self-review) vs C (probe), paired from the same checkpoint |
-| RQ3 | What does the extra interaction cost? | Per-stage tokens, cost and latency |
+| 목적 | 문서 |
+|---|---|
+| 시스템과 모듈 경계 이해 | [Framework](docs/framework.md) |
+| 실제 프롬프트 읽기·수정 | [Prompt 안내](src/minpilot/prompts/README.md) |
+| 조건·버전·실험 용어 이해 | [실험 안내](docs/experiments.md) |
+| 지금까지의 결과 확인 | [보고서 목록](docs/reports/index.md) → 최신 종합 보고서 |
+| 유효한 구현 결정 확인 | [현재 결정](docs/decisions.md) |
+| 실행 환경·GPU 운영 | [Slurm 운영](docs/operations/slurm.md) |
 
-Framework spec: [`minimal framework.md`](minimal%20framework.md). Implementation choices to revisit:
-[`docs/decisions.md`](docs/decisions.md).
+현재 프롬프트 식별자는 실행 `v7`, refiner `r9`입니다. 최신 구성의 전체 비교 결과는 아직 없습니다.
+과거 결과의 한계와 정정은 최신 종합 보고서를 기준으로 읽습니다.
 
-## Framework
+## 구조
 
+```text
+src/minpilot/
+  agents/              orchestrator와 worker 실행
+  prompts/             역할별 프롬프트 본문·입력 처리, 응답 스키마
+  refine/              probe → analysis → verification → rewrite
+  harness.py           위임 루프, checkpoint, restore
+  artifacts.py         실험 manifest와 원본 실행 탐색
+  tools/, llm/         도구와 모델 호출
+configs/
+  pools/               역할·실행 worker·probe worker 구성
+  refiners/            현재 비교 조건; variants/는 선택적 기능
+docs/                  현재 설계·실험 안내·보고서
+outputs/experiments/   목적별 원본 실행, manifest, 당시 코드 snapshot
+outputs/analysis/      보조 trace 묶음
+outputs/runs/          단건 실행
+outputs/cache/         도구 cache
 ```
-orchestrator (no tools) ── delegate(context, instruction) ─► [checkpoint] ──► InstructionRefiner ──► call_worker
-        ▲                                                                   (A / B / C)          (executor)
-        └────────────────────────────── report ◄───────────────────────────────────────────────────┘
-```
 
-- `call_worker(worker_id, original_task, instruction, context="") -> report` is the only interface to workers.
-  `context` = what earlier reports said (sent unchanged); `instruction` = this subtask (what the refiner revises).
-- `InstructionRefiner.refine(original_task, draft, context, target worker, probe workers) -> instruction` is the
-  method module: probe → compare → decide/verify issues → rewrite. It reads the context and returns the instruction,
-  plus facts from its checks that are appended after the unchanged context. Its steps run as turns of a discarded
-  copy of the orchestrator's conversation (refiner prompts r7; r8 adds anonymous, shuffled probe answers; r9 revises the analysis and rewrite rules).
-- Worker pools: `multi` (default: one role, executor Luna, probe-only Haiku 5.5; the orchestrator
-  only writes instructions), `single` (the same role with one worker), `role_routing` (web / file roles the orchestrator chooses; a robustness check), `redundant`
-  (several candidate workers are probed, the executor is fixed).
-
-## Setup
+## 실행
 
 ```bash
-bash envs/doh_minpilot/setup.sh && conda activate doh_minpilot
-cp .env.example .env                     # OPENROUTER_API_KEY, SERPER_API_KEY
-bash scripts/crawl4ai/ensure.sh          # local page reader (pinned Crawl4AI image, Apptainer)
+bash envs/doh_minpilot/setup.sh
+conda activate doh_minpilot
+cp .env.example .env
+bash scripts/crawl4ai/ensure.sh
 python -m pytest
-python scripts/run_task.py fresh --task-id <id> --pool multi --refiner A_none
+python scripts/run_task.py fresh --task-id <id> --pool multi --refiner baseline
 ```
 
-GAIA 2023 validation is expected at `~/data2/datasets/GAIA/2023/validation/`.
+`.env`에 `OPENROUTER_API_KEY`, `SERPER_API_KEY`를 설정합니다.
+GAIA validation 위치는 `~/data2/datasets/GAIA/2023/validation/`입니다.
+평가 집합은 평가 전 튜닝에 사용하지 않습니다.
+
+```bash
+python scripts/show_prompts.py --component probe
+python scripts/experiments.py list
+python scripts/experiments.py verify
+```
+
+배치 실행·짝지은 비교·과거 경로 찾기는 [실험 안내](docs/experiments.md)를 봅니다.

@@ -14,8 +14,8 @@ from test_harness import make_run
 DRAFT = "Count the orders in attachments/sheet.csv for 2025."
 REWRITTEN = "Task: count UNIQUE order ids in attachments/sheet.csv for 2025.\nCriteria: rows with the same id are one order."
 
-ISSUE = {"id": "i1", "kind": "assumption", "summary": "rows vs unique ids", "evidence": "r1 counts rows",
-         "decision": "resolved_from_task", "resolution": "count unique ids"}
+ISSUE = {"id": "i1", "target": "Count the orders", "impact": "rows vs unique ids", "evidence": "r1 counts rows",
+         "decision": "clarify", "resolution": "count unique ids"}
 
 
 def analysis(issues=(ISSUE,), followups=(), verifications=()):
@@ -37,18 +37,18 @@ def refine_log(run):
     return json.loads((run.run_dir / "refine" / "d0.json").read_text())
 
 
-def test_A_executes_draft_without_extra_calls(tmp_path, task):
+def test_baseline_executes_draft_without_extra_calls(tmp_path, task):
     llm = ScriptedLLM({"orchestrator": [delegate("worker", DRAFT), finish("3")], "worker": ["3 orders"]})
-    run = make_run(tmp_path, task, llm, pool="single", refiner="A_none")
+    run = make_run(tmp_path, task, llm, pool="single", refiner="baseline")
     run.run_fresh()
     assert len(llm.by_kind["worker"]) == 1 and DRAFT in llm.by_kind["worker"][0]["messages"][1]["content"]
     assert set(llm.by_kind) == {"orchestrator", "worker"}
 
 
-def test_C_probes_every_candidate_and_executes_rewrite(tmp_path, task):
+def test_pool_probe_every_candidate_and_executes_rewrite(tmp_path, task):
     llm = ScriptedLLM(base_script(**{"worker:openai/gpt-6-luna-20260922": ["probe answer luna", "2 unique orders"],
                                      "worker:google/gemini-3.1-flash-lite": ["probe answer gemini"]}))
-    run = make_run(tmp_path, task, llm, pool="redundant", refiner="C_probe")
+    run = make_run(tmp_path, task, llm, pool="redundant", refiner="variants/pool_probe")
     info = run.run_fresh()
     assert info["status"] == "ok"
     w = llm.by_kind["worker"]
@@ -56,10 +56,10 @@ def test_C_probes_every_candidate_and_executes_rewrite(tmp_path, task):
     assert [b["model"] for b in probes] == ["openai/gpt-6-luna-20260922", "google/gemini-3.1-flash-lite"]
     for b in probes:  # probe: original task + draft + the four questions; no tools by default
         text = b["messages"][1]["content"]
-        assert task.question in text and DRAFT in text and "Do not execute the subtask" in text and "4. Plan" in text
+        assert task.question in text and DRAFT in text and "Do not use tools or execute the subtask." in text and "plan:" in text
         assert "tools" not in b
     # analysis saw both real answers; the executor (fixed: gen_luna) got the rewrite, in a fresh conversation
-    a = llm.by_kind["analyze"][0]["messages"][1]["content"]
+    a = llm.by_kind["analyze"][0]["messages"][-1]["content"]
     assert "probe answer luna" in a and "probe answer gemini" in a and "given by the worker" in a
     assert execution["model"] == "openai/gpt-6-luna-20260922"
     assert REWRITTEN in execution["messages"][1]["content"] and len(execution["messages"]) == 2
@@ -75,22 +75,22 @@ def test_C_probes_every_candidate_and_executes_rewrite(tmp_path, task):
                       "execution", "orchestrator"]
 
 
-def test_B_predicts_same_slots_without_worker_calls(tmp_path, task):
+def test_self_review_predicts_same_slots_without_worker_calls(tmp_path, task):
     llm = ScriptedLLM(base_script(simulate=["predicted luna", "predicted gemini"], worker=["2 unique orders"]))
-    run = make_run(tmp_path, task, llm, pool="redundant", refiner="B_self_review")
+    run = make_run(tmp_path, task, llm, pool="redundant", refiner="variants/pool_self_review")
     run.run_fresh()
     assert len(llm.by_kind["simulate"]) == 2  # one prediction per probe slot C would fill
     assert all(b["model"] == "openai/gpt-6-luna-20260922" and b["reasoning"] == {"effort": "high"}
                for b in llm.by_kind["simulate"])
     assert len(llm.by_kind["worker"]) == 1  # execution only
-    a = llm.by_kind["analyze"][0]["messages"][1]["content"]
+    a = llm.by_kind["analyze"][0]["messages"][-1]["content"]
     assert "predicted luna" in a and "that you predicted" in a
     assert REWRITTEN in llm.by_kind["worker"][0]["messages"][1]["content"]
 
 
 def test_no_issues_keeps_draft_without_rewrite(tmp_path, task):
     llm = ScriptedLLM(base_script(analyze=[analysis(issues=())], rewrite=[], worker=["probe", "3"]))
-    run = make_run(tmp_path, task, llm, pool="single", refiner="C_probe")
+    run = make_run(tmp_path, task, llm, pool="single", refiner="variants/pool_probe")
     run.run_fresh()
     assert "rewrite" not in llm.by_kind and refine_log(run)["status"] == "no_issues"
     assert DRAFT in llm.by_kind["worker"][-1]["messages"][1]["content"]
@@ -99,26 +99,26 @@ def test_no_issues_keeps_draft_without_rewrite(tmp_path, task):
 def test_followup_continues_the_probe_conversation(tmp_path, task):
     a1 = analysis(followups=[{"response_id": "r1", "question": "Rows or unique ids?"}])
     llm = ScriptedLLM(base_script(analyze=[a1, analysis()], worker=["I count rows", "unique ids then", "2"]))
-    run = make_run(tmp_path, task, llm, pool="single", refiner="C_probe_followup")
+    run = make_run(tmp_path, task, llm, pool="single", refiner="variants/probe_followup")
     run.run_fresh()
     fu = llm.by_kind["worker"][1]["messages"]
     assert "I count rows" in json.dumps(fu) and "Rows or unique ids?" in fu[-1]["content"]
-    assert len(llm.by_kind["analyze"]) == 2 and "unique ids then" in llm.by_kind["analyze"][1]["messages"][1]["content"]
+    assert len(llm.by_kind["analyze"]) == 2 and "unique ids then" in llm.by_kind["analyze"][1]["messages"][-1]["content"]
 
 
 def test_connected_condition_continues_probe_into_execution(tmp_path, task):
     llm = ScriptedLLM(base_script(worker=["probe answer", "2"]))
-    run = make_run(tmp_path, task, llm, pool="single", refiner="C_probe_connected")
+    run = make_run(tmp_path, task, llm, pool="single", refiner="variants/probe_connected")
     run.run_fresh()
     ex = llm.by_kind["worker"][-1]["messages"]
     assert "probe answer" in json.dumps(ex) and REWRITTEN in ex[-1]["content"]
 
 
 def test_refine_budget_exceeded_keeps_draft(tmp_path, task):
-    cfg = load_refiner("C_probe")
+    cfg = load_refiner("variants/pool_probe")
     tight = RefinerConfig(**{**cfg.__dict__, "budget": Limits(max_llm_calls=1)})
     llm = ScriptedLLM(base_script(worker=["probe", "3"]))
-    run = make_run(tmp_path, task, llm, pool="single", refiner="C_probe")
+    run = make_run(tmp_path, task, llm, pool="single", refiner="variants/pool_probe")
     run.cfg = run.cfg.__class__(**{**run.cfg.__dict__, "refiner": tight})
     from minpilot.refine.base import make_refiner
 
@@ -131,7 +131,7 @@ def test_refine_budget_exceeded_keeps_draft(tmp_path, task):
 def test_refine_at_first_only_refines_first_delegation(tmp_path, task):
     llm = ScriptedLLM({"orchestrator": [delegate("worker", DRAFT), delegate("worker", "second"), finish("2")],
                        "analyze": [analysis()], "rewrite": [rewrite()], "worker": ["p", "r1", "r2"]})
-    run = make_run(tmp_path, task, llm, pool="single", refiner="C_probe", refine_at="first")
+    run = make_run(tmp_path, task, llm, pool="single", refiner="variants/pool_probe", refine_at="first")
     run.run_fresh()
     assert [d["refine_status"] for d in run.delegations] == ["rewritten", "not_selected"]
 
@@ -144,12 +144,12 @@ def test_verification_runs_in_scratch_workspace(tmp_path, task):
     code = "open('marker.txt','w').write('x'); print('ok')"
     llm = ScriptedLLM(base_script(analyze=[ver], worker=[
         "probe", {"tool_calls": [("run_python", {"code": code})]}, "wrote marker", "2"]))
-    run = make_run(tmp_path, task, llm, pool="single", refiner="C_probe")
+    run = make_run(tmp_path, task, llm, pool="single", refiner="variants/pool_probe")
     run.run_fresh()
     assert not (run.work_dir / "marker.txt").exists()
     assert list((run.run_dir / "scratch" / "d0").rglob("marker.txt"))
     assert refine_log(run)["verifications"][0]["report"] == "wrote marker"
-    assert "wrote marker" in llm.by_kind["rewrite"][0]["messages"][1]["content"]
+    assert "wrote marker" in llm.by_kind["rewrite"][0]["messages"][-1]["content"]
 
 
 def test_checks_run_only_for_needs_verification_issues(tmp_path, task):
@@ -157,7 +157,7 @@ def test_checks_run_only_for_needs_verification_issues(tmp_path, task):
     decision); deferred issues still reach the rewrite."""
     nv = {**ISSUE, "decision": "needs_verification"}
     nr = {**ISSUE, "id": "i2", "decision": "not_relevant"}
-    de = {**ISSUE, "id": "i3", "decision": "defer_to_execution", "summary": "deferred one"}
+    de = {**ISSUE, "id": "i3", "decision": "defer_to_execution", "impact": "deferred one"}
     rs = {**ISSUE, "id": "i4"}
     ver = [{"issue_id": "i2", "worker_id": "worker", "instruction": "check x"},
            {"issue_id": "i1", "worker_id": "worker", "instruction": "check y"},
@@ -165,13 +165,14 @@ def test_checks_run_only_for_needs_verification_issues(tmp_path, task):
            {"issue_id": "i4", "worker_id": "worker", "instruction": "check w"}]
     llm = ScriptedLLM(base_script(analyze=[analysis(issues=(nv, nr, de, rs), verifications=ver)],
                                   worker=["probe answers", "checked y", "2 unique orders"]))
-    run = make_run(tmp_path, task, llm, pool="single", refiner="C_probe")
+    run = make_run(tmp_path, task, llm, pool="single", refiner="variants/pool_probe")
     assert run.run_fresh()["status"] == "ok"
     log = refine_log(run)
     assert [v["issue_id"] for v in log["verifications"]] == ["i1"]
-    assert log["verifications_skipped"] == {"not_relevant": 1, "defer_to_execution": 1, "resolved_from_task": 1}
-    rewrite_text = llm.by_kind["rewrite"][0]["messages"][1]["content"]
-    assert "deferred one" in rewrite_text and "defer_to_execution" in rewrite_text
+    assert log["verifications_skipped"] == {"not_relevant": 1, "defer_to_execution": 1, "clarify": 1}
+    rewrite_text = llm.by_kind["rewrite"][0]["messages"][-1]["content"]
+    assert "deferred one" in json.dumps(llm.by_kind["rewrite"][0]["messages"])
+    assert "defer_to_execution" in json.dumps(llm.by_kind["rewrite"][0]["messages"])
 
 
 def stages(run):
@@ -179,22 +180,22 @@ def stages(run):
             if json.loads(l)["status"] == "ok" and json.loads(l)["stage"].startswith("refine.")]
 
 
-def test_B_and_C_run_the_same_steps_after_collection(tmp_path, task):
+def test_predicted_and_real_run_the_same_steps_after_collection(tmp_path, task):
     """Main contrast: with the same analysis, B and C differ only in the collection step (no follow-ups in C)."""
     a = analysis(followups=[{"response_id": "r1", "question": "Rows or unique ids?"}])
     runs = {}
-    for cond, worker in (("B_self_review", ["2"]), ("C_probe", ["probe answer", "2"])):
+    for cond, worker in (("variants/pool_self_review", ["2"]), ("variants/pool_probe", ["probe answer", "2"])):
         llm = ScriptedLLM(base_script(analyze=[a], worker=worker, simulate=["predicted answer"]))
         runs[cond] = make_run(tmp_path, task, llm, pool="single", refiner=cond, name=cond)
         assert runs[cond].run_fresh()["status"] == "ok"
-    assert stages(runs["B_self_review"]) == ["refine.review", "refine.analyze", "refine.rewrite"]
-    assert stages(runs["C_probe"]) == ["refine.probe", "refine.analyze", "refine.rewrite"]
+    assert stages(runs["variants/pool_self_review"]) == ["refine.review", "refine.analyze", "refine.rewrite"]
+    assert stages(runs["variants/pool_probe"]) == ["refine.probe", "refine.analyze", "refine.rewrite"]
 
 
 def test_truncated_analysis_is_refine_error_not_no_issues(tmp_path, task):
     trunc = Raw('{"issues": [', finish_reason="length")
     llm = ScriptedLLM(base_script(analyze=[trunc, trunc], worker=["probe answer", "3"]))
-    run = make_run(tmp_path, task, llm, pool="single", refiner="C_probe")
+    run = make_run(tmp_path, task, llm, pool="single", refiner="variants/pool_probe")
     assert run.run_fresh()["status"] == "ok"
     log = refine_log(run)
     assert log["status"] == "refine_error" and log["refine_error"]["stage"] == "refine.analyze"
@@ -205,7 +206,7 @@ def test_truncated_analysis_is_refine_error_not_no_issues(tmp_path, task):
 def test_invalid_analysis_is_retried_once(tmp_path, task):
     bad = analysis(verifications=[{"issue_id": "nope", "worker_id": "worker", "instruction": "x"}])
     llm = ScriptedLLM(base_script(analyze=[bad, analysis()], worker=["probe answer", "2"]))
-    run = make_run(tmp_path, task, llm, pool="single", refiner="C_probe")
+    run = make_run(tmp_path, task, llm, pool="single", refiner="variants/pool_probe")
     run.run_fresh()
     log = refine_log(run)
     assert log["status"] == "rewritten" and "unknown issues" in log["analysis"][0]["retried"][0]
@@ -214,14 +215,14 @@ def test_invalid_analysis_is_retried_once(tmp_path, task):
 def test_empty_rewrite_is_refine_error_not_unchanged(tmp_path, task):
     empty = {"instruction": "", "changes": [], "unchanged": False}
     llm = ScriptedLLM(base_script(rewrite=[empty, empty], worker=["probe answer", "3"]))
-    run = make_run(tmp_path, task, llm, pool="single", refiner="C_probe")
+    run = make_run(tmp_path, task, llm, pool="single", refiner="variants/pool_probe")
     run.run_fresh()
     assert refine_log(run)["status"] == "refine_error"
 
 
 def test_answers_only_arm_executes_the_draft_after_a_connected_probe(tmp_path, task):
     llm = ScriptedLLM({"orchestrator": [delegate("worker", DRAFT), finish("2")], "worker": ["probe answer", "2"]})
-    run = make_run(tmp_path, task, llm, pool="single", refiner="C_probe_connected_norewrite")
+    run = make_run(tmp_path, task, llm, pool="single", refiner="variants/probe_connected_without_rewrite")
     assert run.run_fresh()["status"] == "ok"
     assert refine_log(run)["status"] == "answers_only" and set(llm.by_kind) == {"orchestrator", "worker"}
     ex = llm.by_kind["worker"][-1]["messages"]
@@ -230,31 +231,16 @@ def test_answers_only_arm_executes_the_draft_after_a_connected_probe(tmp_path, t
 
 def test_rewrite_prompt_names_the_executor_tools(tmp_path, task):
     llm = ScriptedLLM(base_script(worker=["probe answer", "2"]))
-    run = make_run(tmp_path, task, llm, pool="single", refiner="C_probe")
+    run = make_run(tmp_path, task, llm, pool="single", refiner="variants/pool_probe")
     run.run_fresh()
-    text = llm.by_kind["rewrite"][0]["messages"][1]["content"]
-    assert "executed by the worker" in text and "web_search" in text and "generalist" not in text.split("Verification results")[0]
+    text = llm.by_kind["rewrite"][0]["messages"][-1]["content"]
+    assert "executed by the worker" in text and "web_search" in text
 
 
-def test_r5_analysis_and_rewrite_rules(tmp_path, task):
-    """Refiner prompts r5 (R20; keeps R14): premises may be questioned; checks the executor can do are left to
-    execution; the rewrite is minimal and keeps the task's goal."""
-    llm = ScriptedLLM(base_script(worker=["probe answer", "2"]))
-    run = make_run(tmp_path, task, llm, pool="single", refiner="C_probe")
-    run.run_fresh()
-    analyze = llm.by_kind["analyze"][0]["messages"][1]["content"]
-    assert "questionable premises" in analyze and "treat them as given" not in analyze
-    assert "- defer_to_execution:" in analyze and "Request checks only for needs_verification issues" in analyze
-    assert "compared" not in analyze and "answer sets above were given independently" not in analyze  # one answer
-    assert "unanswerable" not in analyze and "one intended answer" not in analyze
-    rewrite_text = llm.by_kind["rewrite"][0]["messages"][1]["content"]
-    assert "Change only what is needed" in rewrite_text
-    assert "do not silently replace the task with a different one" in rewrite_text
-    assert "most plausible intended reading" not in rewrite_text
 
 
 def test_probe_workers_chosen_by_the_condition_on_the_same_pool(tmp_path, task):
-    """P5: on the `redundant` pool, C_probe asks Luna + Gemini once each; C_probe_x2 asks the executor twice
+    """P5: on the `redundant` pool, variants/pool_probe asks Luna + Gemini once each; variants/executor_probe_twice asks the executor twice
     (it used to ask every candidate twice: 4 answers)."""
     def answers(refiner, name):
         llm = ScriptedLLM(base_script(worker=lambda b: "answer"))
@@ -262,8 +248,8 @@ def test_probe_workers_chosen_by_the_condition_on_the_same_pool(tmp_path, task):
         run.run_fresh()
         return [(r["worker_id"], r["sample"]) for r in refine_log(run)["responses"]]
 
-    assert answers("C_probe", "c") == [("gen_luna", 0), ("gen_gemini", 0)]
-    assert answers("C_probe_x2", "x2") == [("gen_luna", 0), ("gen_luna", 1)]
+    assert answers("variants/pool_probe", "c") == [("gen_luna", 0), ("gen_gemini", 0)]
+    assert answers("variants/executor_probe_twice", "x2") == [("gen_luna", 0), ("gen_luna", 1)]
 
 
 def test_probe_worker_lists_are_validated_against_the_pool(tmp_path, task):

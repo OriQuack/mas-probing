@@ -1,6 +1,6 @@
 """Orchestrator actions with one role (no routing) and with several roles (decision P6)."""
 
-from minpilot.agents import prompts
+from minpilot import prompts
 from minpilot.agents.orchestrator import Orchestrator
 from minpilot.llm.client import json_schema_format
 

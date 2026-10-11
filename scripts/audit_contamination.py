@@ -99,7 +99,9 @@ def audit_run(rd: Path, question: str, allowed: tuple[str, ...]) -> dict:
 def main(paths: list[Path]) -> None:
     for sess in paths:
         report = {}
-        for rj in sorted(sess.rglob("run.json")):
+        from minpilot.artifacts import find_run_records
+
+        for rj in find_run_records(sess):
             rd = rj.parent
             if "scratch" in rd.parts or "checkpoints" in rd.parts:
                 continue

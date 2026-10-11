@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 """Run one GAIA task fresh, or continue a checkpoint under a condition.
 
-  python scripts/run_task.py fresh --task-id <id> [--pool multi] [--refiner A_none] [--refine-at first]
-  python scripts/run_task.py restore --checkpoint <run>/checkpoints/d0 --refiner c3_probe_multi [--label c3_r0]
+  python scripts/run_task.py fresh --task-id <id> [--pool multi] [--refiner baseline] [--refine-at first]
+  python scripts/run_task.py restore --checkpoint <run>/checkpoints/d0 --refiner multi_worker_probe [--label c3_r0]
   python scripts/run_task.py restore --checkpoint ... --query-file q.txt --source post_hoc   # Exp 1 override
 
 The Crawl4AI page-reader service is required only when the reader chain contains it (the default, fixed for the
@@ -70,7 +70,7 @@ def main() -> int:
     f = sub.add_parser("fresh")
     f.add_argument("--task-id", required=True)
     f.add_argument("--pool", default="multi")
-    f.add_argument("--refiner", default="A_none")
+    f.add_argument("--refiner", default="baseline")
     f.add_argument("--refine-at", default="first", choices=["first", "all", "none"])
     f.add_argument("--orchestrator-model", default="luna-high")
     f.add_argument("--refiner-model", default="luna-high")

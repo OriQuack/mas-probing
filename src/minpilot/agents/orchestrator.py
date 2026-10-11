@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 
-from minpilot.agents import prompts
+from minpilot import prompts
 from minpilot.llm.client import LLMClient, json_schema_format
 
 

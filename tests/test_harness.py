@@ -13,7 +13,7 @@ from minpilot.runtime.trace import Limits
 from minpilot.tools.config import ToolConfig
 
 
-def make_run(tmp_path, task, llm, *, pool="role_routing", refiner="A_none", refine_at="first", name="run", **kw):
+def make_run(tmp_path, task, llm, *, pool="role_routing", refiner="baseline", refine_at="first", name="run", **kw):
     cfg = RunConfig(pool=load_pool(pool), refiner=load_refiner(refiner), refine_at=refine_at, label=name, **kw)
     return Run(cfg, task, tmp_path / name, transport=llm, web=fake_web(tmp_path, task.question),
                tool_cfg=ToolConfig(cache_path=tmp_path / "cache.sqlite"))

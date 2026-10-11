@@ -7,7 +7,7 @@ from __future__ import annotations
 import json
 
 from fakes import ScriptedLLM, delegate, fake_web, finish
-from minpilot.agents import prompts, prompts_r5
+from minpilot import prompts
 from minpilot.agents.orchestrator import Orchestrator
 from minpilot.config import load_refiner
 from minpilot.harness import Run
@@ -50,8 +50,6 @@ def test_orchestrator_writes_context_and_instruction():
 def test_requests_without_context_have_no_context_section():
     text = prompts.worker_request("task", "do x")
     assert "Context (" not in text and text.startswith("Original task:\n<<<\ntask\n>>>\n\nYour instruction:")
-    probe = prompts_r5.probe_instruction("do x", ("plan",), False, 0)  # r5 names the context only when there is one
-    assert "context" not in probe
     assert "Context (" not in prompts.worker_request("task", prompts.probe_instruction("do x", False, 0), kind="probe")
     with_ctx = prompts.worker_request("task", "do x", context="c")
     assert with_ctx.index("Original task") < with_ctx.index("Context (") < with_ctx.index("Your instruction")
@@ -60,7 +58,7 @@ def test_requests_without_context_have_no_context_section():
 def test_every_c3_step_reads_the_context_and_execution_gets_it_unchanged(tmp_path, task):
     llm = ScriptedLLM(script(**{f"worker:{LUNA}": ["probe answer luna", "ids repeat", "2 unique orders"],
                                 f"worker:{HAIKU}": ["probe answer haiku"]}))
-    run = make_run(tmp_path, task, llm, pool="multi", refiner="c3_probe_multi")
+    run = make_run(tmp_path, task, llm, pool="multi", refiner="multi_worker_probe")
     assert run.run_fresh()["status"] == "ok"
     probes, check, execution = llm.by_kind["worker"][:2], llm.by_kind["worker"][2], llm.by_kind["worker"][3]
     for b in probes:
@@ -80,9 +78,9 @@ def test_every_c3_step_reads_the_context_and_execution_gets_it_unchanged(tmp_pat
     assert d["context"] == CTX and d["final"] == REWRITTEN and d["changed"]
 
 
-def test_c1_prediction_sees_the_same_context_as_a_real_probe(tmp_path, task):
+def test_self_review_prediction_sees_the_same_context_as_a_real_probe(tmp_path, task):
     llm = ScriptedLLM(script(simulate=["predicted answers"], worker=["ids repeat", "2 unique orders"]))
-    run = make_run(tmp_path, task, llm, pool="multi", refiner="c1_self_review")
+    run = make_run(tmp_path, task, llm, pool="multi", refiner="self_review")
     run.run_fresh()
     sim = user_text(llm.by_kind["simulate"][0])
     real = prompts.worker_request(run.original_task, prompts.probe_instruction(DRAFT, False, 0), context=CTX,
@@ -98,7 +96,7 @@ def test_restore_keeps_the_checkpoint_context(tmp_path, task):
     assert json.loads((ck / "request.json").read_text())["context"] == CTX
     llm2 = ScriptedLLM(script(worker=["probe answer", "ids repeat", "2 unique orders"],
                               orchestrator=[finish("2")]))
-    run2 = Run.restore(ck, tmp_path / "r", task=task, transport=llm2, refiner=load_refiner("c2_probe_executor"),
+    run2 = Run.restore(ck, tmp_path / "r", task=task, transport=llm2, refiner=load_refiner("executor_probe"),
                        web=fake_web(tmp_path, task.question), tool_cfg=ToolConfig(cache_path=tmp_path / "cache.sqlite"))
     assert run2.run_restored()["status"] == "ok"
     assert all(CTX in user_text(b) for b in llm2.by_kind["worker"])

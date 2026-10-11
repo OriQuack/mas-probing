@@ -26,15 +26,10 @@ import hashlib
 import os
 from concurrent.futures import ThreadPoolExecutor
 
+from minpilot.prompts.reader import PROMPT, PART_PROMPT
 from minpilot.llm.client import HTTPError, LLMClient, TransientError
 from minpilot.tools.config import REPO_ROOT, ToolConfig
 
-PROMPT = ("Please read the source content and answer a following question:\n---begin of source content---\n{source}"
-          "\n---end of source content---\n\nIf there is no relevant information, please clearly refuse to answer. Now "
-          "answer the question based on the above content:\n{question}")
-PART_PROMPT = ("Please read the source content and answer a following question:\n--- begin of source content ---\n"
-               "{source}\n--- end of source content ---\n\nIf there is no relevant information, please clearly "
-               "refuse to answer. Now answer the question based on the above content:\n{question}")
 SPLIT_HEADER = ("Since the content is too long, the result is split and answered separately. Please combine the "
                 "results to get the complete answer.\n")
 

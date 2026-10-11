@@ -7,8 +7,7 @@ Vocabulary
   - role routing: each role's probe_workers is [its executor] (repeated/varied probes of the same worker);
   - redundant candidates: one role whose probe_workers are several workers (different models) that could all do
     the subtask; the executor stays fixed, so instruction effects are not mixed with worker selection.
-- **refiner**: the `InstructionRefiner` and its settings: the experimental condition (A none, B self-review,
-  C probe).
+- **refiner**: the `InstructionRefiner` and its settings: the experimental condition (baseline, self_review, or probe).
 """
 
 from __future__ import annotations
@@ -18,11 +17,11 @@ from pathlib import Path
 
 import yaml
 
+from minpilot.prompts import REFINER_PROMPTS_VERSION
 from minpilot.runtime.trace import Limits
 from minpilot.tools.toolbox import TOOL_NAMES
 
 CONFIG_DIR = Path(__file__).resolve().parents[2] / "configs"
-PROBE_QUESTIONS = ("understanding", "assumptions", "failure", "plan")
 
 
 @dataclass(frozen=True)
@@ -71,11 +70,7 @@ class PoolConfig:
 class RefinerConfig:
     name: str
     kind: str = "none"                       # none | self_review | probe | direct_check
-    # Refiner prompt set (decisions R21-R24): "r9" (current, prompts.py) or "r5" (frozen, prompts_r5.py; the earlier
-    # refiner arm). r6, r7 and r8 are not kept. direct_check needs r9.
-    prompts: str = "r9"
-    # r5 only: which probe questions (r9's probe has four fixed labelled items).
-    questions: tuple[str, ...] = PROBE_QUESTIONS
+    prompts: str = REFINER_PROMPTS_VERSION   # recorded refiner version; current implementation only
     # Who answers (decision P5): "pool" = the role's registered probe_workers; "executor" = the role's executor
     # only; or a list of worker ids of the pool ("executor" allowed as an entry). The pool, the executor and the
     # checkpoint stay the same, so e.g. Luna x2 and Luna + Gemini are compared from the same checkpoint.
@@ -83,9 +78,9 @@ class RefinerConfig:
     samples_per_worker: int = 1              # repeated probes of the same worker (role routing: >1 for variation)
     probe_tools: bool = False                # may probe workers use tools (on a scratch copy) while answering
     probe_max_tool_calls: int = 6
-    max_followups: int = 0                   # C variants only: follow-up questions in total (each continues one
-                                             # probe conversation); 0 in the main B/C contrast
-    max_verifications: int = 2               # B and C: verification calls delegated to workers (with tools)
+    max_followups: int = 0                   # Probe variants only: follow-up questions in total (each continues one
+                                             # probe conversation); 0 for the main review comparison
+    max_verifications: int = 2               # Review conditions: verification calls delegated to workers (with tools)
     verify_max_tool_calls: int = 10
     connect_probe_to_execution: bool = False # continue the executor's probe conversation into execution
     rewrite: bool = True                     # False: collect answers only, execute the draft unchanged (with
@@ -95,15 +90,10 @@ class RefinerConfig:
     def __post_init__(self):
         if self.kind not in ("none", "self_review", "probe", "direct_check"):
             raise ValueError(f"unknown refiner kind {self.kind!r}")
-        if self.prompts not in ("r5", "r9"):
-            raise ValueError(f"unknown refiner prompts {self.prompts!r}; known: r5, r9 (r6, r7 and r8 are not kept)")
-        if self.prompts == "r9" and tuple(self.questions) != PROBE_QUESTIONS:
-            raise ValueError("`questions` applies to r5 only (r9's probe has four fixed items)")
-        if self.kind == "direct_check" and self.prompts != "r9":
-            raise ValueError("direct_check needs prompts r9")
-        bad = [q for q in self.questions if q not in PROBE_QUESTIONS]
-        if bad:
-            raise ValueError(f"unknown probe questions {bad}; known: {PROBE_QUESTIONS}")
+        if self.prompts != REFINER_PROMPTS_VERSION:
+            raise ValueError(f"unsupported refiner prompts {self.prompts!r}; "
+                             f"current implementation: {REFINER_PROMPTS_VERSION}. "
+                             "Historical experiments retain their own code snapshots.")
         if isinstance(self.probe_workers, str) and self.probe_workers not in ("pool", "executor"):
             raise ValueError(f"probe_workers must be 'pool', 'executor' or a list, not {self.probe_workers!r}")
 
@@ -170,8 +160,6 @@ def load_pool(path_or_name: str | Path) -> PoolConfig:
 
 def load_refiner(path_or_name: str | Path) -> RefinerConfig:
     d = yaml.safe_load(_resolve(path_or_name, "refiners").read_text())
-    if "questions" in d:
-        d["questions"] = tuple(d["questions"])
     if isinstance(d.get("probe_workers"), list):
         d["probe_workers"] = tuple(d["probe_workers"])
     if "budget" in d:
@@ -181,8 +169,12 @@ def load_refiner(path_or_name: str | Path) -> RefinerConfig:
 
 def refiner_from_dict(d: dict) -> RefinerConfig:
     d = dict(d)
-    d.setdefault("prompts", "r5")  # recorded before refiner prompt sets existed (R21): r5 or earlier
-    d["questions"] = tuple(d.get("questions", PROBE_QUESTIONS))
+    if "prompts" not in d:
+        raise ValueError("recorded refiner config has no prompt version; use its historical code snapshot")
+    # Retained current-version checkpoints stored this unused legacy field. It never changed the fixed probe.
+    questions = d.pop("questions", None)
+    if questions is not None and tuple(questions) != ("understanding", "assumptions", "failure", "plan"):
+        raise ValueError("unsupported historical probe questions; use the experiment's code snapshot")
     if isinstance(d.get("probe_workers"), list):
         d["probe_workers"] = tuple(d["probe_workers"])
     d["budget"] = Limits.from_dict(d.get("budget"))

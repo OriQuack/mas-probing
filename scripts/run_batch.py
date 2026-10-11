@@ -3,9 +3,9 @@
 restores of checkpoints under several conditions (paired comparisons).
 
   python scripts/run_batch.py --tasks data/splits/executor_selection_v1.csv --reps 3 --pool multi \
-      --refiner A_none --session outputs/sessions/base-<stamp> [--parallel 4] [--session-cost-usd 20]
-  python scripts/run_batch.py --checkpoints cks.txt --refiners A_none c1_self_review c2_probe_executor c3_probe_multi --reps 3 \
-      --session outputs/sessions/exp-<stamp>          # cks.txt: one checkpoint dir per line
+      --refiner baseline --experiment outputs/experiments/<date>_baseline [--parallel 4] [--session-cost-usd 20]
+  python scripts/run_batch.py --checkpoints cks.txt --refiners baseline self_review executor_probe multi_worker_probe --reps 3 \
+      --experiment outputs/experiments/<date>_probe-comparison          # cks.txt: one checkpoint dir per line
 
 Session dir: planned.csv (every planned run with its arm: task_id, label, mode, pool, condition, checkpoint,
 override_source; score_runs.py counts a planned run without a run.json as a failure **of that arm**, decision E3),
@@ -22,6 +22,7 @@ import argparse
 import csv
 import datetime as dt
 import json
+import re
 import subprocess
 import sys
 import threading
@@ -32,6 +33,8 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "src"))
 
 from minpilot.config import load_pool, load_refiner  # noqa: E402
+from minpilot import prompts
+from minpilot.artifacts import experiment_manifest
 
 PLAN_COLUMNS = ["task_id", "label", "mode", "pool", "condition", "checkpoint", "override_source"]
 
@@ -72,10 +75,12 @@ def main() -> int:
     ap.add_argument("--reps", type=int, default=1)
     ap.add_argument("--rep-offset", type=int, default=0)
     ap.add_argument("--pool", default="multi", help="fresh runs only (restores keep the checkpoint's)")
-    ap.add_argument("--refiner", default="A_none", help="fresh runs")
+    ap.add_argument("--refiner", default="baseline", help="fresh runs")
     ap.add_argument("--refiners", nargs="+", default=None, help="restores: the conditions to compare")
     ap.add_argument("--label-prefix", default="base")
-    ap.add_argument("--session", default=None)
+    ap.add_argument("--experiment", "--session", dest="session", default=None,
+                    help="experiment directory (--session is the existing CLI spelling)")
+    ap.add_argument("--purpose", default=None, help="plain-language description saved in manifest.json")
     ap.add_argument("--parallel", type=int, default=4)
     ap.add_argument("--session-cost-usd", type=float, default=20.0)
     ap.add_argument("--max-cost-usd", type=float, default=5.0, help="per run (fresh runs)")
@@ -86,8 +91,35 @@ def main() -> int:
         ap.error("--checkpoints needs --refiners")
 
     plan = fresh_plan(a) if a.tasks else restore_plan(a)
-    stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    session = Path(a.session or REPO / "outputs" / "sessions" / f"{a.label_prefix}-{stamp}")
+    conditions = sorted({item["condition"] for item in plan})
+    stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H%M%S%fZ")
+    purpose = a.purpose or f"{'Fresh runs' if a.tasks else 'Paired restores'}: {', '.join(conditions)}"
+    slug = re.sub(r"[^\w-]+", "-", purpose.lower()).strip("-")[:100] or "experiment"
+    session = Path(a.session or REPO / "outputs" / "experiments" / f"{stamp}_{slug}")
+    manifest = experiment_manifest(
+        purpose=purpose,
+        run_roots=["runs"], created_at=stamp, conditions=conditions, planned_run_count=len(plan),
+        execution_prompt_versions=[prompts.PROMPTS_VERSION],
+        refiner_prompt_versions=[prompts.REFINER_PROMPTS_VERSION],
+        arguments=vars(a), refiner_configs={name: load_refiner(name).to_dict()
+                                          for name in (a.refiners or [a.refiner])})
+    manifest_path = session / "manifest.json"
+    if manifest_path.exists():
+        previous = json.loads(manifest_path.read_text())
+        if previous.get("historical_records_immutable"):
+            raise ValueError("retained historical evidence is immutable; use a new experiment directory")
+        if (previous.get("refiner_configs") != manifest["refiner_configs"] or
+                previous.get("execution_prompt_versions") != manifest["execution_prompt_versions"]):
+            raise ValueError("experiment config changed; use a new experiment directory")
+        manifest["created_at"] = previous["created_at"]
+        manifest["planned_run_count"] += previous["planned_run_count"]
+    else:
+        previous = {}
+    batch_dir = session / "batches" / stamp
+    manifest["batches"] = previous.get("batches", []) + [{
+        "created_at": stamp, "arguments": vars(a), "planned_run_count": len(plan),
+        "snapshot": str((batch_dir / "code_snapshot.tar.gz").relative_to(session)),
+    }]
     (session / "logs").mkdir(parents=True, exist_ok=True)
     planned = session / "planned.csv"
     if planned.exists() and planned.read_text().splitlines()[:1] != [",".join(PLAN_COLUMNS)]:
@@ -99,8 +131,11 @@ def main() -> int:
             w.writeheader()
         w.writerows(plan)
     (session / "batch_args.json").write_text(json.dumps(vars(a), indent=1))
+    batch_dir.mkdir(parents=True, exist_ok=False)
+    (batch_dir / "arguments.json").write_text(json.dumps(vars(a), indent=2) + "\n")
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
     # provenance in addition to run.json's git_commit (uncommitted changes): the code as it ran
-    subprocess.run(["tar", "czf", str(session / "code_snapshot.tar.gz"), "--exclude=__pycache__", "src", "configs",
+    subprocess.run(["tar", "czf", str(batch_dir / "code_snapshot.tar.gz"), "--exclude=__pycache__", "src", "configs",
                     "scripts", "pyproject.toml"], cwd=REPO, check=False)
 
     lock = threading.Lock()

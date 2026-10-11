@@ -2,7 +2,7 @@
 """Score run directories against GAIA ground truth (a separate step: ground truth never enters a run dir).
 
   python scripts/score_runs.py [RUN_DIR_OR_ROOT ...] [--out outputs/scores/scores.csv] [--expected planned.csv]
-                               [--exclude runs.txt] [--compare c1_self_review c3_probe_multi [--compare ...]]
+                               [--exclude runs.txt] [--compare self_review multi_worker_probe [--compare ...]]
 
 Primary metric: `correct` on the extracted answer (eval/answer.py, version recorded); `correct_raw` alongside.
 Runs with status other than ok count as wrong. `--expected` is a session's planned.csv (run_batch.py): every
@@ -43,6 +43,7 @@ import pandas as pd
 REPO = Path(__file__).resolve().parents[1]
 
 from minpilot.data.gaia import GAIA_ROOT  # noqa: E402
+from minpilot.artifacts import find_run_records, resolve_artifact_path
 from minpilot.eval.answer import EXTRACTION_VERSION, extract_final_answer  # noqa: E402
 from minpilot.eval.gaia_scorer import question_scorer  # noqa: E402
 
@@ -50,7 +51,7 @@ REP = re.compile(r"_r(\d+)$")
 
 
 def run_key(task_id: str, label, checkpoint) -> tuple:
-    return (task_id, label or "", str(Path(checkpoint).resolve()) if checkpoint else "")
+    return (task_id, label or "", str(resolve_artifact_path(checkpoint)) if checkpoint else "")
 
 
 def load_plan(path: Path) -> list[dict]:
@@ -94,7 +95,7 @@ def checkpoint_usd(ck: str | None) -> float:
     if not ck:
         return 0.0
     try:
-        state = json.loads((Path(ck) / "state.json").read_text())
+        state = json.loads((resolve_artifact_path(ck) / "state.json").read_text())
     except (OSError, ValueError):
         return float("nan")
     return float(((state.get("trace") or {}).get("counters") or {}).get("cost_usd") or 0.0)
@@ -157,38 +158,43 @@ def main() -> None:
                             columns=["task_id", "Final answer"]).set_index("task_id")["Final answer"].to_dict()
     excluded = set()
     if a.exclude:
-        excluded = {str(Path(x.strip()).resolve()) for x in Path(a.exclude).read_text().splitlines() if x.strip()}
+        excluded = {str(resolve_artifact_path(x.strip())) for x in Path(a.exclude).read_text().splitlines() if x.strip()}
+    records = sorted({rj.resolve() for p in map(Path, a.paths) for rj in find_run_records(p)})
+    experiments = set()
+    for rj in records:
+        experiment = next((parent for parent in rj.parents if (parent / "manifest.json").is_file()), None)
+        if experiment:
+            experiments.add(experiment)
+    if len(experiments) > 1:
+        ap.error("score one experiment at a time; separate experiments may have different prompts and protocols")
     rows, excluded_keys = [], set()
-    for p in map(Path, a.paths):
-        for rj in ([p / "run.json"] if (p / "run.json").exists() else sorted(p.rglob("run.json"))):
-            if "checkpoints" in rj.parts or "scratch" in rj.parts:
-                continue
-            info = json.loads(rj.read_text())
-            if str(rj.parent.resolve()) in excluded:
-                excluded_keys.add(run_key(info["task_id"], info.get("label"), info.get("restored_from")))
-                continue
-            raw = info.get("final_answer")
-            ans = extract_final_answer(raw)
-            ok = info.get("status") == "ok"
-            gt = truth[info["task_id"]]
-            c = info.get("counters") or {}
-            ref_usd = refine_usd(info.get("usage"))
-            label = info.get("label") or ""
-            rep = REP.search(label)
-            ck = info.get("restored_from")
-            rows.append({
-                "run_dir": str(rj.parent), "task_id": info["task_id"], "level": info.get("level"),
-                "mode": info.get("mode"), "pool": ((info.get("config") or {}).get("pool") or {}).get("name"),
-                "condition": info.get("condition"), "label": label, "rep": int(rep.group(1)) if rep else None,
-                "checkpoint": ck, "pair_id": ck or str(rj.parent),
-                "override_source": info.get("override_source") if info.get("override") else None,
-                "status": info.get("status"), "final_answer_raw": raw, "answer": ans,
-                "extraction": EXTRACTION_VERSION, "correct": bool(ok and question_scorer(ans, gt)),
-                "correct_raw": bool(ok and question_scorer(raw, gt)),
-                "llm_usd": c.get("llm_usd", c.get("cost_usd")), "tool_usd": c.get("tool_usd"),
-                "cost_usd": c.get("cost_usd"), "tool_usd_cold": c.get("tool_usd_cold"),
-                "unknown_cost_calls": c.get("unknown_cost_calls"), "n_delegations": info.get("n_delegations"),
-                "after_ck_usd": (c.get("cost_usd") or 0.0) - checkpoint_usd(ck), "refine_usd": ref_usd})
+    for rj in records:
+        info = json.loads(rj.read_text())
+        if str(rj.parent.resolve()) in excluded:
+            excluded_keys.add(run_key(info["task_id"], info.get("label"), info.get("restored_from")))
+            continue
+        raw = info.get("final_answer")
+        ans = extract_final_answer(raw)
+        ok = info.get("status") == "ok"
+        gt = truth[info["task_id"]]
+        c = info.get("counters") or {}
+        ref_usd = refine_usd(info.get("usage"))
+        label = info.get("label") or ""
+        rep = REP.search(label)
+        ck = info.get("restored_from")
+        rows.append({
+            "run_dir": str(rj.parent), "task_id": info["task_id"], "level": info.get("level"),
+            "mode": info.get("mode"), "pool": ((info.get("config") or {}).get("pool") or {}).get("name"),
+            "condition": info.get("condition"), "label": label, "rep": int(rep.group(1)) if rep else None,
+            "checkpoint": ck, "pair_id": ck or str(rj.parent),
+            "override_source": info.get("override_source") if info.get("override") else None,
+            "status": info.get("status"), "final_answer_raw": raw, "answer": ans,
+            "extraction": EXTRACTION_VERSION, "correct": bool(ok and question_scorer(ans, gt)),
+            "correct_raw": bool(ok and question_scorer(raw, gt)),
+            "llm_usd": c.get("llm_usd", c.get("cost_usd")), "tool_usd": c.get("tool_usd"),
+            "cost_usd": c.get("cost_usd"), "tool_usd_cold": c.get("tool_usd_cold"),
+            "unknown_cost_calls": c.get("unknown_cost_calls"), "n_delegations": info.get("n_delegations"),
+            "after_ck_usd": (c.get("cost_usd") or 0.0) - checkpoint_usd(ck), "refine_usd": ref_usd})
     if a.expected:
         miss = missing_rows(rows, load_plan(Path(a.expected)), excluded_keys)
         rows += miss

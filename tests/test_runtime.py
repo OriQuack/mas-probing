@@ -111,10 +111,10 @@ def test_refiners_load(name):
     load_refiner(name)
 
 
-def test_B_and_C_share_budget_caps():
-    b, c = load_refiner("B_self_review"), load_refiner("C_probe")
+def test_predicted_and_real_share_budget_caps():
+    b, c = load_refiner("variants/pool_self_review"), load_refiner("variants/pool_probe")
     assert b.budget == c.budget and b.max_verifications == c.max_verifications
-    assert b.samples_per_worker == c.samples_per_worker and b.questions == c.questions
+    assert b.samples_per_worker == c.samples_per_worker and b.prompts == c.prompts
 
 
 # -- tools -------------------------------------------------------------------------------------
@@ -350,17 +350,17 @@ def test_scoring_groups_reps_by_condition_and_pairs_checkpoints():
     sr = _score_module()
     base = {"mode": "restore", "pool": "role_routing", "override_source": None}
     rows = [
-        {**base, "task_id": "t1", "condition": "C_probe", "label": "C_r0", "checkpoint": "ck1", "correct": True},
-        {**base, "task_id": "t1", "condition": "C_probe", "label": "C_r1", "checkpoint": "ck1", "correct": False},
-        {**base, "task_id": "t1", "condition": "A_none", "label": "A_r0", "checkpoint": "ck1", "correct": False},
-        {**base, "task_id": "t2", "condition": "C_probe", "label": "C_r0", "checkpoint": "ck2", "correct": True},
-        {**base, "task_id": "t2", "condition": "A_none", "label": "A_r0", "checkpoint": "ck2", "correct": True},
-        {**base, "task_id": "t2", "condition": "A_none", "label": "post", "checkpoint": "ck2", "correct": True,
+        {**base, "task_id": "t1", "condition": "variants/pool_probe", "label": "C_r0", "checkpoint": "ck1", "correct": True},
+        {**base, "task_id": "t1", "condition": "variants/pool_probe", "label": "C_r1", "checkpoint": "ck1", "correct": False},
+        {**base, "task_id": "t1", "condition": "baseline", "label": "A_r0", "checkpoint": "ck1", "correct": False},
+        {**base, "task_id": "t2", "condition": "variants/pool_probe", "label": "C_r0", "checkpoint": "ck2", "correct": True},
+        {**base, "task_id": "t2", "condition": "baseline", "label": "A_r0", "checkpoint": "ck2", "correct": True},
+        {**base, "task_id": "t2", "condition": "baseline", "label": "post", "checkpoint": "ck2", "correct": True,
          "override_source": "post_hoc"},
     ]
-    c_rows = [r for r in rows if sr.arm_of(r) == "restore|role_routing|C_probe|override=none"]
+    c_rows = [r for r in rows if sr.arm_of(r) == "restore|role_routing|variants/pool_probe|override=none"]
     assert sr.per_task(c_rows) == {"t1": 0.5, "t2": 1.0}          # C_r0 and C_r1 are one condition
-    res = sr.compare(pd.DataFrame(rows), "A_none", "C_probe")["role_routing"]
+    res = sr.compare(pd.DataFrame(rows), "baseline", "variants/pool_probe")["role_routing"]
     assert res["tasks"] == 2 and res["x"] == 0.5 and res["y"] == 0.75 and res["diff"] == 0.25
     assert res["ci95"][0] <= 0.25 <= res["ci95"][1]
 
@@ -436,30 +436,30 @@ def test_missing_planned_runs_count_in_their_arm(tmp_path):
     sr = _score_module()
     ck1, ck2 = str(tmp_path / "ck1"), str(tmp_path / "ck2")
     rest = {"mode": "restore", "pool": "redundant", "override_source": None}
-    rows = [{**rest, "task_id": "t1", "condition": "A_none", "label": "A_none_r0", "checkpoint": ck1, "correct": True},
-            {**rest, "task_id": "t1", "condition": "C_probe", "label": "C_probe_r0", "checkpoint": ck1,
+    rows = [{**rest, "task_id": "t1", "condition": "baseline", "label": "baseline_r0", "checkpoint": ck1, "correct": True},
+            {**rest, "task_id": "t1", "condition": "variants/pool_probe", "label": "variants/pool_probe_r0", "checkpoint": ck1,
              "correct": True},
-            {**rest, "task_id": "t2", "condition": "A_none", "label": "A_none_r0", "checkpoint": ck2, "correct": True},
+            {**rest, "task_id": "t2", "condition": "baseline", "label": "baseline_r0", "checkpoint": ck2, "correct": True},
             {"mode": "fresh", "pool": "role_routing", "override_source": None, "task_id": "t1",
-             "condition": "A_none", "label": "base_r0", "checkpoint": None, "correct": True}]
-    plan = [{"task_id": "t1", "label": "base_r0", "mode": "fresh", "pool": "role_routing", "condition": "A_none",
+             "condition": "baseline", "label": "base_r0", "checkpoint": None, "correct": True}]
+    plan = [{"task_id": "t1", "label": "base_r0", "mode": "fresh", "pool": "role_routing", "condition": "baseline",
              "checkpoint": "", "override_source": ""},
-            {"task_id": "t1", "label": "base_r1", "mode": "fresh", "pool": "role_routing", "condition": "A_none",
+            {"task_id": "t1", "label": "base_r1", "mode": "fresh", "pool": "role_routing", "condition": "baseline",
              "checkpoint": "", "override_source": ""}]
     for t, ck in (("t1", ck1), ("t2", ck2)):
-        for c in ("A_none", "C_probe"):
+        for c in ("baseline", "variants/pool_probe"):
             plan.append({"task_id": t, "label": f"{c}_r0", "mode": "restore", "pool": "redundant", "condition": c,
                          "checkpoint": ck, "override_source": ""})
     miss = sr.missing_rows(rows, plan, excluded=set())
-    assert {(m["label"], m["task_id"]) for m in miss} == {("base_r1", "t1"), ("C_probe_r0", "t2")}
+    assert {(m["label"], m["task_id"]) for m in miss} == {("base_r1", "t1"), ("variants/pool_probe_r0", "t2")}
     allrows = rows + miss
-    fresh = [r for r in allrows if sr.arm_of(r) == "fresh|role_routing|A_none|override=none"]
+    fresh = [r for r in allrows if sr.arm_of(r) == "fresh|role_routing|baseline|override=none"]
     assert sr.per_task(fresh) == {"t1": 0.5}           # one correct + one missing = 50%, not 100%
-    res = sr.compare(pd.DataFrame(allrows), "A_none", "C_probe")["redundant"]
+    res = sr.compare(pd.DataFrame(allrows), "baseline", "variants/pool_probe")["redundant"]
     assert res["checkpoints"] == 2 and res["x"] == 1.0 and res["y"] == 0.5  # the missing C run is a failure
     # a deliberately excluded run is not re-added as missing
     excl = {sr.run_key("t1", "base_r1", None)}
-    assert [m["label"] for m in sr.missing_rows(rows, plan, excl)] == ["C_probe_r0"]
+    assert [m["label"] for m in sr.missing_rows(rows, plan, excl)] == ["variants/pool_probe_r0"]
 
 
 def test_restore_batches_plan_arms_and_rotate_conditions(tmp_path):
@@ -477,12 +477,12 @@ def test_restore_batches_plan_arms_and_rotate_conditions(tmp_path):
     (tmp_path / "cks.txt").write_text("\n".join(cks))
 
     class A:
-        checkpoints, refiners, reps, rep_offset, only = str(tmp_path / "cks.txt"), ["A_none", "C_probe"], 2, 0, None
+        checkpoints, refiners, reps, rep_offset, only = str(tmp_path / "cks.txt"), ["baseline", "variants/pool_probe"], 2, 0, None
     plan = rb.restore_plan(A)
     assert len(plan) == 8 and all(p["mode"] == "restore" and p["pool"] == "redundant" for p in plan)
     firsts = [plan[i]["condition"] for i in range(0, 8, 2)]
-    assert firsts == ["A_none", "C_probe", "C_probe", "A_none"]  # order rotates per (rep, checkpoint)
-    assert {p["label"] for p in plan} == {"A_none_r0", "C_probe_r0", "A_none_r1", "C_probe_r1"}
+    assert firsts == ["baseline", "pool_probe", "pool_probe", "baseline"]  # order rotates per (rep, checkpoint)
+    assert {p["label"] for p in plan} == {"baseline_r0", "pool_probe_r0", "baseline_r1", "pool_probe_r1"}
 
 
 # -- tools v4: K8 on-or-before snapshots, K9 failure causes, K11, K14 ---------------------------------

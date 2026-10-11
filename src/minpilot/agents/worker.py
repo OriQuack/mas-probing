@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from minpilot.agents import prompts
+from minpilot import prompts
 from minpilot.config import WorkerSpec
 from minpilot.llm.client import LLMClient
 from minpilot.tools.toolbox import Toolbox, tool_schemas
