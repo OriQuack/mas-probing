@@ -5,7 +5,7 @@
       --template linear --difficulty easy --limit 3 [--workers luna-high haiku-high gemini] [--n 5] [--reps 3] \
       [--parallel 12] [--session-cost-usd 8] [--run-cost-usd 2] [--env-file .env] [--dry-run]
 
-Questions are taken in data-file order (`--limit`) or by id prefix (`--only`). Per question: the consistency probes
+Questions are taken in data-file order (`--offset`, `--limit`) or by exact id (`--only`). Per question: the consistency probes
 and the routed pipeline (one job), and `--reps` fixed pipelines per worker. New jobs are not started once the
 recorded spend reaches --session-cost-usd. `--dry-run` parses the chains and prints prompts without any model call.
 Gold answers are not read here; score with scripts/analyze_perturbation_consistency.py.
@@ -37,7 +37,8 @@ DEFAULT_WORKERS = ("luna-high", "haiku-high", "gemini")
 def select_questions(args) -> list:
     qs = longcot.load_questions("math", args.difficulty, template=args.template)
     if args.only:
-        qs = [q for q in qs if any(q.question_id.startswith(p) for p in args.only)]
+        qs = [q for q in qs if q.question_id in args.only]
+    qs = qs[args.offset:]
     return qs[:args.limit] if args.limit else qs
 
 
@@ -59,8 +60,9 @@ def main() -> None:
     ap.add_argument("--purpose", default="Perturbation consistency worker routing on LongCoT math chains")
     ap.add_argument("--difficulty", default="easy", choices=longcot.DIFFICULTIES)
     ap.add_argument("--template", default="linear")
+    ap.add_argument("--offset", type=int, default=0, help="skip the first K selected questions (data-file order)")
     ap.add_argument("--limit", type=int, default=None)
-    ap.add_argument("--only", nargs="*", default=None)
+    ap.add_argument("--only", nargs="*", default=None, help="exact question ids")
     ap.add_argument("--workers", nargs="+", default=list(DEFAULT_WORKERS))
     ap.add_argument("--n", type=int, default=5)
     ap.add_argument("--reps", type=int, default=3)
