@@ -1,13 +1,7 @@
-"""A worker: a registered (model, system prompt, tools) setting that answers one request with a tool loop.
+"""Stateless execution/probe workers with a bounded tool loop and preserved partial evidence.
 
-Workers keep no state between calls: each call starts from the system prompt, unless the caller passes an earlier
-conversation (`history`) to continue (probe follow-ups; the "connected" condition, where execution continues the
-executor's probe conversation). Files are a separate matter: they live in the workspace the caller's toolbox is
-bound to. The active system prompt follows the request kind, including when continuing a conversation.
-
-Tool loop: the model may call tools until it answers without a tool call (the report) or reaches
-`max_tool_calls`; then it is told to report now and called once more with `tool_choice="none"`. Images returned
-by tools are shown in one user message after the tool results of that turn.
+Probe and execution use separate prompts, conversations and workspaces. A forced final turn reports at the
+worker tool limit. The shared trace counts all model/tool calls and retains raw outputs.
 """
 
 from __future__ import annotations
@@ -57,6 +51,7 @@ class Worker:
             msgs[0] = self.system_message(kind)
         msgs.append({"role": "user", "content": user_message or prompts.worker_request(
             original_task, instruction, context=context, kind=kind, tool_limit=limit if tools is not None else None)})
+        self.last_messages = msgs  # preserve partial evidence if a later model call fails
         n, used, status = 0, [], "ok"
         for _ in range(limit + 2):
             forced = tools is not None and n >= limit
@@ -69,9 +64,9 @@ class Worker:
             if not res.tool_calls or forced or tools is None:
                 message.pop("tool_calls", None)  # a forced/no-tool turn is the report; drop stray calls
                 msgs.append(message)
-                report = (message.get("content") or "").strip()
-                return WorkerCall(report or "(the worker returned an empty report)", msgs,
-                                  status if report else "empty", n, used)
+                report = message.get("content") or ""
+                return WorkerCall(report, msgs,
+                                  status if report.strip() else "empty", n, used)
             msgs.append(message)
             images: list[str] = []
             for tc in res.tool_calls:

@@ -1,184 +1,86 @@
-"""Review conversation isolation, fixed probe format, context additions and verification."""
-
-from __future__ import annotations
-
 import json
-
 import pytest
-
-from fakes import ScriptedLLM, delegate, finish
-from minpilot import prompts
-from minpilot.config import RefinerConfig, refiner_from_dict
-from test_harness import make_run
-
-CTX = "An earlier report (not verified) said the sheet has 100 orders, counted as rows."
-DRAFT = "Count the orders in attachments/sheet.csv for 2025."
-NEW = "Count unique order ids in attachments/sheet.csv for 2025."
-FACT = "Order ids repeat across rows (check by the worker on attachments/sheet.csv)."
-ISSUE = {"id": "i1", "target": "Count the orders", "impact": "rows are not orders", "evidence": "r1 counts rows",
-         "decision": "needs_verification", "resolution": "check whether ids repeat"}
-CHECK = {"issue_id": "i1", "worker_id": "worker", "instruction": "check whether ids repeat"}
+from fakes import Raw
+from test_harness import action, evaluation, direct_script, make_run, row
+from test_refiners import probe_script
 
 
-def script(rewrite=None, **extra):
-    s = {"orchestrator": [delegate("worker", DRAFT, CTX), finish("2")],
-         "analyze": [{"issues": [ISSUE], "followups": [], "verifications": [CHECK]}],
-         "rewrite": [rewrite or {"instruction": NEW, "context_additions": FACT, "changes": ["unique ids"],
-                                 "unchanged": False}]}
-    s.update(extra)
-    return s
+def test_evaluator_failure_preserves_prior_state_and_original_reports(tmp_path, task):
+    script = direct_script(orchestrator=[action(), action(), action("finish")],
+                           worker=["Title: First\n2", "UNTITLED ORIGINAL SECOND REPORT"],
+                           evaluator_execution=[evaluation([row()]), Raw("{"), evaluation([row(ref="missing")])])
+    run, llm = make_run(tmp_path, task, script)
+    info = run.run_fresh()
+    assert info["status"] == "ok", info
+    assert info["state"] == [row()]
+    assert run.memory.artifacts[2]["body"] == "UNTITLED ORIGINAL SECOND REPORT"
+    assert run.memory.artifacts[-1]["status"] == "failed"
+    assert run.memory.artifacts[-2]["body"] == "{"
+    assert json.loads(run.memory.artifacts[-1]["body"])["state"][0]["refs"] == ["missing"]
+    payload = json.loads(llm.by_kind["orchestrator"][-1]["messages"][1]["content"])
+    assert payload["evaluation"]["error"] and payload["evaluation"]["new_report_ids"] == ["a00002"]
 
 
-def text(body) -> str:
-    """A worker request (messages[1]) or a review turn (the last message of the orchestrator conversation, r7)."""
-    return body["messages"][-1]["content"] if body["messages"][0]["content"].startswith("You are the orchestrator") \
-        else body["messages"][1]["content"]
-
-
-def refine_log(run) -> dict:
-    return json.loads((run.run_dir / "refine" / "d0.json").read_text())
-
-
-def test_probe_has_four_labels_and_the_tool_policy():
-    p = prompts.probe_instruction("do x", False, 0)
-    assert p.startswith("Before executing the subtask, explain how you would approach it.\n"
-                        "Do not use tools or execute the subtask.\n\nSubtask instruction:\n<<<\ndo x\n>>>")
-    for label in ("understanding:", "assumptions:", "risks:", "plan:"):
-        assert f"\n{label}\n" in p
-    assert "Do not invent items to fill the form." in p
-    t = prompts.probe_instruction("do x", True, 3)
-    assert "up to 3 tool calls" in t and "include what you found and its source" in t
-    assert "Do not use tools" not in t
-
-
-def test_parse_probe():
-    got = prompts.parse_probe("**understanding:** the count of unique ids\nassumptions:\n- ids, not rows\nrisks:\n"
-                              "(none)\nplan:\n1. read the file\n2. count")
-    assert got == {"understanding": "the count of unique ids", "assumptions": ["ids, not rows"], "risks": [],
-                   "plan": ["read the file", "count"]}
-    assert prompts.parse_probe("no labels here") is None
-
-
-def test_analysis_and_rewrite_texts(tmp_path, task):
-    llm = ScriptedLLM(script(worker=["understanding: x\nassumptions:\nrisks:\nplan:\n- a", "ids repeat", "2"]))
-    run = make_run(tmp_path, task, llm, pool="multi", refiner="executor_probe")
+def test_criterion_change_requires_explicit_adoption(tmp_path, task):
+    proposed = row("a00000", type="assumption", status="unverified", content="Exclude canceled orders: scope change.")
+    script = probe_script(evaluator_probe=[evaluation([proposed], requires_decision=True)],
+                          orchestrator_select=[action("select", accept_state=False, state_reason="Original question does not exclude canceled orders.")])
+    run, llm = make_run(tmp_path, task, script, "multi_worker_probe")
     assert run.run_fresh()["status"] == "ok"
-    a = text(llm.by_kind["analyze"][0])
-    assert a.index("1. The original task") < a.index("2. The instruction") < a.index("3. The answers")
-    assert "Neither a claim nor agreement between answers establishes an external fact" in a
-    assert "Omit generic or speculative concerns" in a and "Compare the answer sets" not in a  # one answer set
-    r = text(llm.by_kind["rewrite"][0])
-    assert "Preserve the result requested by the original task and the assigned subtask's scope." in r
-    assert "Allow a supported inference" in r
-    assert "Another conceivable interpretation is not sufficient." not in r  # r8 rule removed (R24)
-    assert "rather than forcing an unsupported choice" in r and "not instructions to copy" in r
-    assert "Keep observations separate from interpretations" in r
-    assert "A subtask may cover only part of the original task" in a
-    assert "missing evidence as confirmation" in a
-    assert "predicted answers indicate how you expect it" in a
-    log = refine_log(run)
-    assert log["prompts"] == "r12" and log["responses"][0]["parsed"]["plan"] == ["a"]
-    assert json.loads((run.run_dir / "run.json").read_text())["refiner_prompts_version"] == "r12"
-    assert "[r1] (respondent 1)\n" in a and "gen_luna" not in a and log["probe_order"] == ["gen_luna"]
+    assert not run.memory.state
+    execution_eval = json.loads(llm.by_kind["evaluator_execution"][0]["messages"][1]["content"])
+    assert not execution_eval["state"]
 
 
-def test_context_additions_follow_the_unchanged_context(tmp_path, task):
-    llm = ScriptedLLM(script(worker=["probe", "ids repeat", "2"]))
-    run = make_run(tmp_path, task, llm, pool="multi", refiner="executor_probe")
-    run.run_fresh()
-    sent = text(llm.by_kind["worker"][-1])
-    assert sent.index(CTX) < sent.index(prompts.CONTEXT_ADDITIONS_HEAD) < sent.index(FACT) < sent.index(NEW)
-    d = json.loads((run.run_dir / "run.json").read_text())["delegations"][0]
-    assert d["context"] == CTX and d["context_additions"] == FACT and d["final"] == NEW
-    report_msg = llm.by_kind["orchestrator"][1]["messages"][-1]["content"]
-    assert "appended to your context" in report_msg and FACT in report_msg and NEW in report_msg
-    assert refine_log(run)["context_additions"] == FACT
+@pytest.mark.parametrize("failures", [1, 2])
+def test_partial_and_total_probe_failure_are_evaluated(tmp_path, task, failures):
+    script = probe_script(worker=[RuntimeError("blocked") if i < failures else "Title: Probe\nplan: read" for i in range(2)]
+                                 + ["Title: Execution\nResult: 2"],
+                          orchestrator_select=[action("select")])
+    run, llm = make_run(tmp_path, task, script, "multi_worker_probe")
+    info = run.run_fresh()
+    assert info["status"] == "ok", info
+    payload = json.loads(llm.by_kind["evaluator_probe"][0]["messages"][1]["content"])
+    assert sum(r["status"] == "failed" for r in payload["reports"]) == failures
+    assert len(llm.by_kind["worker"][-1]["messages"]) == 2
 
 
-def test_additions_alone_are_sent_with_the_draft(tmp_path, task):
-    llm = ScriptedLLM(script(rewrite={"instruction": DRAFT, "context_additions": FACT, "changes": [],
-                                      "unchanged": False}, worker=["probe", "ids repeat", "2"]))
-    run = make_run(tmp_path, task, llm, pool="multi", refiner="executor_probe")
-    run.run_fresh()
-    d = run.delegations[0]
-    assert d["final"] == DRAFT and not d["changed"] and d["refine_status"] == "rewritten"
-    assert FACT in text(llm.by_kind["worker"][-1])
+def test_empty_execution_report_is_preserved(tmp_path, task):
+    run, llm = make_run(tmp_path, task, direct_script(worker=[""]))
+    assert run.run_fresh()["status"] == "ok"
+    artifact = run.memory.artifacts[0]
+    assert artifact["body"] == "" and artifact["status"] == "empty" and artifact["missing_title"]
+    ev = json.loads(llm.by_kind["evaluator_execution"][0]["messages"][1]["content"])
+    assert ev["reports"][0]["body"] == "" and ev["reports"][0]["status"] == "empty"
 
 
+def test_state_supports_conditional_results_unverified_assumptions_and_blocked_progress(tmp_path, task):
+    state = [row(type="observation", content="The sheet was read for 2025."),
+             row(type="assumption", status="unverified", content="Treat recipient as the second column."),
+             row(content="If the second column identifies recipient, candidate is Fred."),
+             row(type="progress", status="incomplete", content="Check column meaning against story."),
+             row(type="progress", status="blocked", content="Query X: source Y inaccessible; abstract read, body blocked; next clue Z.")]
+    run, _ = make_run(tmp_path, task, direct_script(evaluator_execution=[evaluation(state)]))
+    assert run.run_fresh()["state"] == state
 
 
-def test_probe_tools_record_observations(tmp_path, task):
-    url = "https://example.org/orders-2025"
-    llm = ScriptedLLM(script(
-        rewrite={"instruction": f"{NEW} Use {url}; it lists 37 orders.", "context_additions": "",
-                 "changes": [], "unchanged": False},
-        analyze=[{"issues": [{**ISSUE, "decision": "defer_to_execution"}], "followups": [], "verifications": []}],
-        worker=[{"tool_calls": [("web_search", {"query": "orders 2025"})]}, "understanding: x\nrisks:\n- y", "2"]))
-    run = make_run(tmp_path, task, llm, pool="multi", refiner="executor_probe_tools")
-    run.run_fresh()
-    log = refine_log(run)
-    obs = log["probe_observations"]
-    assert len(obs) == 1 and obs[0]["tool"] == "web_search" and obs[0]["response_id"] == "r1"
-    assert "orders 2025" in obs[0]["args"]
-    assert "up to 3 tool calls" in text(llm.by_kind["worker"][0])
-    assert "cite the reported tool observation and its source" in text(llm.by_kind["analyze"][0])
-    assert isinstance(log["observations_in_rewrite"], list)
+def test_failed_probe_keeps_partial_tool_evidence(tmp_path, task):
+    script = probe_script(worker=[{"tool_calls": [("read_file", {"path": "attachments/sheet.csv"})]},
+                                  RuntimeError("model failed after tool"), "Title: Other probe\nplan: read", "Title: Execution\n2"],
+                          orchestrator_select=[action("select")])
+    run, _ = make_run(tmp_path, task, script, "multi_worker_probe")
+    info = run.run_fresh()
+    assert info["status"] == "ok", info
+    failed = run.memory.artifacts[0]
+    assert failed["status"] == "failed"
+    assert "order_id,date,amount" in run.memory.read(f"{failed['id']}/tool/0")["content"]
 
 
-def test_observation_overlap():
-    from minpilot.refine.review import observation_overlap
-
-    got = observation_overlap('Use https://a.org/x and "Table 3"; 2025 had 37 orders.',
-                              ["task about 2025"], ['page https://a.org/x says "Table 3" lists 37 orders'])
-    assert got == ["37", "https://a.org/x", "table 3"]
-
-
-def test_config_rules():
-    with pytest.raises(TypeError):
-        RefinerConfig(name="x", kind="probe", questions=("plan",))
-    with pytest.raises(ValueError, match="unknown refiner kind"):
-        RefinerConfig(name="x", kind="direct_check")
-    with pytest.raises(ValueError, match="no prompt version"):
-        refiner_from_dict({"name": "old", "kind": "probe"})
-    assert refiner_from_dict({"name": "current", "kind": "probe", "prompts": "r12",
-                              "questions": ["understanding", "assumptions", "failure", "plan"]}).prompts == "r12"
-    with pytest.raises(ValueError):
-        RefinerConfig(name="x", kind="probe", prompts="r7")  # not kept (R23)
-    with pytest.raises(ValueError):
-        RefinerConfig(name="x", kind="probe", prompts="r8")  # not kept (R24)
-
-
-def test_review_continues_a_discarded_copy_of_the_orchestrator_conversation(tmp_path, task):
-    llm = ScriptedLLM(script(worker=["probe", "ids repeat", "2"]))
-    run = make_run(tmp_path, task, llm, pool="multi", refiner="executor_probe")
-    run.run_fresh()
-    first = llm.by_kind["orchestrator"][0]["messages"]           # system + task
-    action = llm.by_kind["analyze"][0]["messages"][len(first)]    # the pending delegate action
-    analyze = llm.by_kind["analyze"][0]["messages"]
-    assert analyze[:len(first)] == first and action["role"] == "assistant" and DRAFT in action["content"]
-    assert analyze[-1]["content"].startswith(prompts.REVIEW_HEAD) and len(analyze) == len(first) + 2
-    rewrite = llm.by_kind["rewrite"][0]["messages"]
-    assert rewrite[:len(analyze)] == analyze and rewrite[len(analyze)]["role"] == "assistant"  # the analysis reply
-    assert "## Check results" in rewrite[-1]["content"]
-    # the copy is discarded: the orchestrator's next turn has no review turn, only the report
-    nxt = llm.by_kind["orchestrator"][1]["messages"]
-    assert not any(prompts.REVIEW_HEAD in (m.get("content") or "") for m in nxt)
-    assert len(nxt) == len(first) + 2
-
-
-def test_prediction_starts_from_the_conversation(tmp_path, task):
-    llm = ScriptedLLM(script(simulate=["predicted"], worker=["ids repeat", "2"]))
-    run = make_run(tmp_path, task, llm, pool="multi", refiner="self_review")
-    run.run_fresh()
-    sim = llm.by_kind["simulate"][0]["messages"]
-    assert sim[0]["content"].startswith("You are the orchestrator") and DRAFT in sim[-2]["content"]
-    assert "The worker sees only its system prompt and the message below, not this conversation" in sim[-1]["content"]
-
-
-def test_decisions():
-    from minpilot.refine.review import check_analysis
-
-    ok = {"issues": [{**ISSUE, "decision": "clarify"}], "followups": [], "verifications": []}
-    old = {"issues": [{**ISSUE, "decision": "resolved_from_task"}], "followups": [], "verifications": []}
-    assert check_analysis(ok, set(), {"worker"}, prompts.DECISIONS) is None
-    assert "unknown decisions" in check_analysis(old, set(), {"worker"}, prompts.DECISIONS)
+def test_artifacts_preserve_exact_response_text(tmp_path, task):
+    report = "  Title: Padded\nResult: 2\n  "
+    raw_eval = "\n" + json.dumps(evaluation()) + "  "
+    run, _ = make_run(tmp_path, task, direct_script(worker=[report], evaluator_execution=[Raw(raw_eval)]))
+    assert run.run_fresh()["status"] == "ok"
+    assert run.memory.artifacts[0]["body"] == report
+    assert run.memory.artifacts[1]["body"] == raw_eval
+    assert run.memory.artifacts[1]["title"] == "Order evidence"

@@ -1,17 +1,4 @@
-#!/usr/bin/env python
-"""Run one GAIA task fresh, or continue a checkpoint under a condition.
-
-  python scripts/run_task.py fresh --task-id <id> [--pool multi] [--refiner baseline] [--refine-at first]
-  python scripts/run_task.py restore --checkpoint <run>/checkpoints/d0 --refiner multi_worker_probe [--label multi_worker_probe_r0]
-  python scripts/run_task.py restore --checkpoint ... --query-file q.txt --source post_hoc   # Exp 1 override
-
-The Crawl4AI page-reader service is required only when the reader chain contains it (the default, fixed for the
-GAIA comparisons); `--reader-chain direct,playwright` runs without it.
-
-Exit codes: 0 run finished (any status recorded in run.json; also after the hard deadline), 3 eval task without --allow-eval,
-4 page-reader service not running, 5 error_infra.
-"""
-
+"""Run a current condition fresh or restore a v13/r15/e3 checkpoint."""
 from __future__ import annotations
 
 import argparse
@@ -26,9 +13,9 @@ from dotenv import load_dotenv
 REPO = Path(__file__).resolve().parents[1]
 load_dotenv(REPO / ".env")
 
-from minpilot.config import RunConfig, load_pool, load_refiner  # noqa: E402
+from minpilot.config import RunConfig, load_pool, load_condition  # noqa: E402
 from minpilot.data.gaia import load_task  # noqa: E402
-from minpilot.harness import Run, new_run_dir  # noqa: E402
+from minpilot.harness import Run, new_run_dir, STATE_FORMAT  # noqa: E402
 from minpilot.runtime.trace import Limits  # noqa: E402
 from minpilot.tools.backends import crawl4ai_status  # noqa: E402
 from minpilot.tools.config import ToolConfig  # noqa: E402
@@ -70,29 +57,30 @@ def main() -> int:
     f = sub.add_parser("fresh")
     f.add_argument("--task-id", required=True)
     f.add_argument("--pool", default="multi")
-    f.add_argument("--refiner", default="baseline")
-    f.add_argument("--refine-at", default="first", choices=["first", "all", "none"])
-    f.add_argument("--orchestrator-model", default="luna-high")
-    f.add_argument("--refiner-model", default="luna-high")
+    f.add_argument("--condition", default="direct_execution", choices=["direct_execution", "multi_worker_probe"])
+    f.add_argument("--orchestrator-model", default="luna-high", choices=["luna-high"])
+    f.add_argument("--refiner-model", default="luna-high", choices=["luna-high"])
     f.add_argument("--max-delegations", type=int, default=12)
     f.add_argument("--max-cost-usd", type=float, default=5.0)
     f.add_argument("--max-wall-s", type=float, default=3 * 3600)
     f.add_argument("--max-llm-calls", type=int, default=400)
+    f.add_argument("--max-tool-calls", type=int, default=400)
     f.add_argument("--no-checkpoint", action="store_true")
     f.add_argument("--reader-chain", default="crawl4ai,direct,playwright",
                    help="page readers in fallback order; without crawl4ai the service is not required (recorded "
                         "in the run's tool settings; restores use the checkpoint's chain)")
     r = sub.add_parser("restore")
     r.add_argument("--checkpoint", required=True)
-    r.add_argument("--refiner", default=None, help="condition; default: the checkpoint's")
-    r.add_argument("--refine-at", default=None, choices=["first", "all", "none"])
-    r.add_argument("--query-file", default=None, help="instruction override for the restored delegation")
-    r.add_argument("--source", default=None, help="override provenance, e.g. post_hoc")
+    r.add_argument("--condition", default=None, choices=["direct_execution", "multi_worker_probe"])
     for p in (f, r):
         p.add_argument("--label", default=None)
         p.add_argument("--runs-root", default=str(REPO / "outputs" / "runs"))
         p.add_argument("--allow-eval", action="store_true", help="Exp 2 only")
     a = ap.parse_args()
+    if a.mode == "restore":
+        state = json.loads((Path(a.checkpoint) / "state.json").read_text())
+        if state.get("format") != STATE_FORMAT:
+            ap.error("historical checkpoint requires its code snapshot; no conversion supported")
 
     if a.mode == "fresh":
         chain = tuple(x.strip() for x in a.reader_chain.split(",") if x.strip())
@@ -114,26 +102,22 @@ def main() -> int:
         return 3
 
     if a.mode == "fresh":
-        refiner = load_refiner(a.refiner)
-        cfg = RunConfig(pool=load_pool(a.pool), refiner=refiner, orchestrator_model=a.orchestrator_model,
-                        refiner_model=a.refiner_model, refine_at=a.refine_at, max_delegations=a.max_delegations,
-                        budget=Limits(max_llm_calls=a.max_llm_calls, max_tool_calls=a.max_llm_calls,
+        condition = load_condition(a.condition)
+        cfg = RunConfig(pool=load_pool(a.pool), condition=condition, orchestrator_model=a.orchestrator_model,
+                        refiner_model=a.refiner_model, max_delegations=a.max_delegations,
+                        budget=Limits(max_llm_calls=a.max_llm_calls, max_tool_calls=a.max_tool_calls,
                                       max_cost_usd=a.max_cost_usd, max_wall_s=a.max_wall_s),
-                        checkpoint=not a.no_checkpoint, label=a.label or refiner.name)
+                        checkpoint=not a.no_checkpoint, label=a.label or condition.name)
         run_dir = new_run_dir(task_id, cfg.label, a.runs_root)
         run = Run(cfg, load_task(task_id), run_dir, tool_cfg=tool_cfg, reader_identity=reader)
         start_watchdog(run, run.trace.run_scope.remaining_wall_s())
         info = run.run_fresh()
     else:
-        override = Path(a.query_file).read_text().strip() if a.query_file else None
-        if override is not None and not a.source:
-            print("--query-file needs --source (e.g. post_hoc)", file=sys.stderr)
-            return 2
-        refiner = load_refiner(a.refiner) if a.refiner else None
-        label = a.label or (f"override_{a.source}" if override else (refiner.name if refiner else "restore"))
+        condition = load_condition(a.condition) if a.condition else None
+        label = a.label or (condition.name if condition else "restore")
         run_dir = new_run_dir(task_id, label, a.runs_root)
-        run = Run.restore(a.checkpoint, run_dir, refiner=refiner, refine_at=a.refine_at, label=label,
-                          override=override, override_source=a.source, tool_cfg=tool_cfg, reader_identity=reader)
+        run = Run.restore(a.checkpoint, run_dir, condition=condition, label=label,
+                          tool_cfg=tool_cfg, reader_identity=reader)
         start_watchdog(run, run.trace.run_scope.remaining_wall_s())
         info = run.run_restored()
     print(json.dumps({"run_dir": str(run_dir), "status": info["status"], "final_answer": info.get("final_answer"),

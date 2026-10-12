@@ -14,7 +14,7 @@
 - **`consistency_routed`:** 고른 worker가 자기 최빈 node_0 답을 이어받아 node_1부터 끝까지 노드별로 푼다(1회).
 - **`fixed_<worker>` × 3:** 각 worker가 전체를 노드별로 푼다. 선택에 쓰지 않는 비교용.
 - 노드에 답이 없거나 출력 한도(32,768 token)로 끊기면 그 실행은 멈추고 오답. 답 동치는 LongCoT 공식 math 비교(LLM fallback 없음) + 표기 정리.
-- 코드: branch `perturbation-consistency`(`src/perturbation_consistency/`, `scripts/*perturbation*`), 결정 C18.
+- 코드: branch `perturbation-consistency`(`src/perturbation_consistency/`, `scripts/*perturbation*`), 결정 C29.
 
 ## 결과
 

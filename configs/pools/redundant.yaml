@@ -1,6 +1,3 @@
-# Redundant candidates: one role (id `worker`, P8); several workers (different models, same prompt and tools) could
-# do every subtask. Probes ask all candidates; the executor stays fixed (gen_luna), so the effect of a better
-# instruction is not mixed with worker selection.
 name: redundant
 workers:
   - id: gen_luna
@@ -15,8 +12,3 @@ workers:
     tools: [web_search, read_url, read_url_text, find_in_url, read_file, view_image, run_python]
     max_tool_calls: 20
     system_prompt: *generalist
-roles:
-  - id: worker
-    description: Searches the web, reads web pages, files and images, and computes with Python.
-    executor: gen_luna
-    probe_workers: [gen_luna, gen_gemini]

@@ -6,9 +6,9 @@ Latest findings: [docs/reports/index.md](docs/reports/index.md).
 
 ## Scope and code
 
-- Keep the framework small and portable: one orchestrator, fixed executor per role, stateless workers,
-  `InstructionRefiner` as the intervention. Do not introduce OWL's planner/coordinator/answerer split,
-  replanning, structured `TaskResult`, OWL prompts/tool names, or automatic dependency passing.
+- Keep the framework small and portable: one orchestrator selecting among registered workers, stateless workers,
+  evaluator-owned state proposals and a wording-only refiner (v13/r15/e3). Do not introduce OWL's planner/coordinator/answerer split,
+  structured `TaskResult`, OWL prompts/tool names, or automatic dependency passing.
 - Read the original study design before changing experiment logic:
   `../pilot/docs/design/2026-10-05-GAIA-Probe-Query-Pilot-Study.md`.
 - Record choices not fixed by the framework in [docs/decisions.md](docs/decisions.md).
@@ -25,6 +25,10 @@ Latest findings: [docs/reports/index.md](docs/reports/index.md).
 
 ## Experiment invariants
 
+Current runtime supports direct_execution and multi_worker_probe only. The fixed-executor/refiner and paired-restore
+comparison rules below describe historical experiments; new full-system comparisons use fresh runs with a separately
+fixed repetition count, total spend and condition order. Historical presets/checkpoints require their snapshots.
+
 - Never expose GAIA answers or Annotator Metadata to models. Only scoring reads answers. Keep the sandbox's
   data restrictions and blocklist on every path that sends web content to a model.
 - `data/splits/eval_v1.csv` is evaluation-only. Do not inspect, run or tune on it before evaluation.
@@ -33,8 +37,11 @@ Latest findings: [docs/reports/index.md](docs/reports/index.md).
   never the continuation, gold or failure traces. Post-hoc edits use `--source post_hoc` and are not probe claims.
 - Probe/check conversations and workspaces are isolated. Only the final instruction and explicit context
   additions reach execution, except an explicitly configured connected-probe variant.
-- Compare conditions from the same checkpoint, including a restored baseline. The recording run is not a
-  baseline replicate. Hold executor, common pipeline and configured review budgets fixed; record actual cost.
+- Compare conditions restored from the same checkpoint. A restored baseline is optional: the recording run's
+  continuation after the checkpoint can serve as the baseline when restores follow it in the same tool and
+  search environment. Restore a baseline when checkpoints are reused later or that environment changed.
+  `score_runs.py --compare` pairs restore arms only. Hold executor, common pipeline and configured review
+  budgets fixed; record actual cost.
 - Report every preselected task. Non-ok or missing planned runs count as failures in their own arm.
   Aggregate reps within task, then equal-weight tasks; use paired task-level comparisons.
 - Preserved historical runs, checkpoints, snapshots and recorded JSON/CSV are immutable evidence.

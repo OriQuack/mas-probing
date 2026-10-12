@@ -65,15 +65,3 @@ def task(tmp_path) -> GaiaTask:
     att.write_text("order_id,date,amount\n1,2025-01-02,10\n1,2025-01-02,5\n2,2025-02-01,7\n")
     return GaiaTask(task_id="t-0001", level=2, question="How many unique orders were placed in 2025?",
                     file_name="sheet.csv", file_path=att)
-
-
-@pytest.fixture(autouse=True)
-def _configured_probe_order(monkeypatch):
-    """Runtime shuffles probe workers; tests keep configured order unless they explicitly change it."""
-    from minpilot.refine import review
-
-    class Configured:
-        def shuffle(self, xs):
-            pass
-
-    monkeypatch.setattr(review, "ORDER_RNG", Configured())

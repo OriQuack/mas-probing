@@ -7,7 +7,7 @@ import json
 import pytest
 
 from fakes import ScriptedLLM, fake_web
-from minpilot.config import CONFIG_DIR, load_pool, load_refiner
+from minpilot.config import CONFIG_DIR, load_pool, load_refiner, load_condition
 from minpilot.data.gaia import GaiaTask
 from minpilot.llm.client import LLMClient, TransientError
 from minpilot.llm.specs import get_spec
@@ -101,20 +101,20 @@ def test_reasoning_details_kept_for_gemini(tmp_path):
 @pytest.mark.parametrize("name", sorted(p.stem for p in (CONFIG_DIR / "pools").glob("*.yaml")))
 def test_pools_load(name):
     pool = load_pool(name)
-    for role in pool.roles.values():
-        tools = {pool.workers[w].tools for w in (role.executor, *role.probe_workers)}
-        assert len(tools) == 1, "probe workers of a role get the same tools as its executor"
+    assert pool.workers
+    assert all(w.max_tool_calls == 20 for w in pool.workers.values())
 
 
-@pytest.mark.parametrize("name", sorted(p.stem for p in (CONFIG_DIR / "refiners").glob("*.yaml")))
-def test_refiners_load(name):
-    load_refiner(name)
+@pytest.mark.parametrize("name", ["baseline", "self_review", "executor_probe", "executor_probe_tools"])
+def test_legacy_refiners_rejected(name):
+    with pytest.raises(ValueError, match="retired"):
+        load_refiner(name)
 
 
-def test_predicted_and_real_share_budget_caps():
-    b, c = load_refiner("variants/pool_self_review"), load_refiner("variants/pool_probe")
-    assert b.budget == c.budget and b.max_verifications == c.max_verifications
-    assert b.samples_per_worker == c.samples_per_worker and b.prompts == c.prompts
+def test_conditions_share_pre_execution_budget_caps():
+    a, b = load_condition("direct_execution"), load_condition("multi_worker_probe")
+    assert a.budget == b.budget
+    assert a.budget.max_llm_calls == 60 and a.budget.max_cost_usd == 1
 
 
 # -- tools -------------------------------------------------------------------------------------
@@ -472,17 +472,17 @@ def test_restore_batches_plan_arms_and_rotate_conditions(tmp_path):
     for i in range(2):
         ck = tmp_path / f"run{i}" / "checkpoints" / "d0"
         ck.mkdir(parents=True)
-        (ck / "state.json").write_text(json.dumps({"task_id": f"t{i}", "config": {"pool": {"name": "redundant"}}}))
+        (ck / "state.json").write_text(json.dumps({"format": 2, "task_id": f"t{i}", "config": {"pool": {"name": "redundant"}}}))
         cks.append(str(ck))
     (tmp_path / "cks.txt").write_text("\n".join(cks))
 
     class A:
-        checkpoints, refiners, reps, rep_offset, only = str(tmp_path / "cks.txt"), ["baseline", "variants/pool_probe"], 2, 0, None
+        checkpoints, conditions, reps, rep_offset, only = str(tmp_path / "cks.txt"), ["direct_execution", "multi_worker_probe"], 2, 0, None
     plan = rb.restore_plan(A)
     assert len(plan) == 8 and all(p["mode"] == "restore" and p["pool"] == "redundant" for p in plan)
     firsts = [plan[i]["condition"] for i in range(0, 8, 2)]
-    assert firsts == ["baseline", "pool_probe", "pool_probe", "baseline"]  # order rotates per (rep, checkpoint)
-    assert {p["label"] for p in plan} == {"baseline_r0", "pool_probe_r0", "baseline_r1", "pool_probe_r1"}
+    assert firsts == ["direct_execution", "multi_worker_probe", "multi_worker_probe", "direct_execution"]  # order rotates per (rep, checkpoint)
+    assert {p["label"] for p in plan} == {"direct_execution_r0", "multi_worker_probe_r0", "direct_execution_r1", "multi_worker_probe_r1"}
 
 
 # -- tools v4: K8 on-or-before snapshots, K9 failure causes, K11, K14 ---------------------------------
@@ -523,6 +523,42 @@ def test_read_url_text_date_rule_is_passed_and_cached_separately(tmp_path):
     assert "taken on 2020-12-30" in a and "taken on 2021-01-05" in b
     assert seen == [("on_or_before", "20210101"), ("closest", "20210101")]
     assert "date_rule must be" in web.read_url_text("https://example.org/p", date="2021", date_rule="x")[0]
+
+
+def test_snapshot_header_shows_the_capture_wayback_served(tmp_path):
+    from minpilot.tools.backends import Page
+
+    class Redirecting:  # Wayback serves the nearest capture; readers report the final URL
+        name, paid = "direct", False
+
+        def __init__(self, final):
+            self.final, self.fetched = final, []
+
+        def available(self):
+            return True
+
+        def fetch(self, url):
+            self.fetched.append(url)
+            return Page(self.final or url, "Timetable", "Departures 6:41 PM. " * 50, "html")
+
+    asked = "https://web.archive.org/web/20190527000000/https://example.org/t"
+    web = fake_web(tmp_path)
+    web.read_backends = [Redirecting("https://web.archive.org/web/20211123083000id_/https://example.org/t")]
+    text, _ = web.read_url_text(asked)
+    assert web.read_backends[0].fetched == ["https://web.archive.org/web/20190527000000id_/https://example.org/t"]
+    assert "taken on 2021-11-23 (requested 2019-05-27: the nearest capture)" in text
+    assert "taken on 2019-05-27" not in text
+    assert "taken on 2021-11-23 (requested 2019-05-27" in web.read_url_text(asked)[0]  # cache hit keeps it
+
+    same_day = fake_web(tmp_path / "b")
+    same_day.read_backends = [Redirecting("https://web.archive.org/web/20190527000330id_/https://example.org/t")]
+    text, _ = same_day.read_url_text(asked)
+    assert "taken on 2019-05-27; the page may have changed since." in text
+
+    unreported = fake_web(tmp_path / "c")
+    unreported.read_backends = [Redirecting("https://example.org/t")]
+    text, _ = unreported.read_url_text(asked)
+    assert "requested for 2019-05-27; the capture date was not reported" in text and "taken on" not in text
 
 
 def test_failed_reads_state_the_cause_and_permanent_failures_are_not_retried(tmp_path):

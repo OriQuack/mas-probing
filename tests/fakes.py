@@ -20,6 +20,10 @@ def kind_of(body: dict) -> str:
     first = body["messages"][0].get("content")
     if isinstance(first, list) and str(first[0].get("text", "")).startswith("Please read the source content"):
         return "reader"
+    if rf in ("orchestrator", "orchestrator_select"):
+        return rf
+    if rf and (rf.startswith("evaluator_") or rf == "refiner"):
+        return rf
     if rf == "orchestrator_action":
         return "orchestrator"
     if rf == "review_analysis":
