@@ -3,7 +3,7 @@
 
   python scripts/run_perturbation_pilot.py --experiment outputs/experiments/<date>_longcot-perturbation-pilot \
       [--workers luna-medium haiku-medium flash-medium] [--batch-workers flash-medium] [--sync-concurrency 12] \
-      [--session-cost-usd 10] [--run-cost-usd 2] [--max-tokens N] [--env-file .env]
+      [--session-cost-usd 10] [--run-cost-usd 2] [--max-tokens N] [--resume NAME] [--env-file .env]
 
 All calls go out at once: the listed batch workers through the OpenRouter Batch API (one round trip unless a batch
 is resubmitted), the others as synchronous calls. Each (target, worker) has its own Trace under runs/; results.jsonl
@@ -66,14 +66,24 @@ def main() -> None:
     ap.add_argument("--run-cost-usd", type=float, default=2.0, help="per (target, worker)")
     ap.add_argument("--max-tokens", type=int, default=None, help="override the workers' output cap (segment prompts)")
     ap.add_argument("--env-file", type=Path, default=REPO / ".env")
+    ap.add_argument("--resume", default=None, metavar="NAME",
+                    help="append to an existing results.jsonl, skipping every (prompt, worker) it already has; traces "
+                         "go under NAME/ and the run record to NAME.json (e.g. a stalled batch worker sent again)")
     args = ap.parse_args()
     if not set(args.batch_workers) <= set(args.workers):
         sys.exit("--batch-workers must be a subset of --workers")
     exp = args.experiment
     if not (exp / "prompts.jsonl").exists():
         sys.exit(f"{exp}/prompts.jsonl missing: run scripts/prepare_{{perturbation,segment}}_pilot.py first")
-    if (exp / "results.jsonl").exists():
+    if (exp / "results.jsonl").exists() and not args.resume:
         sys.exit(f"{exp} already has results.jsonl")
+    if args.resume and (exp / f"{args.resume}.json").exists():
+        sys.exit(f"{exp}/{args.resume}.json exists; use a new --resume name")
+    have = set()
+    if args.resume and (exp / "results.jsonl").exists():
+        have = {(r["target_id"], r["condition"], r["sample"], r["worker"])
+                for r in map(json.loads, (exp / "results.jsonl").read_text().splitlines())}
+    runs_root, run_record = (args.resume, f"{args.resume}.json") if args.resume else ("runs", "run.json")
     from dotenv import load_dotenv
     load_dotenv(args.env_file)
     key = os.environ["OPENROUTER_API_KEY"]
@@ -85,12 +95,12 @@ def main() -> None:
 
     commit = subprocess.run(["git", "-C", str(REPO), "rev-parse", "HEAD"], capture_output=True,
                             text=True).stdout.strip()
-    (exp / "run.json").write_text(json.dumps({
+    (exp / run_record).write_text(json.dumps({
         "workers": args.workers, "models": {w: spec_of(w).identity() for w in args.workers},
         "transport": {w: "openrouter_batch" if w in args.batch_workers else "openrouter_sync" for w in args.workers},
         "session_cost_usd": args.session_cost_usd, "run_cost_usd": args.run_cost_usd, "calls": len(rows) * len(
-            args.workers), "git_commit": commit, "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())},
-        indent=1))
+            args.workers) - len(have), "skipped_as_recorded": len(have), "git_commit": commit,
+        "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}, indent=1))
 
     dispatcher = None
     if args.batch_workers:
@@ -105,7 +115,7 @@ def main() -> None:
     clients: dict[tuple[str, str], tuple[LLMClient, Trace]] = {}
     for tid in sorted({r["target_id"] for r in rows}):
         for w in args.workers:
-            trace = Trace(exp / "runs" / tid.replace(":", "__") / w, Limits(max_cost_usd=args.run_cost_usd))
+            trace = Trace(exp / runs_root / tid.replace(":", "__") / w, Limits(max_cost_usd=args.run_cost_usd))
             transport = dispatcher.transport if w in args.batch_workers else limited
             clients[(tid, w)] = (LLMClient(spec_of(w), trace, transport=transport), trace)
     lock, spent = threading.Lock(), [0.0]
@@ -124,8 +134,9 @@ def main() -> None:
             print(f"[${spent[0]:.3f}] {rec['target_id']} {rec['condition']}#{rec['sample']} {w} {rec['status']}",
                   flush=True)
 
-    jobs = [(r, w) for r in rows for w in args.workers]
-    with ThreadPoolExecutor(len(jobs)) as pool:
+    jobs = [(r, w) for r in rows for w in args.workers
+            if (r["target_id"], r["condition"], r["sample"], w) not in have]
+    with ThreadPoolExecutor(max(1, len(jobs))) as pool:
         list(pool.map(job, jobs))
     if dispatcher is not None:
         dispatcher.close()
