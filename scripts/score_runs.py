@@ -15,8 +15,8 @@ per line: they leave the denominator on purpose and are **not** re-added as miss
 Grouping (review 2026-10-09, F6): runs are grouped by **arm** = (mode, pool, condition, override source), not
 by label, so reps labelled C_r0, C_r1, ... count as one condition. Within an arm: per-task success rate over
 reps, then the equal-weight mean over tasks.
-- `mode=fresh` runs (recording runs) and `mode=restore` runs are separate arms: a recording run's own
-  continuation is never an A rep (CLAUDE.md).
+- `mode=fresh` runs (recording runs) and `mode=restore` runs are separate arms. When a recording run's
+  continuation serves as the baseline (CLAUDE.md), compare it with restore arms outside `--compare`.
 - Post-hoc overrides (Exp 1) form their own arms (`override=<source>`), never mixed with B/C.
 `--compare X Y`: paired comparison of restore arms X and Y on the same checkpoints (same pool, no override):
 per checkpoint the success rate over reps, per task the mean over its checkpoints, then the mean difference
@@ -61,11 +61,12 @@ def load_plan(path: Path) -> list[dict]:
         args_file = Path(path).parent / "batch_args.json"
         if not args_file.exists():
             raise SystemExit(f"{path}: no arm columns and no batch_args.json; cannot place missing runs in an arm")
-        from minpilot.config import load_pool, load_refiner
+        import yaml
+        from minpilot.config import CONFIG_DIR
 
         args = json.loads(args_file.read_text())
-        arm = {"mode": "fresh", "pool": load_pool(args["pool"]).name,
-               "condition": load_refiner(args["refiner"]).name, "checkpoint": "", "override_source": ""}
+        arm = {"mode": "fresh", "pool": args["pool"],
+               "condition": yaml.safe_load((CONFIG_DIR / "refiners" / f"{args['refiner']}.yaml").read_text())["name"], "checkpoint": "", "override_source": ""}
         plan = [{**arm, **p} for p in plan]
     return plan
 
@@ -89,6 +90,11 @@ def missing_rows(rows: list[dict], plan: list[dict], excluded: set[tuple]) -> li
 def refine_usd(usage: dict) -> float:
     return sum(float(b.get("cost_usd") or 0.0) + float(b.get("tool_usd") or 0.0)
                for stage, b in (usage or {}).items() if stage.startswith("refine"))
+
+
+def stage_usd(usage, stages):
+    return sum(float(b.get("cost_usd") or 0.0) + float(b.get("tool_usd") or 0.0)
+               for stage, b in (usage or {}).items() if stage in stages)
 
 
 def checkpoint_usd(ck: str | None) -> float:
@@ -194,6 +200,10 @@ def main() -> None:
             "llm_usd": c.get("llm_usd", c.get("cost_usd")), "tool_usd": c.get("tool_usd"),
             "cost_usd": c.get("cost_usd"), "tool_usd_cold": c.get("tool_usd_cold"),
             "unknown_cost_calls": c.get("unknown_cost_calls"), "n_delegations": info.get("n_delegations"),
+            "pre_execution_usd": stage_usd(info.get("usage"), {"probe", "evaluator.probe", "orchestrator.select", "refiner"}),
+            "evaluator_usd": stage_usd(info.get("usage"), {"evaluator.probe", "evaluator.execution"}),
+            "serper_billed_credits": (info.get("paid_search") or {}).get("billed"),
+            "serper_unknown_credits": (info.get("paid_search") or {}).get("unknown"),
             "after_ck_usd": (c.get("cost_usd") or 0.0) - checkpoint_usd(ck), "refine_usd": ref_usd})
     if a.expected:
         miss = missing_rows(rows, load_plan(Path(a.expected)), excluded_keys)

@@ -1,5 +1,3 @@
-# Role routing: each subtask goes to its role's worker; probes ask that same worker (repeat with
-# samples_per_worker > 1 in the refiner config for repeated/varied probes).
 name: role_routing
 workers:
   - id: web_luna
@@ -16,12 +14,3 @@ workers:
     system_prompt: |
       You are a file and computation worker. You read files (documents, spreadsheets, images, code), analyse
       them, and compute results with Python.
-roles:
-  - id: web_researcher
-    description: Searches the web and reads web pages and online documents (including archived versions).
-    executor: web_luna
-    probe_workers: [web_luna]
-  - id: file_analyst
-    description: Reads attached and generated files (documents, spreadsheets, images) and computes with Python.
-    executor: file_luna
-    probe_workers: [file_luna]

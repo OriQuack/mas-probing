@@ -6,9 +6,9 @@ Latest findings: [docs/reports/index.md](docs/reports/index.md).
 
 ## Scope and code
 
-- Keep the framework small and portable: one orchestrator, fixed executor per role, stateless workers,
-  `InstructionRefiner` as the intervention. Do not introduce OWL's planner/coordinator/answerer split,
-  replanning, structured `TaskResult`, OWL prompts/tool names, or automatic dependency passing.
+- Keep the framework small and portable: one orchestrator selecting among registered workers, stateless workers,
+  evaluator-owned state proposals and a wording-only refiner (v13/r15/e3). Do not introduce OWL's planner/coordinator/answerer split,
+  structured `TaskResult`, OWL prompts/tool names, or automatic dependency passing.
 - Read the original study design before changing experiment logic:
   `../pilot/docs/design/2026-10-05-GAIA-Probe-Query-Pilot-Study.md`.
 - Record choices not fixed by the framework in [docs/decisions.md](docs/decisions.md).
@@ -24,6 +24,10 @@ Latest findings: [docs/reports/index.md](docs/reports/index.md).
   A trace's `stage` is a runtime component tag, defined in the experiment guide.
 
 ## Experiment invariants
+
+Current runtime supports direct_execution and multi_worker_probe only. The fixed-executor/refiner and paired-restore
+comparison rules below describe historical experiments; new full-system comparisons use fresh runs with a separately
+fixed repetition count, total spend and condition order. Historical presets/checkpoints require their snapshots.
 
 - Never expose GAIA answers or Annotator Metadata to models. Only scoring reads answers. Keep the sandbox's
   data restrictions and blocklist on every path that sends web content to a model.

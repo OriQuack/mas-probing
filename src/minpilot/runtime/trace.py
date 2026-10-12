@@ -7,11 +7,9 @@ Records (JSONL files in the run dir):
 - `tool_calls.jsonl` one record per tool call (`started`, then the result record), with the stage tags.
 - `events.jsonl`     orchestrator actions, delegations, refinement steps, checkpoints, errors.
 
-Stage tags. Every record carries the current tags (`stage`, `delegation`, `worker`, `role`, ...), set with
-`trace.tags(...)`. Stages used by the harness: `orchestrator`, `execution`, and the refinement stages
-`refine.review` (B's simulated worker responses), `refine.probe`, `refine.followup`, `refine.analyze`,
-`refine.verify`, `refine.rewrite`. Cost buckets of the design (prefix / extra deliberation / verification /
-rewrite / post-delegation execution) are computed from (stage, delegation) relative to the intervention point.
+Stage tags include orchestrator, orchestrator.select, probe, evaluator.probe, refiner, execution and
+ evaluator.execution. Every record inherits stage/delegation/worker tags. Historical records retain their
+refine.* stages. Unknown paid-request charges are tracked separately from confirmed tool cost.
 
 Budgets. A stack of `BudgetScope`s: the run's scope is always active; refinement pushes its own scope, so a
 refinement is capped on its own and still counts toward the run. Every model request reserves its worst-case
@@ -247,6 +245,8 @@ class Trace:
                 b["tool_calls"] = b.get("tool_calls", 0) + 1
                 for k, v in (rec.get("credits") or {}).items():
                     b[f"credits_{k}"] = b.get(f"credits_{k}", 0) + v
+                for k, v in (rec.get("unknown_credits") or {}).items():
+                    b[f"unknown_credits_{k}"] = b.get(f"unknown_credits_{k}", 0) + v
                 if billed or cold:
                     b["tool_usd"] = b.get("tool_usd", 0.0) + billed
                     b["tool_usd_cold"] = b.get("tool_usd_cold", 0.0) + cold

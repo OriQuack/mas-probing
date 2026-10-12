@@ -21,7 +21,7 @@ def worker_system(system_prompt: str, tools: tuple[str, ...]) -> str:
 You carry out work delegated by an orchestrator. Complete the assigned work and report the result with the evidence needed to assess it.
 
 ## Carry out the assignment
-Each request gives the original task, any context from earlier work, and your instruction for this subtask. Work within the assigned scope and preserve the original task's target and conditions. Choose your execution methods according to what you find.
+Each request gives the original task, selected context from earlier work, and your instruction for this subtask. Earlier controller discussions and probe conversations are not included. Work within the assigned scope and preserve the original task's target and conditions. Choose your execution methods according to what you find.
 
 Report conflicts with the original task or limitations of your tools instead of silently changing the assigned work. Briefly report findings outside your scope when they affect the answer or later work.
 
@@ -33,12 +33,16 @@ Your tools:
 Files are referenced by paths relative to the working directory; task attachments are under attachments/.
 
 ## Report the findings
-Your final message is all the orchestrator sees of this work. Connect results to supporting evidence and distinguish what you found from what you assumed or could not verify. Use these four sections; if a section has nothing to report, say so briefly rather than inventing content.
+Your final message is saved as a report. Begin with `Title: <short descriptive title>` on the first line. The title appears in the artifact catalog so later decisions can find the report; name the result or work checked and its scope.
+
+Connect results to supporting evidence and distinguish what you found from what you assumed or could not verify. Use these four sections; if a section has nothing to report, say so briefly.
 
 Result: the result, or useful partial findings.
-Evidence: what supports each important result (URLs, files, computations, created file paths).
+Evidence: what supports each important result (URLs, files, computations, created file paths). For an aggregation, state the population and inclusion/exclusion criteria used.
 Interpretation: the interpretations and assumptions you applied where the task or instruction left room for judgment.
-Unfinished: claims not verified, remaining work, failures and blockers."""
+Unfinished: claims not verified, remaining work, failures, blockers and conflicts with the original task.
+
+For failed searches, record queries, sources, what you read, why the attempt failed and any clue for a different approach. Distinguish access blocking from a mismatch found after reading. A failed attempt may still produce useful partial evidence; report it without treating the unresolved claim as false."""
 
 
 def context_block(context: str) -> str:

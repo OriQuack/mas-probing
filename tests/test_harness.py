@@ -1,222 +1,171 @@
-"""Harness: the orchestrator loop, call_worker, checkpoints and restores (scripted models, no network)."""
-
-from __future__ import annotations
-
+"""Offline contracts for the current shared-state runtime (historical runtime tests live in snapshots)."""
 import json
 
 import pytest
 
-from fakes import ScriptedLLM, delegate, fake_web, finish
-from minpilot.config import RunConfig, load_pool, load_refiner
+from fakes import ScriptedLLM, fake_web
+from minpilot.config import ConditionConfig, RunConfig, load_pool
 from minpilot.harness import Run
 from minpilot.runtime.trace import Limits
 from minpilot.tools.config import ToolConfig
 
 
-def make_run(tmp_path, task, llm, *, pool="role_routing", refiner="baseline", refine_at="first", name="run", **kw):
-    cfg = RunConfig(pool=load_pool(pool), refiner=load_refiner(refiner), refine_at=refine_at, label=name, **kw)
-    return Run(cfg, task, tmp_path / name, transport=llm, web=fake_web(tmp_path, task.question),
-               tool_cfg=ToolConfig(cache_path=tmp_path / "cache.sqlite"))
+def action(kind="delegate", wid="gen_luna", **extra):
+    return {"action": kind, "worker_id": wid, "instruction": "Count unique orders in 2025.",
+            "answer": "2", "rationale": "Use reported order IDs.", "artifact_ids": [], "state_rows": [],
+            "accept_state": True, "state_reason": "Evidence matches original scope.",
+            "refine": False, "changes": "", **extra}
 
 
-def two_step_script():
-    return {
-        "orchestrator": [delegate("file_analyst", "Count unique order ids in attachments/sheet.csv for 2025."),
-                         finish("2")],
-        "worker": [{"tool_calls": [("read_file", {"path": "attachments/sheet.csv"})]},
-                   "There are 2 unique order ids (1 and 2). Source: attachments/sheet.csv."],
-    }
+def evaluation(state=None, **extra):
+    return {"action": "evaluate", "title": "Order evidence", "state": state or [],
+            "rationale": "Evidence matches scope.", "changes": "", "requires_decision": False, **extra}
 
 
-def events(run_dir):
-    return [json.loads(line) for line in (run_dir / "events.jsonl").read_text().splitlines()]
+def row(ref="a00000", **extra):
+    return {"type": "result", "content": "Two unique order IDs in the 2025 sheet.",
+            "status": "supported", "refs": [ref], **extra}
 
 
-def test_fresh_run_end_to_end(tmp_path, task):
-    llm = ScriptedLLM(two_step_script())
-    run = make_run(tmp_path, task, llm)
+def make_run(tmp_path, task, script, condition="direct_execution", **extra):
+    llm = script if isinstance(script, ScriptedLLM) else ScriptedLLM(script)
+    cfg = RunConfig(load_pool("multi"), ConditionConfig(condition), **extra)
+    web = fake_web(tmp_path, task.question)
+    run = Run(cfg, task, tmp_path / "run", transport=llm, web=web,
+              tool_cfg=ToolConfig(cache_path=web.cfg.cache_path))
+    return run, llm
+
+
+def direct_script(**extra):
+    return {"orchestrator": [action(), action("finish")], "worker": ["Title: Count\nResult: 2\nEvidence: sheet.csv"],
+            "evaluator_execution": [evaluation([row()])], **extra}
+
+
+def test_two_delegations_use_selected_context_and_keep_state(tmp_path, task):
+    script = direct_script(orchestrator=[action(), action(wid="gen_haiku", artifact_ids=["a00000"], state_rows=[]),
+                                         action("finish")],
+                           worker=["Title: Count\nFIRST FULL REPORT", "Title: Check\nSECOND FULL REPORT"],
+                           evaluator_execution=[evaluation([row()]), evaluation([row(), row("a00002")])])
+    run, llm = make_run(tmp_path, task, script)
     info = run.run_fresh()
-    assert info["status"] == "ok" and info["final_answer"] == "2"
-    rd = run.run_dir
-    assert (rd / "work" / "attachments" / "sheet.csv").exists()
-    assert (rd / "checkpoints" / "d0" / "state.json").exists()
-    req = json.loads((rd / "checkpoints" / "d0" / "request.json").read_text())
-    assert req["target_worker"] == "file_luna" and "unique order" in req["draft_instruction"]
-    # the worker received the original task + the instruction, and its tool result
-    wbody = llm.by_kind["worker"][1]
-    user = wbody["messages"][1]["content"]
-    assert "Original task" in user and task.question in user and "Count unique order ids" in user
-    assert any(m["role"] == "tool" and "order_id" in m["content"] for m in wbody["messages"])
-    # orchestrator saw the report, never the tool output directly
-    obody = llm.by_kind["orchestrator"][1]
-    assert "Report from file_analyst" in obody["messages"][-1]["content"]
-    assert not any("order_id,date" in json.dumps(m) for m in obody["messages"])
-    # orchestrator requests carry no tools; workers carry their own tool set only
-    assert all("tools" not in b for b in llm.by_kind["orchestrator"])
-    assert {t["function"]["name"] for t in wbody["tools"]} == {"read_file", "view_image", "run_python"}
-    kinds = [e["event"] for e in events(rd)]
-    assert kinds.count("delegation") == 1 and "checkpoint" in kinds and kinds[-1] == "run_end"
-    stages = {json.loads(l).get("stage") for l in (rd / "llm_calls.jsonl").read_text().splitlines()}
-    assert stages == {"orchestrator", "execution"}
+    assert info["status"] == "ok", info
+    assert [d["worker"] for d in info["delegations"]] == ["gen_luna", "gen_haiku"]
+    assert len(info["state"]) == 2
+    second = llm.by_kind["worker"][1]["messages"]
+    assert "FIRST FULL REPORT" in json.dumps(second)
+    # Fresh controller inputs have catalog/state; old report bodies do not accumulate.
+    for body in llm.by_kind["orchestrator"]:
+        assert "FIRST FULL REPORT" not in json.dumps(body)
+    ev = llm.by_kind["evaluator_execution"]
+    assert "FIRST FULL REPORT" in json.dumps(ev[0])
+    assert "SECOND FULL REPORT" in json.dumps(ev[1])
+    assert "FIRST FULL REPORT" not in json.dumps(json.loads(ev[1]["messages"][1]["content"])["reports"])
 
 
-def test_invalid_action_retried_then_error(tmp_path, task):
-    bad = {"rationale": "r", "action": "delegate", "worker_id": "nobody", "instruction": "x", "answer": None}
-    llm = ScriptedLLM({"orchestrator": [bad, bad, bad]})
-    info = make_run(tmp_path, task, llm).run_fresh()
-    assert info["status"] == "error" and "invalid_action" in info["error"]
-    assert "unknown worker_id" in llm.by_kind["orchestrator"][1]["messages"][-1]["content"]
+def test_restore_preserves_memory_context_and_budget(tmp_path, task):
+    run, _ = make_run(tmp_path, task, direct_script())
+    assert run.run_fresh()["status"] == "ok"
+    ck = run.run_dir / "checkpoints/d0"
+    web = fake_web(tmp_path, task.question)
+    llm = ScriptedLLM({"worker": ["Title: Count\n2"], "evaluator_execution": [evaluation([row()])],
+                       "orchestrator": [action("finish")]})
+    restored = Run.restore(ck, tmp_path / "restored", task=task, web=web, transport=llm,
+                           tool_cfg=run.tool_cfg)
+    assert restored.run_restored()["status"] == "ok"
+    assert restored.trace.run_scope.llm_calls == run.trace.run_scope.llm_calls
+    assert json.loads((restored.run_dir / "restore_check.json").read_text())["match"]
 
 
-def test_max_delegations_forces_finish(tmp_path, task):
-    llm = ScriptedLLM({"orchestrator": [delegate("web_researcher", "look"), finish("x")], "worker": ["done"]})
-    info = make_run(tmp_path, task, llm, max_delegations=1).run_fresh()
-    assert info["status"] == "ok" and info["forced_finish"] is True
-    assert "maximum number of delegations" in llm.by_kind["orchestrator"][1]["messages"][-1]["content"]
-
-
-def test_worker_tool_limit_forces_report(tmp_path, task):
-    calls = [{"tool_calls": [("web_search", {"query": f"q{i}"})]} for i in range(30)]
-    llm = ScriptedLLM({"orchestrator": [delegate("web_researcher", "search"), finish("x")],
-                       "worker": lambda b: calls.pop(0) if b.get("tool_choice") != "none" else "partial report"})
-    run = make_run(tmp_path, task, llm)
+def test_old_checkpoint_and_tamper_rejected(tmp_path, task):
+    ck = tmp_path / "old"
+    ck.mkdir()
+    (ck / "state.json").write_text('{"format": 1}')
+    with pytest.raises(ValueError, match="historical"):
+        Run.restore(ck, tmp_path / "restore", task=task)
+    run, _ = make_run(tmp_path, task, direct_script())
     run.run_fresh()
-    last = llm.by_kind["worker"][-1]
-    assert last["tool_choice"] == "none" and "tool-call limit" in last["messages"][-1]["content"]
-    assert run.delegations[0]["report_status"] == "tool_limit" and run.delegations[0]["n_tool_calls"] == 20
-
-
-def test_run_budget_exceeded_is_recorded(tmp_path, task):
-    llm = ScriptedLLM(two_step_script())
-    info = make_run(tmp_path, task, llm, budget=Limits(max_llm_calls=2)).run_fresh()
-    assert info["status"] == "budget_exceeded" and info["final_answer"] is None
-
-
-def test_restore_matches_continuous_run(tmp_path, task):
-    """Given the same responses, a run restored from d0 sends exactly the requests the continuous run sent after
-    the checkpoint."""
-    llm1 = ScriptedLLM(two_step_script())
-    run1 = make_run(tmp_path, task, llm1, name="cont")
-    run1.run_fresh()
-    after = [b for b in llm1.bodies[1:]]  # everything after the first orchestrator call (the checkpoint)
-    script = two_step_script()
-    script["orchestrator"] = script["orchestrator"][1:]
-    llm2 = ScriptedLLM(script)
-    run2 = Run.restore(run1.run_dir / "checkpoints" / "d0", tmp_path / "restored", task=task, transport=llm2,
-                       web=fake_web(tmp_path, task.question), tool_cfg=ToolConfig(cache_path=tmp_path / "cache.sqlite"))
-    info = run2.run_restored()
-    assert info["status"] == "ok" and info["final_answer"] == "2"
-    assert json.loads((tmp_path / "restored" / "restore_check.json").read_text())["match"] is True
-    assert llm2.bodies == after
-    assert run2.trace.run_scope.llm_calls == run1.trace.run_scope.llm_calls
-
-
-def test_restore_refuses_tampered_workspace(tmp_path, task):
-    run1 = make_run(tmp_path, task, ScriptedLLM(two_step_script()), name="cont")
-    run1.run_fresh()
-    ck = run1.run_dir / "checkpoints" / "d0"
-    (ck / "work" / "attachments" / "sheet.csv").write_text("changed")
+    ck = run.run_dir / "checkpoints/d0"
+    (ck / "work/attachments/sheet.csv").write_text("tampered")
     with pytest.raises(ValueError, match="fingerprint"):
-        Run.restore(ck, tmp_path / "r", task=task, transport=ScriptedLLM({}), web=fake_web(tmp_path),
-                    tool_cfg=ToolConfig(cache_path=tmp_path / "cache.sqlite"))
+        Run.restore(ck, tmp_path / "tampered", task=task, web=fake_web(tmp_path), tool_cfg=run.tool_cfg, transport=ScriptedLLM({}))
 
 
-def test_restore_with_override(tmp_path, task):
-    run1 = make_run(tmp_path, task, ScriptedLLM(two_step_script()), name="cont")
-    run1.run_fresh()
-    script = two_step_script()
-    script["orchestrator"] = script["orchestrator"][1:]
-    llm2 = ScriptedLLM(script)
-    run2 = Run.restore(run1.run_dir / "checkpoints" / "d0", tmp_path / "ov", task=task, transport=llm2,
-                       override="Count unique order ids; rows with the same id are one order.",
-                       override_source="post_hoc", web=fake_web(tmp_path),
-                       tool_cfg=ToolConfig(cache_path=tmp_path / "cache.sqlite"))
-    info = run2.run_restored()
-    assert info["override_source"] == "post_hoc"
-    assert "same id are one order" in llm2.by_kind["worker"][0]["messages"][1]["content"]
-    assert "revised in a pre-delegation review" in llm2.by_kind["orchestrator"][0]["messages"][-1]["content"]
+def test_run_budget_is_terminal(tmp_path, task):
+    run, _ = make_run(tmp_path, task, direct_script(), budget=Limits(max_llm_calls=1))
+    assert run.run_fresh()["status"] == "budget_exceeded"
 
 
-def test_recovered_invalid_action_is_logged(tmp_path, task):
-    bad = {"rationale": "r", "action": "delegate", "worker_id": "nobody", "instruction": "x", "answer": None}
-    llm = ScriptedLLM({"orchestrator": [bad, finish("7")]})
-    run = make_run(tmp_path, task, llm)
-    assert run.run_fresh()["final_answer"] == "7"
-    act = [e for e in events(run.run_dir) if e["event"] == "action"][0]
-    assert len(act["invalid_before"]) == 1 and "unknown worker_id" in act["invalid_before"][0]
+@pytest.mark.parametrize("original,target", [("direct_execution", "multi_worker_probe"), ("multi_worker_probe", "direct_execution")])
+def test_current_checkpoints_restore_across_conditions(tmp_path, task, original, target):
+    from test_refiners import probe_script
+    run, _ = make_run(tmp_path, task, direct_script() if original == "direct_execution" else probe_script(), original)
+    assert run.run_fresh()["status"] == "ok"
+    script = {"orchestrator": [action("finish")], "worker": ["Title: Report\n2"],
+              "evaluator_execution": [evaluation()], "orchestrator_select": [action("select", wid="gen_haiku")]}
+    if target == "multi_worker_probe":
+        script.update(worker=["Title: Probe\nplan: read", "Title: Probe\nplan: read", "Title: Report\n2"],
+                      evaluator_probe=[evaluation()])
+    restored = Run.restore(run.run_dir / "checkpoints/d0", tmp_path / "restored", task=task,
+                           condition=ConditionConfig(target), web=fake_web(tmp_path), tool_cfg=run.tool_cfg,
+                           transport=ScriptedLLM(script))
+    info = restored.run_restored()
+    assert info["status"] == "ok", info
+    assert info["delegations"][0]["worker"] == "gen_haiku"
 
 
-def test_restore_allows_newer_blocklist_but_not_older(tmp_path, task):
-    run1 = make_run(tmp_path, task, ScriptedLLM(two_step_script()), name="cont")
-    run1.run_fresh()
-    ck = run1.run_dir / "checkpoints" / "d0"
-    state = json.loads((ck / "state.json").read_text())
-    kw = dict(task=task, transport=ScriptedLLM({}), web=fake_web(tmp_path),
-              tool_cfg=ToolConfig(cache_path=tmp_path / "cache.sqlite"))
-    state["tools"]["blocklist_version"] = "v1"          # an older checkpoint: allowed
-    (ck / "state.json").write_text(json.dumps(state))
-    run = Run.restore(ck, tmp_path / "newer", **kw)
-    assert run.info["checkpoint_blocklist_version"] == "v1"
-    state["tools"]["blocklist_version"] = "v99"         # a checkpoint newer than the code: refused
-    (ck / "state.json").write_text(json.dumps(state))
-    with pytest.raises(ValueError, match="blocklist_version is older"):
-        Run.restore(ck, tmp_path / "older", **kw)
+def test_checkpoint_after_two_delegations_has_state_and_artifact_pool(tmp_path, task):
+    script = direct_script(orchestrator=[action(), action(), action(state_rows=[0]), action("finish")],
+                           worker=["Title: First\n2", "Title: Second\n2", "Title: Third\n2"],
+                           evaluator_execution=[evaluation([row()]), evaluation([row()]), evaluation([row()])])
+    run, llm = make_run(tmp_path, task, script)
+    assert run.run_fresh()["status"] == "ok"
+    checkpoint = run.run_dir / "checkpoints/d2"
+    saved = json.loads((checkpoint / "state.json").read_text())
+    assert saved["memory"]["state"] == [row()]
+    assert len(saved["memory"]["artifacts"]) == 4
+    assert saved["pending_action"]["context_snapshot"] == [row()]
+    context = json.loads(saved["pending_action"]["context"])
+    assert context["state"][0]["status"] == "supported"
+    assert [a["id"] for a in context["artifacts"]] == ["a00000"]
+    restored = Run.restore(checkpoint, tmp_path / "restored", task=task, web=fake_web(tmp_path),
+        tool_cfg=run.tool_cfg, transport=ScriptedLLM({"worker": ["Title: Restored\n2"],
+        "evaluator_execution": [evaluation([row()])], "orchestrator": [action("finish")]}))
+    assert restored.run_restored()["status"] == "ok"
+    assert len(restored.memory.artifacts) == 6
 
 
-def _checkpoint(tmp_path, task):
-    run1 = make_run(tmp_path, task, ScriptedLLM(two_step_script()), name="cont")
-    run1.run_fresh()
-    return run1.run_dir / "checkpoints" / "d0"
+def test_restore_rejects_tool_version_and_prompt_tamper(tmp_path, task):
+    from dataclasses import replace
+    run, _ = make_run(tmp_path, task, direct_script())
+    run.run_fresh()
+    ck = run.run_dir / "checkpoints/d0"
+    for change in [{"tools_version": "v5"}, {"page_chars": 1}, {"reader_chain": ("direct",)}]:
+        with pytest.raises(ValueError, match="tool settings"):
+            Run.restore(ck, tmp_path / str(len(change)) / str(change), task=task, web=fake_web(tmp_path),
+                        tool_cfg=replace(run.tool_cfg, **change), transport=ScriptedLLM({}))
+    path = ck / "state.json"
+    state = json.loads(path.read_text())
+    state["evaluator_prompts_version"] = "old"
+    path.write_text(json.dumps(state))
+    with pytest.raises(ValueError, match="prompt version"):
+        Run.restore(ck, tmp_path / "wrongprompt", task=task, web=fake_web(tmp_path), tool_cfg=run.tool_cfg,
+                    transport=ScriptedLLM({}))
 
 
-@pytest.mark.parametrize("change", [{"page_chars": 7}, {"reader_chain": ("direct",)}, {"code_timeout_s": 1.0}])
-def test_restore_refuses_other_tool_settings(tmp_path, task, change):
-    ck = _checkpoint(tmp_path, task)
-    with pytest.raises(ValueError, match="tool settings differ"):
-        Run.restore(ck, tmp_path / "r", task=task, transport=ScriptedLLM({}), web=fake_web(tmp_path),
-                    tool_cfg=ToolConfig(cache_path=tmp_path / "cache.sqlite", **change))
-
-
-def test_restore_refuses_other_reader_identity(tmp_path, task):
-    ck = _checkpoint(tmp_path, task)
-    state = json.loads((ck / "state.json").read_text())
-    state["reader_identity"] = {"tag": "x", "docker_digest": "sha256:a", "sif_sha256": "b", "version": "1"}
-    (ck / "state.json").write_text(json.dumps(state))
-    with pytest.raises(ValueError, match="page-reader service identity"):
-        Run.restore(ck, tmp_path / "r", task=task, transport=ScriptedLLM({}), web=fake_web(tmp_path),
-                    tool_cfg=ToolConfig(cache_path=tmp_path / "cache.sqlite"),
-                    reader_identity={"tag": "x", "docker_digest": "sha256:other", "sif_sha256": "b", "version": "1"})
-
-
-def test_symlinks_are_part_of_the_fingerprint(tmp_path, task):
-    import os
-
-    run1 = make_run(tmp_path, task, ScriptedLLM(two_step_script()), name="cont")
-    (run1.run_dir / "work" / "attachments").mkdir(parents=True)
-    for n in ("one.txt", "two.txt"):
-        (run1.run_dir / "work" / n).write_text(n)
-    os.symlink("one.txt", run1.run_dir / "work" / "alias.txt")
-    run1.run_fresh()
-    ck = run1.run_dir / "checkpoints" / "d0"
-    os.remove(ck / "work" / "alias.txt")
-    os.symlink("two.txt", ck / "work" / "alias.txt")
-    with pytest.raises(ValueError, match="fingerprint"):
-        Run.restore(ck, tmp_path / "r", task=task, transport=ScriptedLLM({}), web=fake_web(tmp_path),
-                    tool_cfg=ToolConfig(cache_path=tmp_path / "cache.sqlite"))
-    os.remove(ck / "work" / "alias.txt")
-    os.symlink("/etc/passwd", ck / "work" / "alias.txt")
-    with pytest.raises(ValueError, match="symlinks leading outside"):
-        Run.restore(ck, tmp_path / "r2", task=task, transport=ScriptedLLM({}), web=fake_web(tmp_path),
-                    tool_cfg=ToolConfig(cache_path=tmp_path / "cache.sqlite"))
-
-
-def test_answer_rules_come_from_the_benchmark_and_answer_is_kept(tmp_path, task):
-    from minpilot.data.gaia import ANSWER_FORMAT
-
-    llm = ScriptedLLM({"orchestrator": [{**finish("2"), "rationale": "two ids, if 2025 means the calendar year"}]})
-    run = make_run(tmp_path, task, llm)
-    info = run.run_fresh()
-    system = llm.by_kind["orchestrator"][0]["messages"][0]["content"]
-    assert ANSWER_FORMAT in system and "Do not add explanations, conditions, caveats" in system
-    assert info["final_answer"] == "2" and info["final_rationale"].startswith("two ids")
-    assert set(info["models"]) == {"luna-high"}  # every role, the page reader included (M1)
+def test_trace_connects_artifacts_state_choices_tools_and_final_answer(tmp_path, task):
+    import importlib.util
+    from minpilot.tools.config import REPO_ROOT
+    run, _ = make_run(tmp_path, task, direct_script(worker=[
+        {"tool_calls": [("read_file", {"path": "attachments/sheet.csv"})]}, "Title: Count\n2"]))
+    assert run.run_fresh()["status"] == "ok"
+    events = [json.loads(line) for line in (run.run_dir / "events.jsonl").read_text().splitlines()]
+    assert next(e for e in events if e["event"] == "report")["artifact_id"] == "a00000"
+    state = next(e for e in events if e["event"] == "state_replace")
+    assert state["before"] == [] and state["after"] == [row()] and state["evaluation"] == "a00001"
+    assert next(e for e in events if e["event"] == "action" and e["action"] == "finish")["rationale"]
+    spec = importlib.util.spec_from_file_location("render_trace", REPO_ROOT / "scripts/render_trace.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    text = module.render(run.run_dir, 100000)
+    for expected in ["a00000", "state_replace", "context_selection", "order_id,date,amount", "FINAL ANSWER"]:
+        assert expected in text

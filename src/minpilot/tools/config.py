@@ -58,9 +58,12 @@ class ToolConfig:
     # v4 (2026-10-09): `date_rule` on_or_before (default) | closest for archived snapshots (K8); failed reads say
     #     why and permanent failures are not retried within a run (K9); role-neutral sandbox network message
     #     (K11); language-independent anti-bot markers (K14).
-    tools_version: str = "v4"
+    # v5 (2026-10-11): an archived snapshot's header shows the date of the capture Wayback actually served (the
+    #     reader's final URL), with the requested date when they differ (decision C16).
+    # v6: shared task-level 100-credit cap at the Serper request boundary; unknown billing tracked separately.
+    tools_version: str = "v6"
     blocklist_version: str = BLOCKLIST_VERSION
-    cache_path: Path = REPO_ROOT / "outputs" / "cache" / "tools_v4.sqlite"
+    cache_path: Path = REPO_ROOT / "outputs" / "cache" / "tools_v6.sqlite"
     # Page readers, in fallback order (names: crawl4ai, direct, playwright).
     reader_chain: tuple[str, ...] = ("crawl4ai", "direct", "playwright")
     crawl4ai_endpoint: Path = field(default_factory=_crawl4ai_endpoint)

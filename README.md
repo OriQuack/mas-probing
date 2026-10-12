@@ -1,8 +1,8 @@
 # min_pilot
 
-Worker에게 작업을 위임하기 전에 이해·가정·위험·계획을 물으면, 더 나은 지시문을 만들 수 있는지
-검증하는 최소 orchestrator–worker 프레임워크입니다. GAIA를 사용하며 실행 worker를 고정해
-지시문 변경 효과를 비교합니다.
+작업 기록과 evaluator 평가를 바탕으로 다음 작업·context·executor를 선택하는 최소
+orchestrator–worker 프레임워크입니다. `direct_execution`과 `multi_worker_probe` 두 조건을 지원합니다.
+기본 pool의 Luna와 Haiku 모두 executor가 될 수 있습니다.
 
 ## 어디부터 읽나
 
@@ -13,9 +13,10 @@ Worker에게 작업을 위임하기 전에 이해·가정·위험·계획을 물
 | 조건·버전·실험 용어 이해 | [실험 안내](docs/experiments.md) |
 | 지금까지의 결과 확인 | [보고서 목록](docs/reports/index.md) → 최신 종합 보고서 |
 | 유효한 구현 결정 확인 | [현재 결정](docs/decisions.md) |
+| 구성 설계·도입 범위 | [Executor 선택·작업 기록·실행 후 평가 설계안](docs/design/shared-state-evaluation-and-routing.ko.md) |
 | 실행 환경·GPU 운영 | [Slurm 운영](docs/operations/slurm.md) |
 
-현재 프롬프트 식별자는 실행 `v10`, refiner `r12`입니다. 최신 구성의 전체 비교 결과는 아직 없습니다.
+현재 프롬프트는 실행 `v13`, probe/refiner `r15`, evaluator `e3`이며 도구는 `v6`입니다. 최신 구성의 전체 비교 결과는 아직 없습니다.
 과거 결과의 한계와 정정은 최신 종합 보고서를 기준으로 읽습니다.
 
 ## 구조
@@ -24,13 +25,15 @@ Worker에게 작업을 위임하기 전에 이해·가정·위험·계획을 물
 src/minpilot/
   agents/              orchestrator와 worker 실행
   prompts/             역할별 프롬프트 본문·입력 처리, 응답 스키마
-  refine/              probe → analysis → verification → rewrite
+  memory.py            artifact 원본·state·context 선택
+  controller.py        JSON 판단·읽기 전용 memory 조회
   harness.py           위임 루프, checkpoint, restore
   artifacts.py         실험 manifest와 원본 실행 탐색
   tools/, llm/         도구와 모델 호출
 configs/
-  pools/               역할·실행 worker·probe worker 구성
-  refiners/            현재 비교 조건; variants/는 선택적 기능
+  pools/               등록된 executor 후보 전체
+  conditions/          direct_execution / multi_worker_probe
+  refiners/            지원이 종료된 과거 설정; 당시 snapshot에서만 사용
 docs/                  현재 설계·실험 안내·보고서
 outputs/experiments/   목적별 원본 실행, manifest, 당시 코드 snapshot
 outputs/analysis/      보조 trace 묶음
@@ -46,7 +49,7 @@ conda activate doh_minpilot
 cp .env.example .env
 bash scripts/crawl4ai/ensure.sh
 python -m pytest
-python scripts/run_task.py fresh --task-id <id> --pool multi --refiner baseline
+python scripts/run_task.py fresh --task-id <id> --pool multi --condition direct_execution
 ```
 
 `.env`에 `OPENROUTER_API_KEY`, `SERPER_API_KEY`를 설정합니다.

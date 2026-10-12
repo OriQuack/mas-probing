@@ -11,54 +11,46 @@
 | replicate | 같은 조건의 반복. 기존 label의 `_r0`, `_r1`은 반복 번호 |
 | fresh / restore | 처음부터 실행 / 위임 직전 checkpoint에서 재개 |
 | delegation / d0 | worker 위임 한 번 / 0부터 센 첫 위임. 독립 subtask 개수와 같지 않음 |
-| role / executor / probe worker | 위임 역할 / 고정 실행 worker / 실행 전 질문에 답하는 worker |
+| executor / probe worker | 선택된 실행 worker / 실행 전 질문에 답하는 pool worker |
 | context / instruction | 이전 보고 정보 / 현재 작업 지시 |
-| trace stage | `orchestrator`, `execution`, `refine.review/probe/followup/analyze/verify/rewrite` 등 실행 내부 태그 |
+| trace stage | `orchestrator`, `orchestrator.select`, `probe`, `evaluator.probe`, `refiner`, `execution`, `evaluator.execution` |
 
 과거 실험의 stage 1~4, Phase A/B는 실험 진행 순서였으며 trace의 `stage`와 무관합니다.
 새 실험은 순서 대신 **목적을 이름에 씁니다**. 이름만으로 모델·프롬프트·도구 조건을 추측하지 않습니다.
 
-## 현재 조건
+## 현재 조건과 버전
 
-모든 현재 preset은 refiner `r12`을 사용합니다. `configs/refiners/`에 있습니다.
+| 조건 | 실행 |
+|---|---|
+| `direct_execution` | 작업·context·executor 선택 → 실행 → evaluator → state 제안 검토 |
+| `multi_worker_probe` | 초안 → pool 전체 독립 probe 각 1회/도구 최대 3회 → evaluator → executor·context 선택 → 필요한 refiner → 실행 → evaluator |
 
-| 설정 이름 | 수집 방법 | Probe 도구 |
+Orchestrator·evaluator·refiner는 `luna-high`를 별도 호출합니다. 초기 `multi` pool의 `gen_luna`, `gen_haiku` 모두
+executor 후보입니다. 다른 pool도 등록 worker 전체를 공개합니다. 역할별 고정 executor는 없습니다.
+사전 verification, 후속 probe, self_review, connected variant는 현재 runtime에서 지원하지 않습니다.
+`configs/conditions/`가 현재 설정이며 `configs/refiners/`는 과거 preset을 식별하는 자료입니다.
+이전 CLI `--refiner`, `--refiners`, `--refine-at`, override 옵션을 새 의미로 재사용하지 않습니다.
+
+| 식별자 | 현재 값 | 복원 |
 |---|---|---|
-| baseline | 검토 없이 초안 실행 | 해당 없음 |
-| self_review | orchestrator가 executor 응답 예측 | 없음 |
-| executor_probe | executor 실제 응답 1회 | 없음 |
-| executor_probe_tools | executor 실제 응답 1회 | 최대 3회 |
-| multi_worker_probe | executor와 Haiku 독립 응답 | 각 최대 3회 |
+| 실행 | `v13` | 동일 버전만 |
+| Probe/refiner | `r15` | 동일 버전만 |
+| Evaluator | `e3` | 동일 버전만 |
+| Tools | `v6`, `tools_v6.sqlite` | 도구 설정 동일; 기존 cache 유지 |
+| Checkpoint | format 2 | 초안 후/probe 전; 과거 format 변환 없음 |
 
-수집 뒤 analysis → 필요한 verification → rewrite는 공유합니다. 기본 설정의 검토 예산과 사전 확인 한도는
-동일하지만 실제 사용량, 모델, 응답 수·도구 기회는 다를 수 있습니다. 함께 기록하고 비교합니다.
+Artifact 원본·state 교체 전후·context 선택 snapshot·executor 선택/평가 채택 이유·실제 지시·도구 원문을
+trace로 연결합니다. `render_trace.py`는 해당 이벤트와 모델/도구 호출을 표시합니다. 비용은 모든 단계·재시도·
+조회·실패 호출을 포함합니다. `score_runs.py`의 기존 `refine_usd`는 과거 의미를 유지하며 현재 실행에는
+`pre_execution_usd`, `evaluator_usd`, Serper billed/unknown credit 열을 추가합니다. 전체 비교는 `cost_usd`를 봅니다.
 
-`variants/`에는 pool 전체 probe/예측, executor 2회 probe, 후속 질문, 대화 연결, 연결 후 재작성 생략
-기능 preset이 있습니다. 현재 프롬프트로 동작하며 과거 r5 조건의 재현이라고 부르면 안 됩니다.
+Run 상한은 위임 12회, LLM/도구 각각 400회, $5, 3시간입니다. 위임 전 상한은 LLM 60회/$1입니다.
+Serper는 task당 100 credits이며 probe와 실행·재시도를 합산하고 cache는 제외합니다. 429 등의 비과금 응답과
+과금 불명 시도를 구분합니다. Unknown은 한도의 여유를 소비하고 알려진 청구 비용과 별도로 기록합니다.
+한도 이후 cache/무료 fallback이 가능하며 제한 상태를 입력과 trace에 표시합니다.
 
-Pool 이름은 `multi`(일반 역할 하나 + executor/probe-only worker), `single`(동일 역할·worker 하나),
-`role_routing`(web/file 역할), `redundant`(동일 작업의 복수 후보)입니다. 모델 선택은 각 YAML에 명시합니다.
-
-## 버전
-
-| 식별자 | 축 | 현재 값 / 규칙 |
-|---|---|---|
-| `PROMPTS_VERSION` | orchestrator·worker 및 원 문제 포장 | `v10`; restore 시 동일해야 함 |
-| `REFINER_PROMPTS_VERSION` | probe·예측·분석·확인·재작성 | `r12`; 위임 후 개입이므로 더 최신 버전 사용 가능 |
-| `tools_version` | 도구 동작 | ToolConfig에 기록; restore 동일성 검사 |
-| `blocklist_version` | 오염 필터 | 별도 축; 더 최신 필터는 허용 |
-
-`v`, `r`은 모델 버전·실험 단계·반복 수를 뜻하지 않습니다. 프롬프트 식별자는 출처 확인을 위해 유지했습니다.
-과거 코드별 세부 변경은 [역사적 결정 기록](history/decisions-before-cleanup.md), 결과 해석은
-[최신 종합 보고서](reports/2026-10-10-synthesis.ko.md)를 봅니다.
-현재 runtime에는 이전 prompt 구현이 없습니다. 과거 실행의 당시 코드 snapshot은 해당 실험에 보존합니다.
-v8은 orchestrator의 작업 선택·분해·보고 판단 문구를 재작성한 버전입니다.
-v9은 실행 worker 문구를 재작성하고, r10은 별도 probe system prompt와 assumptions label을 도입합니다.
-r10에서는 refiner 정책을 유지하고 analysis의 항목 명칭만 맞췄습니다.
-r11은 refiner의 검토·수정 문구를 재작성합니다. 정상적인 subtask 범위를 보존하고, 미해결 해석은 확인으로 처리하며 실제 근거 부족은 보고하도록 명확히 했습니다. Pipeline과 응답 스키마는 유지합니다.
-
-실행 v10 / refiner r12에서는 위임 경계와 context 근거 확인 기준을 구체화하고, probe 중복과 refiner 추상 표현을 줄였습니다. 결과에 영향 없는 구체적 우려는 `not_relevant`로 기록합니다. 역할·pipeline·응답 스키마는 유지하며 행동 효과는 아직 평가하지 않았습니다.
-v5/v6/v7/v8/v9 checkpoint를 현재 v10 코드로 복원하는 것은 지원하지 않습니다.
+이전 v10/r12 및 그 이전 조건·checkpoint는 당시 snapshot으로 재현합니다. 아래 과거 이름 대응은 원본 기록을
+읽기 위한 것이며 현재 runtime preset이 아닙니다. 과거 실행·snapshot·cache는 수정하지 않습니다.
 
 ## 과거 이름 대응
 
@@ -84,7 +76,7 @@ v5/v6/v7/v8/v9 checkpoint를 현재 v10 코드로 복원하는 것은 지원하�
   (예: `--compare A_none c3_probe_multi`). 기록에 없는 이름을 주면 비교 결과가 출력되지 않습니다.
 - **Restore:** `run_batch.py --checkpoints`와 `run_task.py restore`는 이동 대응표를 쓰지 않고 주어진 경로를
   그대로 엽니다. 과거 실험의 `cks*.txt`는 정리 전 `outputs/sessions/...` 경로이므로 먼저 현재 경로로 바꿉니다.
-  현재 코드(v10)에서는 기존 v7 `2026-10-10_updated-prompt-diagnostics/base`의 checkpoint도 restore할 수 없습니다. 당시 코드 snapshot을 사용하거나 v10으로 새 checkpoint를 생성해야 합니다.
+  현재 코드(v13)에서는 기존 v7 `2026-10-10_updated-prompt-diagnostics/base`의 checkpoint도 restore할 수 없습니다. 당시 코드 snapshot을 사용하거나 v13로 새 checkpoint를 생성해야 합니다.
 
 ```bash
 while read -r ck; do python scripts/experiments.py resolve "$ck"; done \
@@ -123,20 +115,24 @@ python scripts/experiments.py verify
 채점은 실험별로 수행합니다. 서로 다른 실험을 한 번에 합산하는 입력은 거부합니다.
 과거 checkpoint 경로는 도구가 이동 대응표로 찾아 비용·짝지은 비교에 사용합니다.
 
-## 실행 예
+## 실행 예와 다음 비교
 
 ```bash
-python scripts/run_batch.py --tasks data/splits/baseline_v1.csv --pool multi \
-  --refiner baseline --reps 1 --purpose "Baseline recording" \
-  --experiment outputs/experiments/<date>_baseline-recording
-python scripts/run_batch.py --checkpoints checkpoints.txt \
-  --refiners baseline self_review executor_probe multi_worker_probe --reps 3 \
-  --purpose "Real versus predicted probe answers" \
-  --experiment outputs/experiments/<date>_probe-answer-comparison
-python scripts/score_runs.py outputs/experiments/<experiment> \
-  --expected outputs/experiments/<experiment>/planned.csv \
-  --compare self_review multi_worker_probe
+python scripts/run_task.py fresh --task-id <id> --pool multi --condition direct_execution
+python scripts/run_task.py fresh --task-id <id> --pool multi --condition multi_worker_probe
+python scripts/run_task.py restore --checkpoint <v13-run>/checkpoints/d0 --condition multi_worker_probe
+python scripts/run_batch.py --tasks <exploratory-tasks.csv> --pool multi --condition direct_execution \
+  --reps <fixed-reps> --purpose "Shared state fresh comparison" \
+  --experiment outputs/experiments/<date>_shared-state-comparison
 ```
+
+위 예는 사용법이며 이번 구현에서 유료 실행하지 않았습니다. 오프라인 scripted model·fake web/HTTP 검사를
+먼저 완료합니다. 기존 탐색 task의 두 조건 **fresh** 비교는 반복 수·총 지출·실행 순서를 별도로 확정한 뒤
+수행합니다. 최초 비교는 전체 구성의 효과이며 기능별 기여는 후속 ablation으로 확인합니다. 누락/실패도 각
+조건 분모에 포함하고 반복은 task 안에서 평균한 뒤 task를 동일 가중합니다.
+
+`score_runs.py --compare`는 기존 restore pairing 전용입니다. 전체 구성 fresh 비교의 조건 순서/집계 계획은
+실험 전에 별도로 확정하며 restore 비교를 fresh 비교처럼 해석하지 않습니다.
 
 문제 split은 고정입니다. `baseline_v1`은 탐색용 50문제이며 평가 집합이 아닙니다.
 `eval_v1`은 본 평가까지 실행·열람·튜닝에 사용하지 않습니다.

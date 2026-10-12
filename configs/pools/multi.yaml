@@ -1,8 +1,3 @@
-# One role (id `worker`, P8), several worker models (decision P7; the default pool). The executor is fixed (gen_luna);
-# the other workers are probe-only: they answer probes (and are never executors), so a condition's effect is not
-# mixed with worker selection. All workers share the system prompt and tools (P4). The orchestrator sees one role
-# (P6) and never sees the probe-only workers. To add a model: add a worker here and to `probe_workers`; a
-# condition picks its probe workers with `probe_workers` (executor | pool | a list of worker ids; P5).
 name: multi
 workers:
   - id: gen_luna
@@ -17,8 +12,3 @@ workers:
     tools: [web_search, read_url, read_url_text, find_in_url, read_file, view_image, run_python]
     max_tool_calls: 20
     system_prompt: *generalist
-roles:
-  - id: worker
-    description: Searches the web, reads web pages, files and images, and computes with Python.
-    executor: gen_luna
-    probe_workers: [gen_luna, gen_haiku]

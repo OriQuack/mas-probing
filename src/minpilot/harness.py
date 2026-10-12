@@ -1,31 +1,4 @@
-"""The harness: one GAIA task, one run directory, one dynamic orchestrator loop.
-
-    loop:  orchestrator action
-             finish   -> final answer, done
-             delegate -> [DELEGATION POINT k: checkpoint] -> refiner (if refine_at selects k) or override
-                         -> call_worker(executor, original_task, instruction, context) on the main workspace
-                         -> report appended to the orchestrator's history
-
-`call_worker(worker_id, original_task, instruction, context="") -> report` is the only way work gets done. The
-orchestrator's delegate action has a `context` (what earlier reports said) and an `instruction` (this subtask); the
-refiner may change only the instruction and the context is sent unchanged (decision F21). The orchestrator
-never touches tools or files. Workers are stateless between calls, so the run state at a delegation point is
-small: the orchestrator's messages, the pending action, the delegation log, budget counters, tool counters
-(search pin, code-run numbering) and the workspace files. That is exactly what a checkpoint saves.
-
-Restores: `Run.restore(checkpoint, ...)` copies the checkpoint's workspace into a new run dir, verifies a
-fingerprint of everything the continuation starts from, and resumes at the pending delegation with the given
-refiner (condition) or a given instruction override (Exp 1, post-hoc). With `refine_at="first"` the refiner acts
-on the first delegation this run handles: d0 for a fresh run, the restored delegation for a restore.
-
-Run dir (outputs/runs/<task_id>/<stamp>_<label>/):
-  run.json, events.jsonl, llm_calls.jsonl, messages.jsonl, tool_calls.jsonl
-  work/                     the main workspace (attachments/ inside)
-  checkpoints/d<k>/         state.json, fingerprint.json, request.json (the refiner's input), work/
-  refine/d<k>.json          everything the refiner did at delegation k (answers, analysis, checks, rewrite)
-  scratch/d<k>/<label>/     scratch workspaces of probes and verifications
-"""
-
+"""Sequential shared-state runtime: direct execution or independent pool probes."""
 from __future__ import annotations
 
 import datetime as dt
@@ -40,13 +13,16 @@ from pathlib import Path
 from typing import Any
 
 from minpilot import prompts
-from minpilot.agents.orchestrator import Action, InvalidAction, Orchestrator
+from minpilot.controller import DecisionError, decide
+from minpilot.memory import Memory
+from minpilot.prompts.orchestrator import ORCHESTRATOR
+from minpilot.prompts.evaluator import EVALUATOR, EVALUATOR_VERSION
+from minpilot.prompts.refiner import REFINER
 from minpilot.agents.worker import Worker, WorkerCall
-from minpilot.config import RefinerConfig, RunConfig, run_config_from_dict
+from minpilot.config import RunConfig, run_config_from_dict
 from minpilot.data.gaia import ANSWER_FORMAT, GaiaTask
-from minpilot.llm.client import LLMClient, Transport, json_schema_format
+from minpilot.llm.client import LLMClient
 from minpilot.llm.specs import get_spec
-from minpilot.refine.base import RefineRequest, RefineResult, make_refiner
 from minpilot.runtime.costs import COSTS_VERSION, TOOL_USD_PER_CREDIT
 from minpilot.runtime.trace import BudgetExceeded, InfraError, Trace
 from minpilot.tools.config import REPO_ROOT, ToolConfig
@@ -55,7 +31,7 @@ from minpilot.tools.reader import PageReader
 from minpilot.tools.toolbox import Toolbox
 from minpilot.tools.web import WebTools
 
-STATE_FORMAT = 1
+STATE_FORMAT = 2
 RUNS_ROOT = REPO_ROOT / "outputs" / "runs"
 
 
@@ -143,378 +119,380 @@ def original_task_of(task: GaiaTask, reference_date: str | None = None) -> str:
 
 
 class Run:
-    def __init__(self, cfg: RunConfig, task: GaiaTask, run_dir: Path | str, *, transport: Transport | None = None,
-                 web: WebTools | None = None, tool_cfg: ToolConfig | None = None, reader_identity: dict | None = None):
-        self.cfg = cfg
-        self.task = task
+    def __init__(self, cfg: RunConfig, task: GaiaTask, run_dir: Path | str, *, transport=None,
+                 web=None, tool_cfg=None, reader_identity=None):
+        self.cfg, self.task = cfg, task
         self.run_dir = Path(run_dir)
         self.run_dir.mkdir(parents=True, exist_ok=True)
         self.work_dir = self.run_dir / "work"
         self.tool_cfg = tool_cfg or ToolConfig()
         self.reader_identity = reader_identity
         self.trace = Trace(self.run_dir, cfg.budget)
-        # fixed when a fresh run starts; a restore takes the checkpoint's (decision F19)
-        self.reference_date = dt.datetime.now(dt.timezone.utc).date().isoformat()
+        self.memory = Memory(self.run_dir / "artifacts", self.trace)
+        self.reference_date = dt.datetime.now(dt.timezone(dt.timedelta(hours=9))).date().isoformat()
         self.original_task = original_task_of(task, self.reference_date)
-        self.transport = transport
-        self.clients: dict[str, LLMClient] = {}
+        self.transport, self.clients = transport, {}
         self.web = web or WebTools(self.tool_cfg, question=task.question)
-        if self.web.reader is None:  # read_url's page reader: a fixed model on the run's client and budgets
+        if self.web.reader is None:
             self.web.reader = PageReader(self.client(self.tool_cfg.reader_model), self.tool_cfg)
-        self.toolbox: Toolbox | None = None
+        self.toolbox = None
         self.workers = {wid: Worker(spec, self.client(spec.model)) for wid, spec in cfg.pool.workers.items()}
-        # the answer rules come from the benchmark (GAIA's own), not from the framework
-        self.orchestrator = Orchestrator(self.client(cfg.orchestrator_model), self.role_list(), cfg.max_delegations,
-                                         answer_format=ANSWER_FORMAT)
-        self.refiner = make_refiner(cfg.refiner)
-        for role in cfg.pool.roles.values():  # fail at start, not at the first delegation
-            cfg.refiner.probe_workers_for(role, cfg.pool)
-        self.messages: list[dict] = []
-        self.delegations: list[dict] = []
-        self.handled = 0                    # delegations handled by this process (refine_at="first")
-        self.info: dict[str, Any] = {}
+        self.delegations, self.latest_evaluation = [], None
+        self.info = {}
 
-    # -- building blocks ---------------------------------------------------------------------
-    def client(self, key: str) -> LLMClient:
+    def client(self, key):
         if key not in self.clients:
             self.clients[key] = LLMClient(get_spec(key), self.trace, transport=self.transport)
         return self.clients[key]
 
-    def role_name(self, role_id: str) -> str:
-        """How prompts name a role: "the worker" when the pool has one role (no role id is shown), else its id."""
-        return "the worker" if len(self.cfg.pool.roles) == 1 else role_id
+    def worker_list(self):
+        return [{"id": w.id, "model": w.model, "tools": list(w.tools), "system_prompt": w.system_prompt,
+                 "input_formats": ["text", "image"], "max_tool_calls": w.max_tool_calls, "context_window": get_spec(w.model).context_window,
+                 "max_tokens": get_spec(w.model).max_tokens,
+                 "price_prompt": get_spec(w.model).price_prompt,
+                 "price_completion": get_spec(w.model).price_completion}
+                for w in self.cfg.pool.workers.values()]
 
-    def role_list(self) -> list[dict]:
-        return [{"id": r.id, "description": r.description, "tools": list(self.cfg.pool.role_tools(r.id))}
-                for r in self.cfg.pool.roles.values()]
-
-    def model_identities(self) -> dict:
-        keys = {self.cfg.orchestrator_model, self.cfg.refiner_model, self.tool_cfg.reader_model,
-                *(w.model for w in self.cfg.pool.workers.values())}
+    def model_identities(self):
+        keys = {self.cfg.orchestrator_model, self.cfg.evaluator_model, self.cfg.refiner_model,
+                self.tool_cfg.reader_model, *(w.model for w in self.cfg.pool.workers.values())}
         return {k: get_spec(k).identity() for k in sorted(keys)}
 
-    def _setup_workspace(self) -> None:
+    def _write_run_json(self, **extra):
+        self.info.update(extra)
+        (self.run_dir / "run.json").write_text(json.dumps(self.info, ensure_ascii=False, indent=2, default=str))
+
+    def _base_info(self, mode):
+        return {"task_id": self.task.task_id, "level": self.task.level, "mode": mode, "label": self.cfg.label,
+                "condition": self.cfg.condition.name, "status": "running", "final_answer": None,
+                "started_at": time.time(), "git_commit": git_commit(), "code_hash": code_hash(),
+                "prompts_version": prompts.PROMPTS_VERSION, "refiner_prompts_version": prompts.REFINER_PROMPTS_VERSION,
+                "evaluator_prompts_version": EVALUATOR_VERSION, "config": self.cfg.to_dict(),
+                "models": self.model_identities(), "tools": self.tool_cfg.to_dict(),
+                "costs": {"version": COSTS_VERSION, "tool_usd_per_credit": TOOL_USD_PER_CREDIT},
+                "reader_identity": self.reader_identity, "reference_date": self.reference_date}
+
+    def run_fresh(self):
+        self._write_run_json(**self._base_info("fresh"))
         att = self.work_dir / "attachments"
         att.mkdir(parents=True, exist_ok=True)
         if self.task.file_path:
             shutil.copy2(self.task.file_path, att / self.task.file_name)
-
-    def _write_run_json(self, **extra) -> None:
-        self.info.update(extra)
-        (self.run_dir / "run.json").write_text(json.dumps(self.info, indent=1, ensure_ascii=False, default=str))
-
-    def _base_info(self, mode: str) -> dict:
-        return {"task_id": self.task.task_id, "level": self.task.level, "mode": mode, "label": self.cfg.label,
-                "condition": self.cfg.refiner.name, "refine_at": self.cfg.refine_at, "status": "running",
-                "final_answer": None, "started_at": time.time(), "git_commit": git_commit(), "code_hash": code_hash(),
-                "prompts_version": prompts.PROMPTS_VERSION,
-                "refiner_prompts_version": prompts.REFINER_PROMPTS_VERSION, "config": self.cfg.to_dict(),
-                "costs": {"version": COSTS_VERSION, "tool_usd_per_credit": TOOL_USD_PER_CREDIT},
-                "models": self.model_identities(), "tools": self.tool_cfg.to_dict(),
-                "reader_identity": self.reader_identity, "reference_date": self.reference_date}
-
-    # -- entry points ------------------------------------------------------------------------
-    def run_fresh(self) -> dict:
-        self._write_run_json(**self._base_info("fresh"))
-        try:
-            self._setup_workspace()
-            self.toolbox = Toolbox(self.work_dir, self.web, self.trace, question=self.task.question)
-            self.messages = self.orchestrator.initial_messages(self.original_task)
-        except Exception as e:
-            return self._finish("error_init", error=repr(e), tb=traceback.format_exc())
+        self.toolbox = Toolbox(self.work_dir, self.web, self.trace, question=self.task.question)
         return self._guarded(lambda: self._loop(None))
 
-    @classmethod
-    def restore(cls, checkpoint: Path | str, run_dir: Path | str, *, refiner: RefinerConfig | None = None,
-                refine_at: str | None = None, label: str | None = None, override: str | None = None,
-                override_source: str | None = None, task: GaiaTask | None = None, **kw) -> "Run":
-        """Build a run that continues from `checkpoint`. The pool, models, budgets and tools come from the
-        checkpoint; only the refiner (condition), refine_at and label may differ, or an instruction override."""
-        ck = Path(checkpoint)
-        state = json.loads((ck / "state.json").read_text())
-        if state.get("format") != STATE_FORMAT:
-            raise ValueError(f"checkpoint format {state.get('format')} != {STATE_FORMAT}")
-        d = dict(state["config"])
-        if refiner is not None:
-            d["refiner"] = refiner.to_dict()
-        if refine_at is not None:
-            d["refine_at"] = refine_at
-        if label is not None:
-            d["label"] = label
-        cfg = run_config_from_dict(d)
-        if task is None:
-            from minpilot.data.gaia import load_task
+    def _payload(self, request, **extra):
+        return {"request": request, "original_task": self.original_task, "state": self.memory.state,
+                "artifacts": self.memory.catalog(), "workers": self.worker_list(),
+                "condition": self.cfg.condition.name, "evaluation": self.latest_evaluation,
+                "remaining_delegations": self.cfg.max_delegations - len(self.delegations),
+                "budget": self.trace.state_dict(),
+                "active_budgets": [{"scope": s.name, "limits": s.limits.__dict__, "spent": s.counters()}
+                                   for s in self.trace.scopes], "paid_search": self.web.state_dict().get("paid_search"),
+                "answer_format": ANSWER_FORMAT, **extra}
 
-            task = load_task(state["task_id"])
-        if task.task_id != state["task_id"]:
-            raise ValueError(f"checkpoint is for task {state['task_id']}, not {task.task_id}")
-        run = cls(cfg, task, run_dir, **kw)
-        run._restore_state(ck, state, override, override_source)
-        return run
+    def _validate_selection(self, data, *, next_action=False, must_finish=False):
+        action = data.get("action")
+        if not isinstance(data.get("rationale"), str) or not data["rationale"].strip():
+            raise ValueError("rationale is required")
+        if type(data.get("accept_state")) is not bool or not isinstance(data.get("state_reason"), str):
+            raise ValueError("accept_state boolean and state_reason required")
+        if self.latest_evaluation and not data["state_reason"].strip():
+            raise ValueError("explain adoption/rejection of the evaluation")
+        if next_action and action == "finish":
+            if not isinstance(data.get("answer"), str) or not data["answer"].strip():
+                raise ValueError("finish requires answer")
+            return
+        if must_finish or action != ("delegate" if next_action else "select"):
+            raise ValueError("return finish" if must_finish else "invalid decision action")
+        if not isinstance(data.get("instruction"), str) or not data["instruction"].strip():
+            raise ValueError("instruction required")
+        if not (next_action and self.cfg.condition.name == "multi_worker_probe"):
+            if data.get("worker_id") not in self.workers:
+                raise ValueError("select a registered worker_id")
+        self.memory.context(data.get("artifact_ids"), data.get("state_rows"))
+        if not next_action and (type(data.get("refine")) is not bool or not isinstance(data.get("changes"), str)):
+            raise ValueError("select requires refine boolean and changes string")
+        if not next_action and self.cfg.condition.name == "direct_execution" and data["refine"]:
+            raise ValueError("direct_execution does not refine instructions")
+        if not next_action and data["refine"] and not data["changes"].strip():
+            raise ValueError("refinement requires approved changes")
 
-    def _restore_state(self, ck: Path, state: dict, override: str | None, override_source: str | None) -> None:
-        # the checkpoint's date (None for checkpoints recorded before reference dates: the task text had none)
-        self.reference_date = state.get("reference_date")
-        self.original_task = original_task_of(self.task, self.reference_date)
-        self.info = self._base_info("restore")
-        self.info.update(restored_from=str(ck.resolve()), restored_delegation=state["delegation"],
-                         override=override is not None, override_source=override_source)
-        self._write_run_json()
-        problems = []
-        if state["models"] != self.model_identities():
-            problems.append("model identities differ from the checkpoint")
-        now_tools = self.tool_cfg.to_dict()
-        if state["tools"]["tools_version"] != now_tools["tools_version"]:
-            problems.append(f"tools_version differs ({state['tools']['tools_version']} vs {now_tools['tools_version']})")
-        # every setting that changes what a tool returns (page size, reader chain, timeouts, ...), not only versions
-        old_id, new_id = tool_identity(state["tools"]), tool_identity(now_tools)
-        if diff := sorted(k for k in set(old_id) | set(new_id) if old_id.get(k) != new_id.get(k)):
-            problems.append(f"tool settings differ: {diff}")
-        # the page-reader service (image digest) when the chain uses it
-        if "crawl4ai" in now_tools["reader_chain"]:
-            saved, now = state.get("reader_identity"), self.reader_identity
-            if (saved or now) and not same_identity(saved, now):
-                problems.append("page-reader service identity differs from the checkpoint's")
-        if bad := escaping_symlinks(ck / "work"):
-            problems.append(f"checkpoint workspace has symlinks leading outside it: {bad[:5]}")
-        # code changes are recorded, not refused: the versions above are the restore contract (decision T9)
-        saved_code = state.get("code_hash")
-        self.info["checkpoint_code_hash"] = saved_code
-        # None = unknown (checkpoints recorded before code hashes existed)
-        self.info["code_changed_since_checkpoint"] = None if not saved_code else saved_code != code_hash()
-        # A newer blocklist may continue an older checkpoint (it only removes leak paths, and every condition of a
-        # paired comparison restores under the same one); an older blocklist may not.
-        if _version_num(now_tools["blocklist_version"]) < _version_num(state["tools"]["blocklist_version"]):
-            problems.append(f"blocklist_version is older than the checkpoint's ({now_tools['blocklist_version']} < "
-                            f"{state['tools']['blocklist_version']})")
-        self.info["checkpoint_blocklist_version"] = state["tools"]["blocklist_version"]
-        if state["prompts_version"] != prompts.PROMPTS_VERSION:
-            problems.append("prompts version differs")
-        if problems:
-            raise ValueError("refusing to restore: " + "; ".join(problems))
-        shutil.copytree(ck / "work", self.work_dir, symlinks=True)
-        self.toolbox = Toolbox(self.work_dir, self.web, self.trace, question=self.task.question)
-        self.messages = state["messages"]
-        self.delegations = state["delegations"]
-        self.trace.load_state_dict(state["trace"])
-        self.web.load_state_dict(state["web"])
-        self.toolbox.load_state_dict(state["toolbox"])
-        self._pending = (Action(**state["pending_action"]), state["delegation"])
-        self._override = (override, override_source)
-        saved = json.loads((ck / "fingerprint.json").read_text())
-        now = self.fingerprint(self._pending[0], state["delegation"])
-        check = {k: saved[k] == now[k] for k in saved}
-        (self.run_dir / "restore_check.json").write_text(json.dumps({"match": all(check.values()), "keys": check},
-                                                                     indent=1))
-        self.trace.event("restore_check", match=all(check.values()), keys=check, checkpoint=str(ck))
-        if not all(check.values()):
-            raise ValueError(f"restore fingerprint mismatch: {[k for k, v in check.items() if not v]}")
+    def _orchestrate(self, request, *, must_finish=False, **extra):
+        payload = self._payload(request, must_finish=must_finish, **extra)
+        data = decide(self.client(self.cfg.orchestrator_model), self.trace, self.memory,
+                      stage="orchestrator" if request == "next_action" else "orchestrator.select",
+                      system=ORCHESTRATOR, payload=payload,
+                      validate=lambda d: self._validate_selection(d, next_action=request == "next_action",
+                                                                   must_finish=must_finish))
+        # Resolve row numbers against the exact input snapshot BEFORE applying evaluator proposals.
+        context = self.memory.context(data.get("artifact_ids") or [], data.get("state_rows") or [])
+        self.trace.event("context_selection", snapshot=self.memory.state, artifact_ids=data.get("artifact_ids") or [],
+                         state_rows=data.get("state_rows") or [], context=context, request=request)
+        data["context_snapshot"] = json.loads(json.dumps(self.memory.state))
+        self._adopt(data)
+        data["context"] = context
+        return data
 
-    def run_restored(self) -> dict:
-        action, k = self._pending
-        return self._guarded(lambda: self._loop((action, k)))
+    def _adopt(self, decision):
+        evaluation = self.latest_evaluation
+        if not evaluation:
+            return
+        self.trace.event("evaluation_decision", evaluation=evaluation["artifact_id"],
+                         accepted=decision["accept_state"], reason=decision["state_reason"])
+        if decision["accept_state"] and evaluation.get("proposal") is not None:
+            self.memory.replace(evaluation["proposal"]["state"], evaluation=evaluation["artifact_id"],
+                                decision=decision["state_reason"])
+        self.latest_evaluation = None
 
-    # -- the loop ----------------------------------------------------------------------------
-    def _guarded(self, fn) -> dict:
+    def _evaluate(self, stage, instruction, context, reports):
+        payload = self._payload(f"evaluate_{stage}", instruction=instruction, context=context, reports=[{k: v for k, v in r.items() if k != "tool_records"} for r in reports])
+
+        def validate(data):
+            if data.get("action") != "evaluate":
+                raise ValueError("expected evaluate")
+            self.memory.validate_state(data.get("state"))
+            for field in ("title", "rationale", "changes"):
+                if not isinstance(data.get(field), str):
+                    raise ValueError(f"missing {field}")
+            if type(data.get("requires_decision")) is not bool:
+                raise ValueError("requires_decision boolean required")
+        try:
+            proposal, raw_response = decide(self.client(self.cfg.evaluator_model), self.trace, self.memory,
+                              stage=f"evaluator.{stage}", system=EVALUATOR, payload=payload, validate=validate, with_raw=True)
+            artifact = self.memory.add("evaluator", f"evaluation.{stage}", raw_response, title=proposal["title"])
+            self.latest_evaluation = {"artifact_id": artifact["id"], "proposal": proposal}
+        except DecisionError as error:
+            for original in error.responses or [str(error)]:
+                artifact = self.memory.add("evaluator", f"evaluation.{stage}", original, status="failed")
+            self.latest_evaluation = {"artifact_id": artifact["id"], "proposal": None, "error": str(error),
+                                      "new_report_ids": [r["id"] for r in reports],
+                                      "reports": [{k: v for k, v in r.items() if k != "tool_records"} for r in reports]}
+
+    def _loop(self, pending):
+        while True:
+            k = len(self.delegations)
+            with self.trace.tags(delegation=k):
+                if pending is None:
+                    action = self._orchestrate("next_action", must_finish=k >= self.cfg.max_delegations)
+                    self.trace.event("action", **action)
+                    if action["action"] == "finish":
+                        self.info.update(final_rationale=action["rationale"], forced_finish=k >= self.cfg.max_delegations)
+                        return action["answer"], "ok"
+                    if self.cfg.checkpoint:
+                        self.save_checkpoint(action, k)
+                else:
+                    action, pending = pending, None
+                self._delegate(action, k)
+
+    def _probe(self, worker_id, instruction, context, k):
+        scratch = self.run_dir / "scratch" / f"d{k}" / worker_id
+        shutil.copytree(self.work_dir, scratch, symlinks=True)
+        toolbox = Toolbox(scratch, self.web.fork(), self.trace, question=self.task.question)
+        toolbox.load_state_dict(self.toolbox.state_dict())
+        with self.trace.tags(stage="probe", worker=worker_id):
+            self.workers[worker_id].last_messages = []
+            try:
+                self.trace.before_worker_call()
+                call = self.workers[worker_id].run(self.original_task,
+                        prompts.probe_instruction(instruction, True, 3), toolbox, max_tool_calls=3,
+                        context=context, kind="probe")
+            except BudgetExceeded as error:
+                self.memory.add(worker_id, "probe", str(error), status="budget_exceeded",
+                                messages=self.workers[worker_id].last_messages)
+                raise
+            except Exception as error:
+                call = WorkerCall(str(error), getattr(self.workers[worker_id], "last_messages", []), "failed")
+        return self.memory.add(worker_id, "probe", call.report, status=call.status, messages=call.messages)
+
+    def _delegate(self, action, k):
+        draft, context = action["instruction"], action["context"]
+        selected = action
+        pre_status = "not_needed"
+        # All pre-execution work shares the $1 / 60-LLM scope, including reads and repairs.
+        try:
+            with self.trace.budget_scope("pre_execution", self.cfg.condition.budget):
+                if self.cfg.condition.name == "direct_execution" and selected.get("worker_id") not in self.workers:
+                    selected = self._orchestrate("select_executor", draft=draft, approved_context=context,
+                                                 reason="Restored probe draft has no executor; select directly without probes or refinement.")
+                    context = selected["context"]
+                if self.cfg.condition.name == "multi_worker_probe":
+                    probes = [self._probe(wid, draft, context, k) for wid in self.workers]
+                    self._evaluate("probe", draft, context, probes)
+                    selected = self._orchestrate("select_executor", draft=draft, probe_context=context,
+                                                 probes=[{key: value for key, value in p.items() if key != "tool_records"} for p in probes])
+                    context = selected["context"]
+                    if selected["refine"]:
+                        selected, context, pre_status = self._refine(selected, context)
+        except BudgetExceeded as error:
+            if error.scope == "run":
+                raise
+            pre_status = "pre_execution_budget_exceeded"
+            self.trace.event("pre_execution_budget_exceeded", what=error.what)
+            # No extra pre-execution calls after the scope is exhausted. Use the last approved
+            # selection, or a deterministic registered fallback when selection was never reached.
+            if selected.get("worker_id") not in self.workers:
+                selected = {**action, "worker_id": next(iter(self.workers)),
+                            "rationale": "Pre-execution budget exhausted before selection; registered pool fallback."}
+            context = selected.get("context", context)
+
+        wid = selected["worker_id"]
+        instruction = selected["instruction"]
+        self.trace.event("delegation", delegation=k, worker=wid, draft=draft, final=instruction,
+                         context=context, selection_reason=selected["rationale"], refine_status=pre_status, changed=instruction != draft)
+        with self.trace.tags(stage="execution", worker=wid):
+            self.workers[wid].last_messages = []
+            try:
+                call = self.run_worker(wid, self.original_task, instruction, context=context)
+            except (BudgetExceeded, InfraError) as error:
+                self.memory.add(wid, "execution", str(error), status="failed",
+                                messages=self.workers[wid].last_messages)
+                raise
+            except Exception as error:
+                call = WorkerCall(str(error), getattr(self.workers[wid], "last_messages", []), "failed")
+        report = self.memory.add(wid, "execution", call.report, status=call.status, messages=call.messages)
+        self.trace.event("report", worker=wid, artifact_id=report["id"], status=call.status,
+                         n_tool_calls=call.n_tool_calls, report=call.report)
+        self._evaluate("execution", instruction, context, [report])
+        repeat_of = next((d["index"] for d in self.delegations if " ".join(d["draft"].split()) == " ".join(draft.split())), None)
+        self.delegations.append({"changed": instruction != draft, "draft_chars": len(draft),
+                                 "final_chars": len(instruction), "repeat_of": repeat_of, "index": k, "worker": wid, "draft": draft, "final": instruction,
+                                 "context": context, "artifact_ids": selected.get("artifact_ids", []),
+                                 "state_rows": selected.get("state_rows", []), "report_id": report["id"],
+                                 "evaluation_id": self.latest_evaluation["artifact_id"],
+                                 "selection_reason": selected["rationale"], "refine_status": pre_status,
+                                 "report_status": call.status, "n_tool_calls": call.n_tool_calls})
+
+    def _refine(self, selected, context):
+        def validate(data):
+            if data.get("action") != "refine" or type(data.get("reconsider")) is not bool:
+                raise ValueError("expected refine and reconsider boolean")
+            for key in ("instruction", "context_notes", "rationale"):
+                if not isinstance(data.get(key), str):
+                    raise ValueError(f"missing {key}")
+            if not data["reconsider"] and not data["instruction"].strip():
+                raise ValueError("empty refined instruction")
+        try:
+            result = decide(self.client(self.cfg.refiner_model), self.trace, self.memory, stage="refiner",
+                            system=REFINER, payload={"original_task": self.original_task,
+                            "draft": selected["instruction"], "executor": next(w for w in self.worker_list()
+                            if w["id"] == selected["worker_id"]), "context": context,
+                            "relevant_state": json.loads(context).get("state", []) if context else [],
+                            "changes": selected["changes"]}, validate=validate)
+            if result["reconsider"]:
+                updated = self._orchestrate("refiner_reconsider", approved=selected, reconsider=result)
+                if updated["refine"]:
+                    raise DecisionError("refiner reconsider cannot repeat refinement")
+                return updated, updated["context"], "reconsidered"
+            return {**selected, "instruction": result["instruction"]}, (
+                context + ("\nContext clarification:\n" + result["context_notes"] if result["context_notes"] else "")), "rewritten"
+        except DecisionError:
+            return selected, context, "refiner_failed"
+
+    def run_worker(self, worker_id, original_task, instruction, *, context=""):
+        self.trace.before_worker_call()
+        return self.workers[worker_id].run(original_task, instruction, self.toolbox, context=context)
+
+    def call_worker(self, worker_id, original_task, instruction, context=""):
+        return self.run_worker(worker_id, original_task, instruction, context=context).report
+
+    def _guarded(self, fn):
         try:
             answer, status = fn()
             return self._finish(status, final_answer=answer)
-        except BudgetExceeded as e:
-            self.trace.event("budget_exceeded", scope=e.scope, what=e.what)
-            return self._finish("budget_exceeded", error=str(e))
-        except InfraError as e:
-            self.trace.event("error_infra", error=str(e))
-            return self._finish("error_infra", error=str(e))
-        except InvalidAction as e:
-            self.trace.event("invalid_action", error=str(e))
-            return self._finish("error", error=f"invalid_action: {e}")
-        except Exception as e:
-            self.trace.event("error", error=repr(e), tb=traceback.format_exc())
-            return self._finish("error", error=repr(e), tb=traceback.format_exc())
+        except BudgetExceeded as error:
+            return self._finish("budget_exceeded", error=str(error))
+        except InfraError as error:
+            return self._finish("error_infra", error=str(error))
+        except Exception as error:
+            return self._finish("error", error=repr(error), tb=traceback.format_exc())
 
-    def _loop(self, pending: tuple[Action, int] | None) -> tuple[str | None, str]:
-        override = getattr(self, "_override", (None, None))
-        while True:
-            if pending is not None:
-                action, k = pending
-                pending = None
-            else:
-                k = len(self.delegations)
-                must_finish = k >= self.cfg.max_delegations
-                with self.trace.tags(stage="orchestrator", delegation=k):
-                    action = self.orchestrator.next_action(self.messages, must_finish=must_finish)
-                self.trace.event("action", delegation=k, action=action.kind, worker_id=action.worker_id,
-                                 context=action.context, instruction=action.instruction, answer=action.answer,
-                                 rationale=action.rationale,
-                                 forced=must_finish, invalid_before=self.orchestrator.last_invalid)
-                if action.kind == "finish":
-                    # the answer is kept exactly as given (scoring extracts separately); the rationale is kept for
-                    # post-hoc reading of qualified answers (decisions F16)
-                    self.info.update(forced_finish=must_finish, final_rationale=action.rationale)
-                    return action.answer, "ok"
-                if self.cfg.checkpoint:
-                    self.save_checkpoint(action, k)
-            self._delegate(action, k, override)
-            override = (None, None)
-
-    # -- the worker interface (spec: call_worker(worker_id, original_task, instruction, context) -> report) --
-    def call_worker(self, worker_id: str, original_task: str, instruction: str, context: str = "") -> str:
-        """The spec's interface: run `worker_id` on the main workspace and return its report. Ports to other
-        frameworks implement this; the harness itself uses `run_worker`, which also returns status and tool
-        counts."""
-        return self.run_worker(worker_id, original_task, instruction, context=context).report
-
-    def run_worker(self, worker_id: str, original_task: str, instruction: str, *, context: str = "",
-                   history: list[dict] | None = None) -> WorkerCall:
-        self.trace.before_worker_call()
-        return self.workers[worker_id].run(original_task, instruction, self.toolbox, history=history,
-                                           context=context)
-
-    def _refine_here(self) -> bool:
-        return self.cfg.refine_at == "all" or (self.cfg.refine_at == "first" and self.handled == 0)
-
-    def _delegate(self, action: Action, k: int, override: tuple[str | None, str | None]) -> None:
-        role = self.cfg.pool.roles[action.worker_id]
-        req = RefineRequest(self.original_task, action.instruction, role.id, role.executor,
-                            self.cfg.refiner.probe_workers_for(role, self.cfg.pool), context=action.context,
-                            orchestrator_messages=tuple(self.messages))  # ends with the pending action (R22)
-        result: RefineResult
-        if override[0] is not None:
-            result = RefineResult(override[0], override[0] != action.instruction, "override",
-                                  {"override_source": override[1]})
-        elif self._refine_here():
-            with self.trace.tags(delegation=k, role=role.id):
-                result = self.refiner.refine(req, _Ctx(self, k))
-        else:
-            result = RefineResult(action.instruction, False, "not_selected", {})
-        self.handled += 1
-        # the orchestrator's context unchanged, then the review's facts under their own heading (F21)
-        sent_context = prompts.context_with_additions(action.context, result.context_additions)
-        if result.log:
-            (self.run_dir / "refine").mkdir(exist_ok=True)
-            (self.run_dir / "refine" / f"d{k}.json").write_text(json.dumps(
-                {**result.log, "status": result.status, "final": result.instruction,
-                 "context_additions": result.context_additions}, indent=1, ensure_ascii=False))
-        self.trace.event("delegation", delegation=k, role=role.id, worker=role.executor, draft=action.instruction,
-                         final=result.instruction, changed=result.changed, refine_status=result.status,
-                         context_additions=result.context_additions,
-                         refiner=self.cfg.refiner.name, connected=result.execution_history is not None)
-        with self.trace.tags(stage="execution", delegation=k, role=role.id, worker=role.executor):
-            call = self.run_worker(role.executor, self.original_task, result.instruction, context=sent_context,
-                                   history=result.execution_history)
-        self.trace.event("report", delegation=k, worker=role.executor, status=call.status,
-                         n_tool_calls=call.n_tool_calls, report=call.report)
-        # repeat_of: an earlier delegation whose draft is the same text (whitespace aside): repeated work (F20)
-        same = " ".join(action.instruction.split())
-        repeat_of = next((d["index"] for d in self.delegations if " ".join(d["draft"].split()) == same), None)
-        self.delegations.append({"index": k, "role": role.id, "worker": role.executor, "context": action.context,
-                                 "context_additions": result.context_additions, "draft": action.instruction,
-                                 "final": result.instruction, "changed": result.changed,
-                                 "refine_status": result.status, "report_status": call.status,
-                                 "n_tool_calls": call.n_tool_calls, "draft_chars": len(action.instruction),
-                                 "final_chars": len(result.instruction), "repeat_of": repeat_of})
-        sent = result.instruction if (result.changed and self.cfg.show_final_instruction) else None
-        added = result.context_additions if self.cfg.show_final_instruction else None
-        self.messages.append({"role": "user", "content": prompts.report_message(self.role_name(role.id), k,
-                                                                                call.report, sent, added)})
-
-    def _finish(self, status: str, **extra) -> dict:
-        warnings = reasoning_warnings(self.trace.usage)
-        self.trace.event("run_end", status=status, warnings=warnings)
+    def _finish(self, status, **extra):
+        self.trace.event("run_end", status=status)
         self._write_run_json(status=status, ended_at=time.time(), n_delegations=len(self.delegations),
-                             n_repeated_delegations=sum(d.get("repeat_of") is not None for d in self.delegations),
+                             n_repeated_delegations=sum(d["repeat_of"] is not None for d in self.delegations),
                              delegations=self.delegations, usage=self.trace.usage,
-                             counters=self.trace.run_scope.counters(), warnings=warnings, **extra)
+                             counters=self.trace.run_scope.counters(), state=self.memory.state,
+                             artifacts=self.memory.catalog(), paid_search=self.web.state_dict().get("paid_search"),
+                             warnings=reasoning_warnings(self.trace.usage), **extra)
         return self.info
 
-    # -- checkpoints -------------------------------------------------------------------------
-    def fingerprint(self, action: Action, k: int) -> dict:
-        """Everything the continuation from delegation k starts from."""
-        return {"orchestrator_messages": _sha(self.messages), "pending_action": _sha(action.__dict__),
-                "delegations": _sha(self.delegations), "work": _sha(dir_digest(self.work_dir)),
-                "web": _sha(self.web.state_dict()), "toolbox": _sha(self.toolbox.state_dict()),
-                "original_task": _sha(self.original_task), "delegation": k}
+    def fingerprint(self, action, k):
+        budget = self.trace.state_dict()
+        budget["counters"] = {k: v for k, v in budget["counters"].items() if k != "wall_s"}
+        return {"budget": _sha(budget), "pending_action": _sha(action), "memory": _sha(self.memory.dump()),
+                "evaluation": _sha(self.latest_evaluation), "delegations": _sha(self.delegations),
+                "work": _sha(dir_digest(self.work_dir)), "web": _sha(self.web.state_dict()),
+                "toolbox": _sha(self.toolbox.state_dict()), "original_task": _sha(self.original_task), "delegation": k}
 
-    def save_checkpoint(self, action: Action, k: int) -> Path:
+    def save_checkpoint(self, action, k):
         ck = self.run_dir / "checkpoints" / f"d{k}"
         ck.mkdir(parents=True)
         shutil.copytree(self.work_dir, ck / "work", symlinks=True)
         state = {"format": STATE_FORMAT, "task_id": self.task.task_id, "delegation": k,
-                 "pending_action": action.__dict__, "messages": self.messages, "delegations": self.delegations,
-                 "trace": self.trace.state_dict(), "web": self.web.state_dict(), "toolbox": self.toolbox.state_dict(),
-                 "config": self.cfg.to_dict(), "models": self.model_identities(), "tools": self.tool_cfg.to_dict(),
-                 "prompts_version": prompts.PROMPTS_VERSION,
-                 "refiner_prompts_version": prompts.REFINER_PROMPTS_VERSION, "reader_identity": self.reader_identity,
+                 "pending_action": action, "memory": self.memory.dump(), "evaluation": self.latest_evaluation,
+                 "delegations": self.delegations, "trace": self.trace.state_dict(), "web": self.web.state_dict(),
+                 "toolbox": self.toolbox.state_dict(), "config": self.cfg.to_dict(), "models": self.model_identities(),
+                 "tools": self.tool_cfg.to_dict(), "prompts_version": prompts.PROMPTS_VERSION,
+                 "refiner_prompts_version": prompts.REFINER_PROMPTS_VERSION,
+                 "evaluator_prompts_version": EVALUATOR_VERSION, "reader_identity": self.reader_identity,
                  "code_hash": code_hash(), "reference_date": self.reference_date}
-        (ck / "state.json").write_text(json.dumps(state, indent=1, ensure_ascii=False, default=str))
-        (ck / "fingerprint.json").write_text(json.dumps(self.fingerprint(action, k), indent=1))
-        role = self.cfg.pool.roles[action.worker_id]
-        # the refiner's whole input (and nothing after the checkpoint): for post-hoc rewrites and audits
-        (ck / "request.json").write_text(json.dumps(
-            {"original_task": self.original_task, "context": action.context,
-             "draft_instruction": action.instruction, "target_role": role.id,
-             "target_worker": role.executor, "probe_workers": list(role.probe_workers),
-             "orchestrator_messages": self.messages}, indent=1, ensure_ascii=False))
+        (ck / "state.json").write_text(json.dumps(state, ensure_ascii=False, indent=2, default=str))
+        (ck / "fingerprint.json").write_text(json.dumps(self.fingerprint(action, k), indent=2))
+        (ck / "request.json").write_text(json.dumps(self._payload("pending_delegation", action=action),
+                                                    ensure_ascii=False, indent=2, default=str))
         self.trace.event("checkpoint", delegation=k, path=str(ck))
         return ck
 
+    @classmethod
+    def restore(cls, checkpoint, run_dir, *, condition=None, label=None, task=None, **kw):
+        ck = Path(checkpoint)
+        state = json.loads((ck / "state.json").read_text())
+        if state.get("format") != STATE_FORMAT:
+            raise ValueError("historical checkpoint requires its code snapshot; no conversion supported")
+        data = dict(state["config"])
+        if condition is not None:
+            data["condition"] = condition.to_dict()
+        if label is not None:
+            data["label"] = label
+        if task is None:
+            from minpilot.data.gaia import load_task
+            task = load_task(state["task_id"])
+        run = cls(run_config_from_dict(data), task, run_dir, **kw)
+        if task.task_id != state["task_id"] or state["models"] != run.model_identities():
+            raise ValueError("checkpoint task/model mismatch")
+        if (state["prompts_version"], state["refiner_prompts_version"], state["evaluator_prompts_version"]) != (
+                prompts.PROMPTS_VERSION, prompts.REFINER_PROMPTS_VERSION, EVALUATOR_VERSION):
+            raise ValueError("checkpoint prompt version mismatch")
+        old_tools, now_tools = state["tools"], run.tool_cfg.to_dict()
+        if tool_identity(old_tools) != tool_identity(now_tools):
+            raise ValueError("checkpoint tool settings mismatch")
+        if _version_num(now_tools["blocklist_version"]) < _version_num(old_tools["blocklist_version"]):
+            raise ValueError("checkpoint blocklist is newer than runtime")
+        if "crawl4ai" in now_tools["reader_chain"] and (state.get("reader_identity") or run.reader_identity):
+            if not same_identity(state.get("reader_identity"), run.reader_identity):
+                raise ValueError("checkpoint reader identity mismatch")
+        if escaping_symlinks(ck / "work"):
+            raise ValueError("checkpoint workspace symlink escapes")
+        run.reference_date = state["reference_date"]
+        run.original_task = original_task_of(task, run.reference_date)
+        shutil.copytree(ck / "work", run.work_dir, symlinks=True)
+        run.toolbox = Toolbox(run.work_dir, run.web, run.trace, question=task.question)
+        run.memory.load(state["memory"])
+        run.latest_evaluation, run.delegations = state["evaluation"], state["delegations"]
+        run.trace.load_state_dict(state["trace"])
+        run.web.load_state_dict(state["web"])
+        run.toolbox.load_state_dict(state["toolbox"])
+        run._pending = state["pending_action"]
+        saved = json.loads((ck / "fingerprint.json").read_text())
+        now = run.fingerprint(run._pending, state["delegation"])
+        checks = {key: saved[key] == now[key] for key in saved}
+        (run.run_dir / "restore_check.json").write_text(json.dumps({"match": all(checks.values()), "keys": checks}))
+        if not all(checks.values()):
+            raise ValueError(f"checkpoint fingerprint mismatch: {checks}")
+        run._write_run_json(**run._base_info("restore"), restored_from=str(ck.resolve()),
+                            restored_delegation=state["delegation"], checkpoint_code_hash=state["code_hash"])
+        return run
 
-class _Ctx:
-    """`RefineContext` for delegation k of a run."""
-
-    def __init__(self, run: Run, k: int):
-        self.run = run
-        self.k = k
-        self.toolboxes: dict[str, Toolbox] = {}
-
-    def llm(self, messages, *, stage, schema_name=None, schema=None):
-        fmt = json_schema_format(schema_name, schema) if schema else None
-        with self.run.trace.tags(stage=stage):
-            return self.run.client(self.run.cfg.refiner_model).chat(messages, response_format=fmt)
-
-    def toolbox(self, label: str) -> Toolbox:
-        """A toolbox on a scratch copy of the main workspace as it is now; one per label (a probe and its
-        follow-ups share it). Code-run numbering continues from the main workspace's. Web: the shared cache, but
-        a forked search pin and blocked-URL set (WebTools.fork)."""
-        label = label or f"call{self.run.trace.next_id()}"
-        if label not in self.toolboxes:
-            d = self.run.run_dir / "scratch" / f"d{self.k}" / label
-            shutil.copytree(self.run.work_dir, d, symlinks=True)
-            tb = Toolbox(d, self.run.web.fork(), self.run.trace, question=self.run.task.question)
-            tb.load_state_dict(self.run.toolbox.state_dict())
-            self.toolboxes[label] = tb
-        return self.toolboxes[label]
-
-    def call_worker(self, worker_id, original_task, instruction, *, stage, allow_tools, max_tool_calls=None,
-                    history=None, user_message=None, label="", context="") -> WorkerCall:
-        run = self.run
-        toolbox = self.toolbox(label)
-        with run.trace.tags(stage=stage, worker=worker_id, scratch=label):
-            run.trace.before_worker_call()
-            kind = "probe" if stage in ("refine.probe", "refine.followup") else "task"  # checks are delegated work
-            call = run.workers[worker_id].run(original_task, instruction, toolbox, allow_tools=allow_tools,
-                                              max_tool_calls=max_tool_calls, history=history,
-                                              user_message=user_message, kind=kind, context=context)
-        run.trace.event("refine_worker_call", stage=stage, worker=worker_id, scratch=label, status=call.status,
-                        n_tool_calls=call.n_tool_calls, report=call.report)
-        return call
-
-    def worker_profile(self, worker_id: str) -> dict:
-        pool = self.run.cfg.pool
-        spec = pool.workers[worker_id]
-        role = next((r for r in pool.roles.values() if worker_id == r.executor or worker_id in r.probe_workers), None)
-        # system_prompt: the registered one, so B's prediction shows the worker its real system message (R20)
-        # role: the name prompts show ("the worker" with one role); role_id: the pool's id
-        return {"id": worker_id, "role": self.run.role_name(role.id) if role else worker_id,
-                "role_id": role.id if role else None, "description": role.description if role else "",
-                "model": spec.model, "tools": list(spec.tools), "system_prompt": spec.system_prompt}
-
-    def roles(self) -> list[dict]:
-        return self.run.role_list()
-
-    def role_executor(self, role_id: str) -> str | None:
-        role = self.run.cfg.pool.roles.get(role_id)
-        return role.executor if role else None
-
-    def budget_scope(self, cfg: RefinerConfig):
-        return self.run.trace.budget_scope("refine", cfg.budget)
+    def run_restored(self):
+        return self._guarded(lambda: self._loop(self._pending))

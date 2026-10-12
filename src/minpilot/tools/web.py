@@ -119,6 +119,9 @@ def _credit_id(backend) -> str:
     return getattr(backend, "credit_id", backend.name)
 
 
+from minpilot.tools.search_budget import PaidSearchBudget, SearchLimit
+
+
 class WebTools:
     def __init__(self, cfg: ToolConfig | None = None, *, cache: ToolCache | None = None, question: str | None = None,
                  search_backends: list | None = None, read_backends: list | None = None,
@@ -133,6 +136,10 @@ class WebTools:
         self.pinned_search: str | None = None
         self.blocked_urls: set[str] = set()
         self.failed_urls: dict[str, str] = {}  # URL key -> permanent failure cause (K9; part of the checkpoint)
+        self.paid_search = PaidSearchBudget()
+        for backend in self.search_backends:
+            if isinstance(backend, SerperBackend):
+                backend.request_budget = self.paid_search
         self.reader = None  # tools.reader.PageReader, set by the harness (it needs the run's model client)
         self._lock = threading.Lock()
 
@@ -148,9 +155,11 @@ class WebTools:
 
     def state_dict(self) -> dict:
         return {"pinned_search": self.pinned_search, "cache": str(self.cache.path.resolve()),
-                "blocked_urls": sorted(self.blocked_urls), "failed_urls": dict(sorted(self.failed_urls.items()))}
+                "paid_search": self.paid_search.dump(), "blocked_urls": sorted(self.blocked_urls), "failed_urls": dict(sorted(self.failed_urls.items()))}
 
     def load_state_dict(self, state: dict) -> None:
+        if "paid_search" in state:
+            self.paid_search.load(state["paid_search"])
         self.pinned_search = state.get("pinned_search")
         self.blocked_urls = set(state.get("blocked_urls", []))
         self.failed_urls = dict(state.get("failed_urls", {}))
@@ -178,7 +187,7 @@ class WebTools:
             hits = self._search(query.strip(), rec)
             if hits is None:
                 rec["error"] = "all_search_backends_failed"
-                return "Error: web search is currently unavailable. Try again later.", rec
+                return ("Error: task paid-search credit limit reached; use cache or free fallback." if rec.get("paid_search_limited") else "Error: web search is currently unavailable. Try again later."), rec
             kept, blocked = [], []
             for h in hits:
                 rule = blocklist.url_block_reason(h["url"]) or blocklist.content_block_reason(
@@ -192,6 +201,8 @@ class WebTools:
             lines = [f'Search results for "{query}":']
             for i, h in enumerate(kept, 1):
                 lines.append(f"{i}. {h['title']}\n   URL: {h['url']}\n   {h['snippet']}")
+            if rec.get("paid_search_limited"):
+                lines.append("Paid-search task credit limit reached; these results use free fallback.")
             return "\n".join(lines), rec
         except Exception as e:  # tool errors go back to the agent as text, never crash the run
             rec["error"] = repr(e)
@@ -357,6 +368,10 @@ class WebTools:
             t0 = time.monotonic()
             try:
                 result = getattr(backend, method)(arg)
+            except SearchLimit as e:
+                rec["paid_search_limited"] = True
+                rec["attempts"].append({"backend": backend.name, "ok": False, "error": str(e)})
+                return None
             except RateLimited as e:
                 wait = e.retry_after if e.retry_after is not None else self.cfg.rate_limit_default_wait_s
                 retry = try_ == 0 and wait <= self.cfg.rate_limit_retry_max_wait_s
@@ -375,10 +390,13 @@ class WebTools:
                 rec["attempts"].append({"backend": backend.name, "ok": False, "error": str(e)[:300]})
                 return None
             except BackendError as e:
-                if backend.paid:
+                billing = getattr(e, "billing", "unknown")
+                if backend.paid and billing == "billed":
                     self.cache.charge(_credit_id(backend))
                     rec["credits"][backend.name] = rec["credits"].get(backend.name, 0) + 1
-                rec["attempts"].append({"backend": backend.name, "ok": False, "error": str(e)[:300],
+                elif backend.paid and billing == "unknown":
+                    rec.setdefault("unknown_credits", {})[backend.name] = rec.get("unknown_credits", {}).get(backend.name, 0) + 1
+                rec["attempts"].append({"backend": backend.name, "ok": False, "billing": billing, "error": str(e)[:300],
                                         "latency_s": round(time.monotonic() - t0, 2)})
                 return None
             finally:
@@ -445,6 +463,9 @@ class WebTools:
                 final = url if fetch_url != url else page.url
                 value = {"url": final, "title": page.title, "text": page.text, "content_type": page.content_type,
                          "backend": backend.name, "fetched_at": time.time()}
+                if fetch_url != url and _WAYBACK_SNAPSHOT.match(page.url or ""):
+                    # Wayback redirects to the nearest capture; its date is in the reader's final URL (tools v5)
+                    value["capture_url"] = page.url
                 if reason := self.page_issue(page.url, page.title, page.text, None):
                     value = {"blocked": reason, "backend": backend.name, "fetched_at": time.time()}
                 cached = self.cache.put("page", url, value, backend.name)
@@ -479,8 +500,16 @@ def doc_header(doc: dict) -> list[str]:
     header = [f"Source: {doc['url']}"]
     if doc.get("title"):
         header.append(f"Title: {doc['title']}")
-    if snap := _snapshot_date(doc["url"]):
-        header.append(f"Archived snapshot (Wayback Machine) taken on {snap}; the page may have changed since.")
+    if requested := _snapshot_date(doc["url"]):
+        captured = _snapshot_date(doc.get("capture_url") or "")
+        if captured is None:
+            header.append(f"Archived snapshot (Wayback Machine) requested for {requested}; the capture date was not "
+                          "reported and may differ.")
+        elif captured != requested:
+            header.append(f"Archived snapshot (Wayback Machine) taken on {captured} (requested {requested}: the "
+                          "nearest capture); the page may have changed since.")
+        else:
+            header.append(f"Archived snapshot (Wayback Machine) taken on {captured}; the page may have changed since.")
     return header
 
 

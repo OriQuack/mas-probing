@@ -115,10 +115,16 @@ def render(run_dir: Path, max_chars: int) -> str:
                            f"connected={r.get('connected')}")
                 if r.get("changed"):
                     out.append(f"FINAL instruction sent to the worker:\n<<<\n{r.get('final')}\n>>>")
+                if r.get("selection_reason"):
+                    out.append(f"selection: {r['selection_reason']}\nActual context:\n{r.get('context', '')}")
                 if r.get("context_additions"):
                     out.append(f"context additions sent after the context:\n<<<\n{r.get('context_additions')}\n>>>")
             elif ev in ("report", "refine_worker_call"):
                 out.append(f"## [event] {ev} {_where(r)}: status={r.get('status')}, tool calls={r.get('n_tool_calls')}")
+            elif ev in ("artifact", "state_replace", "context_selection", "evaluation_decision", "read_memory", "decision"):
+                out.append(f"## [event] {ev} {_where(r)}")
+                rest = {k: v for k, v in r.items() if k not in ("ts", "event")}
+                out.append(_clip(json.dumps(rest, ensure_ascii=False, indent=2, default=str), max_chars))
             elif ev == "checkpoint":
                 out.append(f"## [event] checkpoint d{r.get('delegation')}")
             else:

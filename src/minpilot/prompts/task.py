@@ -10,5 +10,5 @@ def original_task_text(question: str, attachment: str | None, reference_date: st
     if reference_date:
         text += f"""
 
-Run date: {reference_date} (the day this run takes place). The task may have been written earlier: do not take the run date as the task's time reference, and do not filter data or choose sources by it; take the time frame from the task itself."""
+Run date: {reference_date} (Asia/Seoul, KST; the day this run takes place). The task may have been written earlier: do not take the run date as the task's time reference, and do not filter data or choose sources by it; take the time frame from the task itself."""
     return text

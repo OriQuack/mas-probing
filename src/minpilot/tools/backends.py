@@ -113,20 +113,40 @@ class SerperBackend:
         return int(r.json()["balance"])
 
     def search(self, query: str) -> list[SearchHit]:
+        # This is the actual paid HTTP request boundary, including retries by WebTools.
+        budget = getattr(self, "request_budget", None)
+        if budget:
+            budget.reserve()
+        outcome = "unknown"
         try:
-            r = requests.post(
-                "https://google.serper.dev/search",
-                headers={"X-API-KEY": self.key, "Content-Type": "application/json"},
-                json={"q": query, "gl": self.cfg.gl, "hl": self.cfg.hl, "num": self.cfg.num_results},
-                timeout=self.cfg.http_timeout_s,
-            )
-        except requests.RequestException as e:
-            raise BackendError(f"serper: {e!r}") from e
-        if r.status_code == 400 and "credit" in r.text.lower():
-            raise CreditsExhausted(f"serper: {r.text[:200]}")
-        _raise_for_status(self.name, r)
-        return [SearchHit(o.get("title", ""), o.get("link", ""), o.get("snippet", ""))
-                for o in r.json().get("organic", [])]
+            try:
+                r = requests.post(
+                    "https://google.serper.dev/search",
+                    headers={"X-API-KEY": self.key, "Content-Type": "application/json"},
+                    json={"q": query, "gl": self.cfg.gl, "hl": self.cfg.hl, "num": self.cfg.num_results},
+                    timeout=self.cfg.http_timeout_s,
+                )
+            except requests.RequestException as error:
+                raise BackendError(f"serper: {error!r}") from error
+            if r.status_code in (401, 402, 403, 429) or (r.status_code == 400 and "credit" in r.text.lower()):
+                outcome = "nonbillable"
+            elif 200 <= r.status_code < 300:
+                outcome = "billed"
+            if r.status_code == 400 and "credit" in r.text.lower():
+                raise CreditsExhausted(f"serper: {r.text[:200]}")
+            _raise_for_status(self.name, r)
+            return [SearchHit(o.get("title", ""), o.get("link", ""), o.get("snippet", ""))
+                    for o in r.json().get("organic", [])]
+        except BackendError as error:
+            error.billing = outcome
+            raise
+        except Exception as error:
+            wrapped = BackendError(f"serper invalid response: {error!r}")
+            wrapped.billing = outcome
+            raise wrapped from error
+        finally:
+            if budget:
+                budget.settle(outcome)
 
 
 class DDGBackend:

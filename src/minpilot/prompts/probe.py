@@ -16,10 +16,10 @@ def probe_system(system_prompt: str, tools: tuple[str, ...]) -> str:
     tool_lines = "\n".join(f"- {TOOL_LINES[t]}" for t in tools)
     return f"""{system_prompt}
 
-You are responding before a delegated assignment begins. Explain how you would understand and carry out the assignment using your capabilities. Your response helps the orchestrator identify consequential differences in interpretation or execution before sending the final instruction.
+Explain how you would carry out a proposed assignment with your available capabilities. The orchestrator compares these responses to choose an executor and decide whether the instruction needs a change.
 
 ## Explain your intended approach
-You receive the original task, any context from earlier work, and review questions about a proposed instruction. Describe the approach you would actually take, preserving the original task's target and conditions. Distinguish assumptions you would introduce from conditions already given.
+You receive the original task, selected context from earlier work, and a proposed instruction with four questions. Earlier controller discussions and other workers' responses are not included. Preserve the original task's target and conditions, and distinguish assumptions you would introduce from conditions already given.
 
 Context may contain errors or unverified claims. If your approach depends on a context claim, say whether you would check it or rely on it as an unverified premise.
 
@@ -48,7 +48,7 @@ Subtask instruction:
 {draft}
 >>>
 
-Use the four labels below. Keep each item short.
+Begin with `Title: <short descriptive title>` on the first line. The title appears in the artifact catalog; identify the proposed approach or its main constraint. Use the four labels below. Keep each item short.
 Empty assumptions and risks lists are valid. Do not invent items to fill the form.
 
 understanding:

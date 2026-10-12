@@ -25,5 +25,7 @@ numpy
 scipy
 sympy
 matplotlib
+# benchmark downloads (scripts/fetch_datasets.py)
+huggingface_hub
 # tests
 pytest

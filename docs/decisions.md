@@ -39,3 +39,31 @@
 | C12 | Refiner r11: 분석·rewrite를 목적별 섹션으로 재작성. 정상적인 subtask 범위 한정과 원 질문 왜곡을 구분; 해석 차이와 실행 방식 차이, 사전 확인과 실행 중 확인을 구별 | 사용자 요청(2026-10-11). 미해결 해석의 강제 확정·무조건 답 산출을 피하고 실제 근거 한계를 보고하도록 명확화. Simulation/verification 문구 정리; pipeline·스키마·worker/probe는 유지. 효과는 미검증 | prompts/refiner |
 | C13 | direct_check 조건·전용 구현·설정 제거; baseline, self_review, 실제 probe 유지 | 사용자 요청(2026-10-11). 예측/실제 응답의 같은 질문·검토 절차 비교를 우선하고 응답 없는 검토 경로를 제거. 남은 prompt 출력은 동일하여 버전 유지; 과거 기록·snapshot은 보존 | config, refine, prompts/refiner, configs/refiners |
 | C14 | 실행 v10/refiner r12: 같은 결과를 위한 worker 내부 실행과 다음 질문 선택의 위임 경계를 구분. 결과를 좌우하는 context 주장의 근거 확인·미검증 표시를 명시하고 probe 중복·refiner 추상어를 축소 | 사용자 요청(2026-10-11). 구체적이지만 결과에 영향 없는 우려의 not_relevant 사용을 명확화. 역할·pipeline·스키마는 유지; 검증 행동 명확화에 따른 효과는 미평가 | prompts/orchestrator, prompts/worker, prompts/probe, prompts/refiner |
+| C15 | restore한 baseline은 선택 사항. recording run이 checkpoint 이후 이어서 푼 부분을 baseline으로 쓸 수 있음. 단, restore를 같은 도구·검색 환경에서 바로 이어 돌릴 때만. checkpoint를 나중에 재사용하거나 환경이 바뀌면 baseline을 restore | 두 run은 같은 대화·초안에서 출발한 같은 조건의 시행이고, 남는 차이는 실행 시점과 환경뿐. 사용자 결정(2026-10-11). `score_runs.py --compare`는 restore arm끼리만 짝지으므로 fresh baseline과의 비교는 별도로 함 | CLAUDE.md, scripts/score_runs.py |
+| C16 | tools v5: Wayback snapshot을 직접 읽을 때 header에 실제로 받은 capture 날짜(reader의 최종 URL)를 표기. 요청 날짜와 다르면 함께 표기하고, 최종 URL이 없으면 날짜를 확정하지 않음. cache는 `tools_v5.sqlite`로 분리 | 사례 분석(2026-10-10 §4.1)에서 요청 날짜가 실제 capture 날짜처럼 표기되어 16d825ff·a7feb290의 판단에 영향. 사용자 결정(2026-10-11). Crawl4AI가 redirect된 capture URL을 보고하는 것을 확인함 | tools/web.py, tools/config.py |
+| C17 | LongCoT·MoNaCo를 `~/data2/datasets/{LongCoT,MoNaCo}`에 고정 revision으로 내려받고(`scripts/fetch_datasets.py`, `SOURCE.json`에 출처 기록), `minpilot.data.longcot`·`minpilot.data.monaco`로 읽음. 기본 loader는 질문만 반환하고 답·LongCoT `problem` metadata·MoNaCo decomposition·reasoning chain은 채점·분석용 함수로만 반환 | 사용자 요청(2026-10-11). 홈 디스크 용량 문제로 데이터는 /data2. GAIA loader와 같은 정답 분리. LongCoT `problem`에는 정답 유도 값(예: chess `final_fen`)이 있음. MoNaCo는 재배포 금지라 저장소에 복사하지 않음. 주석을 모델 입력으로 주는 실험은 별도 조건으로 선언 | scripts/fetch_datasets.py, data/longcot.py, data/monaco.py |
+
+
+## 2026-10-11 KST shared state·평가·선택 구현
+
+아래 결정이 위 표의 고정 executor·refiner 중심 runtime을 대체한다. 과거 결정과 원본 기록은 보존한다.
+
+| ID | 선택 | 이유 / 범위 | 위치 |
+|---|---|---|---|
+| C18 | `direct_execution`, `multi_worker_probe` 두 condition; pool 등록 worker 전부 executor 후보 | 전체 구성 비교 후 ablation. 이전 preset/CLI와 checkpoint를 새 의미로 재사용하지 않음 | config, configs/conditions, harness |
+| C19 | Immutable artifact + evaluator의 네 필드 state 전체 교체 제안, orchestrator 채택/거부 이유 | 사실 판단·원본·전달 context를 구분. 행 번호는 입력 snapshot에서만 유효 | memory, harness |
+| C20 | Controller JSON read_memory 최대 3라운드, 보고별 tool_count와 artifact/tool/N 조회 | 외부 도구 권한 없이 필요할 때 원문 조회. 모든 도구를 catalog 항목으로 만들지 않음 | controller, memory |
+| C21 | Probe/실행 evaluator 공통 도입, refiner는 승인 변경의 표현만; 별도 verification·follow-up·self_review·연결 실행 제거 | Probe 계획·가정과 실행 관측·결과를 구별. 새 판단은 orchestrator로 한 번 반환 | prompts, harness |
+| C22 | 실행 v11, probe/refiner r13, evaluator e1, checkpoint format 2 | 원본 pool/state·선택 snapshot·누적 budget/credit 저장; 과거 형식 변환 없음 | prompts, harness |
+| C23 | tools v6 별도 cache; 실제 Serper POST마다 task당 100-credit 예약 | Fork/재시도/복원 공유. billed·nonbillable·unknown 구분; unknown은 headroom 소비. Cache/무료 fallback 허용 | tools/search_budget, backends, web |
+| C24 | 위임 전 $1/60-LLM 소진 후 추가 사전 호출 없음 | 마지막 승인 선택 또는 pool 첫 worker로 초안 fallback, 실패 이유 기록. Run 전체 상한은 종료 | harness |
+| C25 | 오프라인 계약 검증만 수행; 유료 fresh 비교는 별도 계획 | 사례 walkthrough를 모델 성능 개선 증거로 취급하지 않음. eval_v1 열람·튜닝·실행 금지 유지 | tests, docs/experiments.md |
+| C26 | 실행 v12, probe/refiner r14, evaluator e2: 입력 가시성·근거·판단 권한·출력 필드 설명 정리 | 사용자 요청. Thinking Before Thinking 분석 세 문서와 agent-prompt-engineering skill의 작성 원칙을 적용. 기존 역할·호출 순서·스키마를 유지하며 충분한 지시와 지지된 결과의 보존, 전체 state 채택, snapshot 행 선택, refiner 전달 범위를 명시. 특정 과제 문구나 논문 제어 구조는 복제하지 않음. 모델 효과는 미평가 | prompts, prompts/README.md |
+
+| C27 | 실행 v13, probe/refiner r15, evaluator e3: orchestrator·evaluator·refiner 도입부에 역할 소개 복원 | 사용자 요청. You are …로 역할을 밝힌 뒤 수행할 작업을 설명. 나머지 본문·흐름·스키마는 유지 | prompts |
+
+## 2026-10-12 KST live 진단
+
+| ID | 선택 | 이유 / 범위 | 위치 |
+|---|---|---|---|
+| C28 | 주요 GAIA 탐색 5개 × 두 조건 각 1회 fresh, 총 10회. Run당 $1·15분, 전체 $10 상한; 조건 순서 교차 | 사용자 요청으로 유료 live 테스트 수행. PubChem·spin glass는 기존 비용을 보고 제외. 실행 전에 계획·순서·상한을 manifest에 저장하고 실행 중 prompt/package 코드는 고정. 초기 import 오류의 무호출 시작 실패 10건도 별도 보존·실패 집계. 알려진 비용 $0.88999526, 비용 불명 LLM 1건. 양쪽 2/5이며 시간 한도 4건 포함. 과거 arXiv baseline의 실제 26분보다 짧은 한도여서 단순 성능 비교에 제한 | outputs/experiments/2026-10-12_gaia-key-traces-live-retry, reports/2026-10-12-gaia-key-traces-live.ko.md |
