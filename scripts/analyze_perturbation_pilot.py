@@ -136,7 +136,7 @@ def main() -> None:
                                      "best_in_hindsight": mean(best)},
             "by_kind": {k: {"mean_consistency": mean(r["consistency"] for r in cr if r["kind"] == k),
                             "sample_acc": mean(r["sample_acc"] for r in cr if r["kind"] == k)}
-                        for k in ("first", "middle")},
+                        for k in sorted({r["kind"] for r in cr})},
             "mean_distinct_methods_per_pair": mean(r["distinct_methods"] for r in cr),
             "completion_tokens_per_call": mean(r["completion_tokens"] for r in cr),
             "cost_usd": round(sum(r["cost_usd"] for r in cr), 4),

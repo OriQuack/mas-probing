@@ -3,7 +3,7 @@
 
   python scripts/run_perturbation_pilot.py --experiment outputs/experiments/<date>_longcot-perturbation-pilot \
       [--workers luna-medium haiku-medium flash-medium] [--batch-workers flash-medium] [--sync-concurrency 12] \
-      [--session-cost-usd 10] [--run-cost-usd 2] [--env-file .env]
+      [--session-cost-usd 10] [--run-cost-usd 2] [--max-tokens N] [--env-file .env]
 
 All calls go out at once: the listed batch workers through the OpenRouter Batch API (one round trip unless a batch
 is resubmitted), the others as synchronous calls. Each (target, worker) has its own Trace under runs/; results.jsonl
@@ -14,6 +14,7 @@ scripts/analyze_perturbation_pilot.py.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import os
 import subprocess
@@ -32,6 +33,7 @@ from minpilot.runtime.trace import BudgetExceeded, InfraError, Limits, Trace  # 
 from perturbation_consistency.batch import BatchDispatcher, requests_http  # noqa: E402
 from perturbation_consistency.longcot_nodes import extract_answer  # noqa: E402
 from perturbation_consistency.perturb import method_label  # noqa: E402
+from perturbation_consistency.segment import node_answers  # noqa: E402
 
 
 def call(client: LLMClient, trace: Trace, row: dict, worker: str) -> dict:
@@ -41,9 +43,13 @@ def call(client: LLMClient, trace: Trace, row: dict, worker: str) -> dict:
             res = client.chat([{"role": "user", "content": row["prompt"]}])
         except (InfraError, BudgetExceeded, HTTPError, TransientError) as e:
             return out | {"answer": None, "method": None, "status": "error", "error": str(e)[:300]}
+    nodes = node_answers(res.content) if row.get("nodes") else {}
     answer = extract_answer(res.content)
+    if answer is None and row.get("answer_node"):  # a segment prompt: the last node's line also gives the answer
+        answer = nodes.get(row["answer_node"])
     status = "length" if res.finish_reason == "length" else ("ok" if answer is not None else "no_answer")
-    return out | {"answer": answer if status == "ok" else None, "method": method_label(res.content),
+    return out | {"answer": answer if status == "ok" else None, "node_answers": nodes,
+                  "method": method_label(res.content),
                   "status": status, "finish_reason": res.finish_reason,
                   "completion_tokens": (res.usage or {}).get("completion_tokens"),
                   "cost_usd": float((res.usage or {}).get("cost") or 0.0),
@@ -58,23 +64,29 @@ def main() -> None:
     ap.add_argument("--sync-concurrency", type=int, default=12)
     ap.add_argument("--session-cost-usd", type=float, default=10.0)
     ap.add_argument("--run-cost-usd", type=float, default=2.0, help="per (target, worker)")
+    ap.add_argument("--max-tokens", type=int, default=None, help="override the workers' output cap (segment prompts)")
     ap.add_argument("--env-file", type=Path, default=REPO / ".env")
     args = ap.parse_args()
     if not set(args.batch_workers) <= set(args.workers):
         sys.exit("--batch-workers must be a subset of --workers")
     exp = args.experiment
     if not (exp / "prompts.jsonl").exists():
-        sys.exit(f"{exp}/prompts.jsonl missing: run scripts/prepare_perturbation_pilot.py first")
+        sys.exit(f"{exp}/prompts.jsonl missing: run scripts/prepare_{{perturbation,segment}}_pilot.py first")
     if (exp / "results.jsonl").exists():
         sys.exit(f"{exp} already has results.jsonl")
     from dotenv import load_dotenv
     load_dotenv(args.env_file)
     key = os.environ["OPENROUTER_API_KEY"]
     rows = [json.loads(x) for x in (exp / "prompts.jsonl").read_text().splitlines()]
+
+    def spec_of(w: str):
+        spec = get_spec(w)
+        return dataclasses.replace(spec, max_tokens=args.max_tokens) if args.max_tokens else spec
+
     commit = subprocess.run(["git", "-C", str(REPO), "rev-parse", "HEAD"], capture_output=True,
                             text=True).stdout.strip()
     (exp / "run.json").write_text(json.dumps({
-        "workers": args.workers, "models": {w: get_spec(w).identity() for w in args.workers},
+        "workers": args.workers, "models": {w: spec_of(w).identity() for w in args.workers},
         "transport": {w: "openrouter_batch" if w in args.batch_workers else "openrouter_sync" for w in args.workers},
         "session_cost_usd": args.session_cost_usd, "run_cost_usd": args.run_cost_usd, "calls": len(rows) * len(
             args.workers), "git_commit": commit, "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())},
@@ -83,7 +95,7 @@ def main() -> None:
     dispatcher = None
     if args.batch_workers:
         dispatcher = BatchDispatcher(requests_http(key), exp / "openrouter_batches.jsonl",
-                                     {w: get_spec(w) for w in args.batch_workers}, max_cost_usd=args.session_cost_usd)
+                                     {w: spec_of(w) for w in args.batch_workers}, max_cost_usd=args.session_cost_usd)
     sync, slots = http_transport(key), threading.Semaphore(args.sync_concurrency)
 
     def limited(body: dict, timeout: float | None) -> dict:
@@ -95,7 +107,7 @@ def main() -> None:
         for w in args.workers:
             trace = Trace(exp / "runs" / tid.replace(":", "__") / w, Limits(max_cost_usd=args.run_cost_usd))
             transport = dispatcher.transport if w in args.batch_workers else limited
-            clients[(tid, w)] = (LLMClient(get_spec(w), trace, transport=transport), trace)
+            clients[(tid, w)] = (LLMClient(spec_of(w), trace, transport=transport), trace)
     lock, spent = threading.Lock(), [0.0]
 
     def job(item: tuple[dict, str]) -> None:
