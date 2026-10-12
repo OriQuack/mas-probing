@@ -82,7 +82,7 @@ def main() -> None:
         rewrites = {k: dict(v) for k, v in prep["rewrites"].items()}
         methods = list(prep["approaches"])
         for d in review["drop"]:
-            if d["target_id"] == prep["target_id"]:
+            if d["target_id"] == prep["target_id"] and d["item"] != "target":
                 if d["item"].startswith("approach:"):
                     methods[int(d["item"].split(":")[1])] = None
                 else:
@@ -109,12 +109,18 @@ def main() -> None:
                 spent[0] += cost
             prep = {"target_id": t.target_id, "rewrites": rewrites, "approaches": methods, "cost_usd": cost}
         rewrites, methods = apply_review(prep)
+        dropped = next((d["reason"] for d in review["drop"] if d["target_id"] == t.target_id and d["item"] == "target"),
+                       None)
+        if dropped:  # the whole segment is unusable (e.g. a node that cannot be solved as given)
+            return prep | {"reviewed": {"dropped_target": dropped}}, []
         return prep | {"reviewed": {"rewrites": rewrites, "approaches": methods}}, \
             segment.build_prompts(chain, t, rewrites, methods)
 
     with ThreadPoolExecutor(8) as pool:
         done = list(pool.map(prepare, targets))
     prompts = [row for _, rows in done for row in rows]
+    dropped_targets = {d["target_id"] for d in review["drop"] if d["item"] == "target"}
+    targets = [t for t in targets if t.target_id not in dropped_targets]
     (exp / "targets.jsonl").write_text("".join(json.dumps(asdict(t)) + "\n" for t in targets))
     (exp / "prep.jsonl").write_text("".join(json.dumps(p, ensure_ascii=False) + "\n" for p, _ in done))
     (exp / "prompts.jsonl").write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in prompts))
