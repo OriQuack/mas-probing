@@ -211,7 +211,8 @@ class LLMClient:
         served = _provider_slug(data.get("provider"))
         if served is None:
             return "response names no provider (cannot verify the pinned provider)"
-        if served != self.spec.provider.split("/")[0]:
+        pinned = self.spec.provider.split("/")[0]
+        if served != pinned and served not in SERVED_PROVIDER_ALIASES.get(pinned, set()):
             return f"served by provider {served!r}, pinned {self.spec.provider!r}"
         if not same_model(data.get("model"), self.spec.model):
             return f"served model {data.get('model')!r} is not the requested {self.spec.model!r}"
@@ -228,6 +229,9 @@ class LLMClient:
 # dropping a trailing date (-YYYYMMDD or -YYYY-MM-DD) and an OpenRouter variant (:free, ...). Exact aliases that
 # need more go in SERVED_ALIASES (requested -> accepted served ids).
 SERVED_ALIASES: dict[str, set[str]] = {}
+# Provider slugs whose responses name the provider differently (pinned slug -> accepted served slugs): OpenRouter
+# lists Google Vertex endpoints under the provider name "Google".
+SERVED_PROVIDER_ALIASES: dict[str, set[str]] = {"google-vertex": {"google"}}
 _DATE_SUFFIX = re.compile(r"-(\d{8}|\d{4}-\d{2}-\d{2})$")
 
 

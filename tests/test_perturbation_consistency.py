@@ -4,15 +4,19 @@ from __future__ import annotations
 
 import json
 import re
+import threading
+import time
 
 import pytest
 
 from fakes import Raw, ScriptedLLM
 from minpilot.llm.client import LLMClient
 from minpilot.llm.specs import get_spec
+from minpilot.runtime.trace import Limits, Trace
 from perturbation_consistency import longcot_math
+from perturbation_consistency.batch import BatchDispatcher
 from perturbation_consistency.longcot_nodes import VARIANTS, extract_answer, node_prompt, parse_chain
-from perturbation_consistency.runner import Settings, choose, run_pipeline, run_routed
+from perturbation_consistency.runner import Settings, run_pipeline, run_routed
 
 PROMPT = """Solve this problem step by step and return the final solution at the end.
 
@@ -96,14 +100,6 @@ def test_grouping_uses_longcot_equivalence():
     assert longcot_math.compare_answer_lists(["16"], [None]) == "mismatch"
 
 
-def test_choose_breaks_ties_with_a_seed_per_question():
-    probes = {w: {"consistency": c, "modal_answer": w} for w, c in (("a", 0.8), ("b", 0.8), ("c", 0.4))}
-    first = choose(probes, "q1")
-    assert first["tied"] == ["a", "b"] and first["chosen"] in ("a", "b") and choose(probes, "q1") == first
-    assert choose({"a": {"consistency": 0.2, "modal_answer": "x"}, "b": {"consistency": 1.0, "modal_answer": "y"}},
-                  "q1")["chosen"] == "b"
-
-
 LUNA, HAIKU, GEMINI = (get_spec(k).model for k in ("luna-high", "haiku-high", "gemini"))
 TRUE = {"node_0": "84", "node_1": "35", "node_2": "-1", "node_3": "0"}
 
@@ -112,11 +108,17 @@ def node_of(body):
     return re.search(r"Problem (node_\d+):", body["messages"][-1]["content"]).group(1)
 
 
-def script():
-    haiku_first = iter(["84", "48", "84", "12", "84"])
+def variant_of(body):
+    text = body["messages"][-1]["content"]
+    return next(v for v, t in enumerate(VARIANTS) if text.startswith(t.split("{body}")[0]))
+
+
+def script(haiku=None):
+    """luna always right; haiku right except where `haiku[(node, variant)]` says otherwise; gemini cut off."""
+    haiku = haiku or {}
     return ScriptedLLM({
         f"worker:{LUNA}": lambda b: f"reasoning\nanswer = {TRUE[node_of(b)]}",
-        f"worker:{HAIKU}": lambda b: f"answer = {next(haiku_first) if node_of(b) == 'node_0' else TRUE[node_of(b)]}",
+        f"worker:{HAIKU}": lambda b: f"answer = {haiku.get((node_of(b), variant_of(b)), TRUE[node_of(b)])}",
         f"worker:{GEMINI}": lambda b: Raw("thinking...", "length"),
     })
 
@@ -128,11 +130,12 @@ def settings(llm, **kw):
 
 
 def test_routed_arm_picks_the_consistent_worker_and_continues_from_its_modal_answer(tmp_path):
-    llm = script()
+    llm = script({("node_0", 1): "48", ("node_0", 3): "12"})
     chain = parse_chain("q1", PROMPT)
     res = run_routed(chain, tmp_path, settings(llm))
     assert res["choice"]["consistency"] == {"luna-high": 1.0, "haiku-high": 0.6, "gemini": 0.0}
-    assert res["choice"]["chosen"] == "luna-high" and res["choice"]["modal_answer"] == "84"
+    assert res["choice"]["chosen"] == "luna-high" and res["choice"]["given"] == {"node_0": "84"}
+    assert res["choice"]["probed_nodes"] == 1
     routed = res["routed"]
     assert routed["status"] == "ok" and routed["given"] == {"node_0": "84"}
     assert [n["node"] for n in routed["nodes"]] == ["node_1", "node_2", "node_3"]
@@ -143,6 +146,46 @@ def test_routed_arm_picks_the_consistent_worker_and_continues_from_its_modal_ans
     node1 = next(b for b in luna_bodies if node_of(b) == "node_1")["messages"][-1]["content"]
     assert "- node_0: 84" in node1
     assert (tmp_path / "consistency_routed_r0" / "llm_calls.jsonl").exists()
+
+
+def test_a_tie_is_probed_on_the_next_node_by_the_tied_workers_only(tmp_path):
+    llm = script({("node_1", 2): "9", ("node_1", 4): "9"})  # haiku and luna tie on node_0; luna wins node_1
+    chain = parse_chain("q1", PROMPT)
+    res = run_routed(chain, tmp_path, settings(llm, probe_depth=3))
+    choice = res["choice"]
+    assert [r["node"] for r in choice["rounds"]] == ["node_0", "node_1"]
+    assert choice["rounds"][0]["kept"] == ["luna-high", "haiku-high"]
+    assert choice["rounds"][1]["consistency"] == {"luna-high": 1.0, "haiku-high": 0.6}
+    assert choice["chosen"] == "luna-high" and choice["tied"] == ["luna-high"]
+    assert choice["given"] == {"node_0": "84", "node_1": "35"} and choice["path_variant"] == 0
+    assert not any(b["model"] == GEMINI and node_of(b) == "node_1" for b in llm.bodies)
+    assert [n["node"] for n in res["routed"]["nodes"]] == ["node_2", "node_3"]
+    haiku = json.loads((tmp_path / "consistency_probe_haiku-high" / "record.json").read_text())
+    assert [r["node"] for r in haiku["rounds"]] == ["node_0", "node_1"] and haiku["consistency"] == 1.0
+
+
+def test_a_tie_left_after_the_last_probed_node_is_broken_by_a_seed(tmp_path):
+    chain = parse_chain("q1", PROMPT)
+    res = run_routed(chain, tmp_path / "a", settings(script(), probe_depth=2))
+    again = run_routed(chain, tmp_path / "b", settings(script(), probe_depth=2))
+    assert res["choice"]["tied"] == ["haiku-high", "luna-high"] and res["choice"]["probed_nodes"] == 2
+    assert res["choice"]["chosen"] == again["choice"]["chosen"]
+    assert res["choice"]["given"] == {"node_0": "84", "node_1": "35"}
+
+
+def test_a_stopped_variant_chain_counts_as_no_answer_on_later_nodes(tmp_path):
+    llm = ScriptedLLM({
+        f"worker:{LUNA}": lambda b: Raw("...", "length") if node_of(b) == "node_0" and variant_of(b) == 0
+        else f"answer = {TRUE[node_of(b)]}",
+        f"worker:{HAIKU}": lambda b: Raw("...", "length") if node_of(b) == "node_0" and variant_of(b) == 1
+        else f"answer = {TRUE[node_of(b)]}",
+        f"worker:{GEMINI}": lambda b: Raw("thinking...", "length"),
+    })
+    res = run_routed(parse_chain("q1", PROMPT), tmp_path, settings(llm, probe_depth=2))
+    luna = json.loads((tmp_path / "consistency_probe_luna-high" / "record.json").read_text())
+    assert luna["rounds"][1]["samples"][0]["status"] == "chain_stopped"
+    assert luna["rounds"][1]["consistency"] == 0.8 and res["choice"]["tied"] == ["haiku-high", "luna-high"]
+    assert res["choice"]["path_variant"] == (1 if res["choice"]["chosen"] == "luna-high" else 0)
 
 
 def test_fixed_pipeline_stops_at_a_node_without_an_answer(tmp_path):
@@ -166,3 +209,103 @@ def test_real_linear_chains_parse(tmp_path):
         assert len(c.nodes) == 15 and c.nodes[0].deps == ()
         assert len(c.requested) == len(longcot_math.answer_parts(refs[c.question_id].answer))
         assert all(n.deps == (c.nodes[i].name,) for i, n in enumerate(c.nodes[1:]))
+
+
+class FakeBatchAPI:
+    """OpenRouter Batch API stand-in: each POSTed batch completes on its `delay`-th poll, every request answered by
+    `llm`. `bare` drops `usage.cost` and `provider` from result bodies (the batch docs do not promise them);
+    `fail` makes every request an error."""
+
+    def __init__(self, llm, delay: int = 1, bare: bool = False, fail: bool = False):
+        self.llm, self.delay, self.bare, self.fail = llm, delay, bare, fail
+        self.batches: dict[str, dict] = {}
+        self.payloads: list[dict] = []
+        self.lock = threading.Lock()
+
+    def __call__(self, method, path, body):
+        with self.lock:
+            if method == "POST":
+                self.payloads.append(body)
+                bid = f"batch_{len(self.batches)}"
+                self.batches[bid] = {"payload": body, "polls": 0}
+                return 202, {"id": bid, "status": "validating"}
+            b = self.batches[path.rsplit("/", 1)[1]]
+            b["polls"] += 1
+            if b["polls"] < self.delay:
+                return 200, {"status": "in_progress", "results": None}
+        p, results = b["payload"], []
+        for r in p["requests"]:
+            if self.fail:
+                results.append({"custom_id": r["custom_id"], "response": None,
+                                "error": {"code": 400, "message": "bad request"}})
+                continue
+            out = self.llm({**r["body"], "model": p["model"], "provider": p["provider"]}, None)
+            if self.bare:
+                out.pop("provider")
+                out["usage"].pop("cost")
+            results.append({"custom_id": r["custom_id"], "response": {"status_code": 200, "body": out}, "error": None})
+        return 200, {"status": "completed", "request_counts": {"total": len(results)},
+                     "usage": {"cost": 0.01 * len(results)}, "results": results}
+
+
+def dispatcher(api, tmp_path):
+    specs = {k: get_spec(k) for k in ("luna-high", "haiku-high", "gemini", "flash-high")}
+    return BatchDispatcher(api, tmp_path / "batches.jsonl", specs, quiet_s=0.05, poll_s=0.0,
+                           sleep=lambda s: time.sleep(0.005))
+
+
+def batch_client(d):
+    return lambda key, trace: LLMClient(get_spec(key), trace, transport=d.transport, sleep=lambda s: None)
+
+
+def test_batch_transport_pools_calls_per_model_and_maps_results_back(tmp_path):
+    api = FakeBatchAPI(script(), delay=2)
+    d = dispatcher(api, tmp_path)
+    try:
+        s = settings(None)
+        s.client = batch_client(d)
+        res = run_routed(parse_chain("q1", PROMPT), tmp_path / "run", s)
+    finally:
+        d.close()
+    assert res["choice"]["consistency"] == {"luna-high": 1.0, "haiku-high": 1.0, "gemini": 0.0}
+    assert res["routed"]["status"] == "ok" and res["routed"]["final"] == {"node_3": "0", "node_1": "35"}
+    first = api.payloads[0]
+    assert list(first) == ["endpoint", "model", "provider", "completion_window", "requests"]
+    assert first["provider"]["allow_fallbacks"] is False and len(first["provider"]["only"]) == 1
+    assert all("model" not in r["body"] and "provider" not in r["body"] for p in api.payloads for r in p["requests"])
+    assert sorted(len(p["requests"]) for p in api.payloads[:3]) == [5, 5, 5]  # node_0: a batch per worker
+    log = [json.loads(x) for x in (tmp_path / "batches.jsonl").read_text().splitlines()]
+    assert {x["event"] for x in log} == {"submitted", "finished"} and "Bearer" not in json.dumps(log)
+    assert d.charged_usd == pytest.approx(0.01 * sum(len(p["requests"]) for p in api.payloads))
+
+
+def test_batch_results_without_cost_or_provider_are_filled_and_flagged(tmp_path):
+    api = FakeBatchAPI(ScriptedLLM({"worker": lambda b: "answer = 1"}), bare=True)
+    d = dispatcher(api, tmp_path)
+    spec = get_spec("flash-high")
+    try:
+        client = LLMClient(spec, Trace(tmp_path / "t", Limits()), transport=d.transport, sleep=lambda s: None)
+        res = client.chat([{"role": "user", "content": "hi"}])
+    finally:
+        d.close()
+    assert res.content == "answer = 1" and res.usage["cost_estimated"] is True
+    assert res.usage["cost"] == pytest.approx(0.5 * (10 * spec.price_prompt + 5 * spec.price_completion))
+    assert api.payloads[0]["provider"] == {"only": ["google-vertex"], "allow_fallbacks": False}
+    assert d.estimated_usd == pytest.approx(res.usage["cost"])
+
+
+def test_a_failed_batch_request_stops_the_pipeline_like_an_api_error(tmp_path):
+    d = dispatcher(FakeBatchAPI(ScriptedLLM({"worker": lambda b: "answer = 1"}), fail=True), tmp_path)
+    try:
+        rec = run_pipeline(parse_chain("q1", PROMPT), "luna-high", tmp_path / "p",
+                           Settings(workers=("luna-high",), client=batch_client(d)), arm="fixed_luna-high", rep=0)
+    finally:
+        d.close()
+    assert rec["status"] == "stopped_at_node_0:error" and "400" in rec["nodes"][0]["error"]
+
+
+def test_google_vertex_responses_named_google_pass_the_provider_check(tmp_path):
+    llm = ScriptedLLM({"worker": lambda b: "answer = 1"}, provider="Google")
+    res = LLMClient(get_spec("flash-high"), Trace(tmp_path, Limits()), transport=llm).chat(
+        [{"role": "user", "content": "x"}])
+    assert res.content == "answer = 1"
