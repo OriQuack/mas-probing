@@ -37,8 +37,11 @@ fixed repetition count, total spend and condition order. Historical presets/chec
   never the continuation, gold or failure traces. Post-hoc edits use `--source post_hoc` and are not probe claims.
 - Probe/check conversations and workspaces are isolated. Only the final instruction and explicit context
   additions reach execution, except an explicitly configured connected-probe variant.
-- Compare conditions from the same checkpoint, including a restored baseline. The recording run is not a
-  baseline replicate. Hold executor, common pipeline and configured review budgets fixed; record actual cost.
+- Compare conditions restored from the same checkpoint. A restored baseline is optional: the recording run's
+  continuation after the checkpoint can serve as the baseline when restores follow it in the same tool and
+  search environment. Restore a baseline when checkpoints are reused later or that environment changed.
+  `score_runs.py --compare` pairs restore arms only. Hold executor, common pipeline and configured review
+  budgets fixed; record actual cost.
 - Report every preselected task. Non-ok or missing planned runs count as failures in their own arm.
   Aggregate reps within task, then equal-weight tasks; use paired task-level comparisons.
 - Preserved historical runs, checkpoints, snapshots and recorded JSON/CSV are immutable evidence.
