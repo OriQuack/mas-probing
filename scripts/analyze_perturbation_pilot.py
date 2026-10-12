@@ -144,7 +144,7 @@ def main() -> None:
         }
     prep = [json.loads(x) for x in (exp / "prep.jsonl").read_text().splitlines()]
     summary["approach_mentions_gold"] = [  # leak check; gold values shorter than 3 characters match too much
-        p["target_id"] for p in prep for a in p.get("approaches") or []
+        p["target_id"] for p in prep if p["target_id"] in gold for a in p.get("approaches") or []
         if len(g := str(gold[p["target_id"]]).replace(" ", "")) >= 3 and g in a.replace(" ", "")]
     out = args.out or exp / "analysis"
     out.mkdir(parents=True, exist_ok=True)
