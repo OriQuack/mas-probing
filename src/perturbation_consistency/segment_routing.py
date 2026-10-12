@@ -262,7 +262,7 @@ def continue_chain(client: LLMClient, trace: Trace, chain: Chain, target: segmen
         with trace.tags(node=name):
             try:
                 res = client.chat([{"role": "user", "content": prompt}])
-            except (InfraError, BudgetExceeded, HTTPError, TransientError) as e:
+            except (InfraError, BudgetExceeded, HTTPError, TransientError, ValueError) as e:  # ValueError: a body that is not JSON
                 calls.append({"node": name, "answer": None, "status": "error", "error": str(e)[:300]})
                 status = f"error_at_{name}"
                 break

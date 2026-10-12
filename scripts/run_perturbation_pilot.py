@@ -41,7 +41,7 @@ def call(client: LLMClient, trace: Trace, row: dict, worker: str) -> dict:
     with trace.tags(stage="perturbation_pilot", condition=row["condition"], sample=row["sample"]):
         try:
             res = client.chat([{"role": "user", "content": row["prompt"]}])
-        except (InfraError, BudgetExceeded, HTTPError, TransientError) as e:
+        except (InfraError, BudgetExceeded, HTTPError, TransientError, ValueError) as e:  # ValueError: not JSON
             return out | {"answer": None, "method": None, "status": "error", "error": str(e)[:300]}
     nodes = node_answers(res.content) if row.get("nodes") else {}
     answer = extract_answer(res.content)
