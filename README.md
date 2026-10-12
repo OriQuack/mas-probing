@@ -23,7 +23,7 @@ orchestrator–worker 프레임워크입니다. `direct_execution`과 `multi_wor
 
 ```text
 src/minpilot/
-  agents/              orchestrator와 worker 실행
+  agents/              worker 실행과 도구 호출
   prompts/             역할별 프롬프트 본문·입력 처리, 응답 스키마
   memory.py            artifact 원본·state·context 선택
   controller.py        JSON 판단·읽기 전용 memory 조회
