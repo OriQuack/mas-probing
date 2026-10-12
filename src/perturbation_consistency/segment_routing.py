@@ -30,7 +30,7 @@ import re
 from minpilot.llm.client import HTTPError, LLMClient, TransientError
 from minpilot.runtime.trace import BudgetExceeded, InfraError, Trace
 from perturbation_consistency import longcot_math, perturb, segment
-from perturbation_consistency.longcot_nodes import Chain, extract_answer, node_prompt
+from perturbation_consistency.longcot_nodes import _PLACEHOLDER, Chain, extract_answer, node_prompt
 
 CAPS = {"easy": 8, "medium": 6, "hard": 4}  # the segment ends at the first requested node among node_1..node_k
 SAMPLES = 5
@@ -128,10 +128,53 @@ def irrelevant_context(client: LLMClient, chain: Chain, nodes: tuple, tries: int
     return {"kind": "irrelevant_context", "ok": False, "attempts": attempts}
 
 
+def _numbers(text: str) -> list[str]:
+    text = re.sub(r"\\frac\s*(\d)\s*(\d)", r"\\frac{\1}{\2}", _PLACEHOLDER.sub(" ", text))  # \frac 32 = \frac{3}{2}
+    return re.findall(r"\d+(?:\.\d+)?", text)
+
+
+def paraphrase_problems(original: str, new: str, nodes: tuple) -> list[str]:
+    """What a segment paraphrase lost: a dependency placeholder (exact up to whitespace and math delimiters), a node
+    label, or a number. Formulas are not compared as strings (a paraphrase may split or re-delimit them, and a `$`
+    can be a currency sign); the same-chain check and the manual review judge them."""
+    flat = perturb._squash(new)
+    phs = _PLACEHOLDER.findall(original)
+    lost = [ph for ph in dict.fromkeys(phs) if flat.count(perturb._squash(ph)) < phs.count(ph)]
+    lost += [n for n in nodes if not re.search(rf"\b{n}\b", new)]
+    before, after = _numbers(original), _numbers(new)
+    lost += [x for x in dict.fromkeys(before) if before.count(x) > after.count(x)]
+    return lost if new.strip() else ["<empty>"]
+
+
+def judge_paraphrase(client: LLMClient, text: str, new: str, nodes: tuple) -> dict:
+    lost = paraphrase_problems(text, new, nodes)
+    same = None if lost else perturb._ask(client, segment.SAME_CHAIN.format(a=text, b=new), "same_problem",
+                                          perturb._SAME_SCHEMA)
+    return {"text": new, "lost": lost, "same_problem": same,
+            "ok": not lost and bool(same) and same.get("same_problem") is True}
+
+
 def paraphrase(client: LLMClient, chain: Chain, nodes: tuple, tries: int = TRIES) -> dict:
-    if tries <= 0:
-        return {"kind": "paraphrase", "text": None, "ok": False, "attempts": []}
-    return segment.rewrite(client, "paraphrase", segment.segment_text(chain, nodes), nodes, tries=tries)
+    text, attempts = segment.segment_text(chain, nodes), []
+    for _ in range(max(0, tries)):
+        out = perturb._ask(client, segment.PARAPHRASE.format(text=text), "rewrite", perturb._REWRITE_SCHEMA) or {}
+        a = judge_paraphrase(client, text, str(out.get("text", "")).strip(), nodes)
+        attempts.append(a)
+        if a["ok"]:
+            return {"kind": "paraphrase", "text": a["text"], "ok": True, "attempts": attempts}
+    return {"kind": "paraphrase", "text": None, "ok": False, "attempts": attempts}
+
+
+def recheck_paraphrase(client: LLMClient, chain: Chain, nodes: tuple, item: dict) -> dict:
+    """Judge an item's stored candidates again with the current checks, in order (no new candidate)."""
+    text, attempts = segment.segment_text(chain, nodes), []
+    for old in item.get("attempts", []):
+        a = judge_paraphrase(client, text, old.get("text") or "", nodes) | {"rechecked": True,
+                                                                            "first_check": old}
+        attempts.append(a)
+        if a["ok"]:
+            return {"kind": "paraphrase", "text": a["text"], "ok": True, "attempts": attempts}
+    return {"kind": "paraphrase", "text": None, "ok": False, "attempts": attempts}
 
 
 # -- probe prompts ---------------------------------------------------------------------------------------------------

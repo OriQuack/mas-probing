@@ -13,7 +13,8 @@ segment_routing); every call is traced under prep/. Each item gets at most `TRIE
   {"reject": [{"target_id", "item": "paraphrase" | "irrelevant_context", "reason"}],
    "drop_targets": [{"target_id", "reason"}]}
 
-A rejected item is generated again while candidates remain (the rejected text stays in its history); a dropped target
+A rejected item is generated again while candidates remain (the rejected text stays in its history); `--recheck`
+judges reused paraphrase candidates that failed again with the current checks, without a new one; a dropped target
 gets no prompts. Writes manifest.json, targets.jsonl, prep.jsonl and prompts.jsonl, the input of
 scripts/run_perturbation_pilot.py. No gold answer is read here.
 """
@@ -59,6 +60,8 @@ def main() -> None:
     ap.add_argument("--reuse", nargs="*", type=Path, default=[])
     ap.add_argument("--review", type=Path, default=None)
     ap.add_argument("--env-file", type=Path, default=REPO / ".env")
+    ap.add_argument("--recheck", action="store_true",
+                    help="judge reused paraphrase candidates that failed again with the current checks (no new one)")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
@@ -113,6 +116,9 @@ def main() -> None:
                         (t.target_id, k)]}]}
             if not item or (not item.get("ok") and (t.target_id, k) in rejected):
                 todo.append(k)
+            elif args.recheck and k == "paraphrase" and not item.get("ok") and item.get("attempts") \
+                    and not any(a.get("rechecked") for a in item["attempts"]):
+                todo.append("recheck:paraphrase")
             items[k] = item
         if todo:
             with lock:
@@ -122,6 +128,10 @@ def main() -> None:
             client = LLMClient(spec, trace)
             with trace.tags(stage="segment_routing_prep", target=t.target_id):
                 for k in todo:
+                    if k == "recheck:paraphrase":
+                        items["paraphrase"] = sr.recheck_paraphrase(client, chain, t.nodes, items["paraphrase"]) | {
+                            "history": items["paraphrase"].get("history", [])}
+                        continue
                     left = sr.TRIES - used(items[k])
                     fresh = (sr.paraphrase if k == "paraphrase" else sr.irrelevant_context)(
                         client, chain, t.nodes, tries=left)

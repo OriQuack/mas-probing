@@ -124,3 +124,14 @@ def test_a_cut_off_node_stops_the_run(tmp_path):
     llm = ScriptedLLM({"worker": [Raw("answer = 22", "length")]})
     rec = sr.continue_chain(client(tmp_path, llm), Trace(tmp_path, Limits()), c, t, "11", GOLD)
     assert rec["status"] == "length_at_node_3" and rec["requested"]["node_3"] == "not_reached"
+
+
+def test_a_paraphrase_keeps_placeholders_labels_and_numbers_but_may_reformat_formulas():
+    text = segment.segment_text(chain(), ("node_0", "node_1"))
+    nodes = ("node_0", "node_1")
+    split = text.replace("Tom has $3$ apples.", "Tom owns 3 apples.")
+    assert sr.paraphrase_problems(text, split, nodes) == []
+    assert sr.paraphrase_problems(text, split.replace("add 1]", "add 2]"), nodes) == [
+        "[For this value use the answer from problem node_0 and add 1]"]
+    assert sr.paraphrase_problems(text, split.replace("Problem node_1:", "Then:"), nodes) == ["node_1", "1"]
+    assert sr.paraphrase_problems("$\\frac 32$ of $5", "$\\frac{3}{2}$ of $5", ()) == []
