@@ -16,7 +16,7 @@ skill은 필요한 수정의 방법을 찾는 데 사용하며, 기존 구성을
 | Worker | `worker.py` | 원 질문·최종 instruction·실제 context → Title, Result / Evidence / Interpretation / Unfinished |
 | Page reader | `reader.py` | 기존 페이지 판독 계약 유지 |
 
-실행은 `v18`, probe/refiner는 `r21`, evaluator는 `e6`입니다. Controller는 JSON `read_memory`를 판단당
+실행은 `v19`, probe/refiner는 `r22`, evaluator는 `e6`입니다. Controller는 JSON `read_memory`를 판단당
 최대 3라운드 사용합니다. 보고와 도구 결과는 모두 저장된 ID로 읽고 인용합니다.
 보고의 `tool_ids`에 연결된 도구 결과 ID가 있으며, 같은 ID를 state 근거와 context 선택에도 씁니다.
 외부 도구는 worker에게만 있습니다. Refiner는 probe 수집·analysis·verification을 수행하지 않습니다.
@@ -91,3 +91,11 @@ Probe 초안과 refiner 원문을 instruction artifact로 보존한다. 같은 �
 `instruction_id`를 선택하며 새 `instruction`과 동시에 쓸 수 없다. Harness는 지시를 그대로 전달한다.
 `context_notes`는 context 선택 참고이며 자동으로 붙이지 않는다. Orchestrator의 `refine`·`changes`는
 제거하고 evaluator의 `changes`는 유지한다. 직접 실행은 refiner를 호출하지 않는다.
+
+`v19/r22/e6`는 probe의 assumptions에 context·instruction의 미검증 전제도 포함하고, 도구로 확인한
+내용은 해당 항목 안에 `observed:`와 출처를 적게 한다. 네 항목과 파서는 유지한다. Probe는 전체 실행을
+목표로 하지 않지만 허용된 확인 중 답을 발견하면 근거와 함께 보고한다. Orchestrator는 state가 아직
+다루지 않은 원 질문의 부분도 선택할 수 있다. 보고서 선택은 연결 도구 본문의 자동 전달을 뜻하지 않음을
+설명하고, 목표 결과·범위가 같은 probe 작업은 저장된 instruction ID로 실행해 기록의 연결을 유지한다.
+모델 입력의 `latest_probe`에서 최상위와 중복되는 `instructions`·`evaluation`만 제외하며 trace와
+checkpoint의 기존 기록은 유지한다. Evaluator·refiner·reader 본문과 tools v7은 유지한다.

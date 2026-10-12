@@ -29,6 +29,49 @@ def test_probe_can_finish_without_execution(tmp_path, task):
     assert second['latest_probe']['reports'][0]['body'] == 'Title: A\nAnswer 2 with evidence'
 
 
+def test_probe_payload_deduplicates_without_mutating_trace_or_checkpoint(tmp_path, task):
+    from test_refiners import probe_script
+
+    original_probe = {}
+
+    def choose(body):
+        payload = json.loads(body['messages'][1]['content'])
+        if payload['first_action']:
+            return action('probe', wid=None)
+        if payload['latest_probe']:
+            original_probe.update(json.loads(json.dumps(run.latest_probe)))
+            return action(instruction=None, instruction_id=payload['latest_probe']['refinement']['instruction_id'])
+        return action('finish')
+
+    run, llm = make_run(tmp_path, task, probe_script(orchestrator=choose), 'adaptive_probe')
+    assert run.run_fresh()['status'] == 'ok'
+    after_probe = payloads(llm)[1]
+    assert 'instructions' not in after_probe['latest_probe']
+    assert 'evaluation' not in after_probe['latest_probe']
+    assert after_probe['instructions'] and after_probe['evaluation']['artifact_id']
+    assert after_probe['latest_probe']['refinement']['result']['instruction'] == run.delegations[0]['final']
+
+    events = [json.loads(line) for line in (run.run_dir / 'events.jsonl').read_text().splitlines()]
+    probe_event = next(event for event in events if event['event'] == 'probe_refinement')
+    checkpoint = run.run_dir / 'checkpoints/a1'
+    for key in ('instructions', 'evaluation'):
+        assert original_probe[key] == probe_event[key] == after_probe[key]
+    assert original_probe['reports'] == after_probe['latest_probe']['reports']
+    saved = json.loads((checkpoint / 'state.json').read_text())
+    assert saved['evaluation'] == original_probe['evaluation']
+    saved_artifacts = {record['id']: record for record in saved['memory']['artifacts']}
+    for ref in (original_probe['evaluation']['artifact_id'], original_probe['refinement']['artifact_id']):
+        assert saved_artifacts[ref]['body'] == run.memory.read(ref)['body']
+
+    restored_llm = ScriptedLLM({'worker': ['Title: Restored\n2'],
+                              'evaluator_execution': [evaluation()], 'orchestrator': [action('finish')]})
+    restored = Run.restore(checkpoint, tmp_path / 'restored', task=task, web=fake_web(tmp_path),
+                           tool_cfg=run.tool_cfg, transport=restored_llm)
+    assert restored._payload()['instructions'] == after_probe['instructions']
+    assert restored.run_restored()['status'] == 'ok'
+    assert restored.delegations[0]['final'] == run.delegations[0]['final']
+
+
 def test_mixed_actions_share_loop_and_probe_does_not_consume_execution_cap(tmp_path, task):
     choices = [action(), action('probe', wid=None, state_rows=[0]),
                action('probe', wid=None), action(wid='gen_haiku', state_rows=[0]), action('finish')]

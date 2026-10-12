@@ -39,8 +39,8 @@ executor 후보입니다. 다른 pool도 등록 worker 전체를 공개합니다
 
 | 식별자 | 현재 값 | 복원 |
 |---|---|---|
-| 실행 | `v18` | 동일 버전만 |
-| Probe/refiner | `r21` | 동일 버전만 |
+| 실행 | `v19` | 동일 버전만 |
+| Probe/refiner | `r22` | 동일 버전만 |
 | Evaluator | `e6` | 동일 버전만 |
 | Tools | `v7`, `tools_v7.sqlite` | 도구 설정 동일; 기존 cache 유지 |
 | Checkpoint | format 4 | 행동 선택 후/probe 또는 실행 전; instruction artifact·선택 ID 보존; 과거 format 변환 없음 |
@@ -82,7 +82,7 @@ Serper는 task당 100 credits이며 probe와 실행·재시도를 합산하고 c
   (예: `--compare A_none c3_probe_multi`). 기록에 없는 이름을 주면 비교 결과가 출력되지 않습니다.
 - **Restore:** `run_batch.py --checkpoints`와 `run_task.py restore`는 이동 대응표를 쓰지 않고 주어진 경로를
   그대로 엽니다. 과거 실험의 `cks*.txt`는 정리 전 `outputs/sessions/...` 경로이므로 먼저 현재 경로로 바꿉니다.
-  현재 코드(v18)에서는 기존 v7 `2026-10-10_updated-prompt-diagnostics/base`의 checkpoint도 restore할 수 없습니다. 당시 코드 snapshot을 사용하거나 v18로 새 checkpoint를 생성해야 합니다.
+  현재 코드(v19)에서는 기존 v7 `2026-10-10_updated-prompt-diagnostics/base`의 checkpoint도 restore할 수 없습니다. 당시 코드 snapshot을 사용하거나 v19로 새 checkpoint를 생성해야 합니다.
 
 ```bash
 while read -r ck; do python scripts/experiments.py resolve "$ck"; done \
@@ -126,7 +126,7 @@ python scripts/experiments.py verify
 ```bash
 python scripts/run_task.py fresh --task-id <id> --pool multi --condition direct_execution
 python scripts/run_task.py fresh --task-id <id> --pool multi --condition adaptive_probe
-python scripts/run_task.py restore --checkpoint <v18-run>/checkpoints/a0 --condition adaptive_probe
+python scripts/run_task.py restore --checkpoint <v19-run>/checkpoints/a0 --condition adaptive_probe
 python scripts/run_batch.py --tasks <exploratory-tasks.csv> --pool multi --condition direct_execution \
   --reps <fixed-reps> --purpose "Shared state fresh comparison" \
   --experiment outputs/experiments/<date>_shared-state-comparison

@@ -127,3 +127,18 @@ C34 결과: 예정 3회 모두 정상 종료, 2/3 정답, 총 알려진 비용 $
 orchestrator의 선택 참고다. 평가 실패는 rewrite를 생략하고 refiner 실패·수정 불가·보조 예산 소진은 초안
 ID를 유지한 채 다음 판단으로 돌아간다. Probe/refinement 각각 $1·60회와 run 공통 예산을 유지한다.
 Checkpoint format 4이며 과거 checkpoint 변환은 하지 않는다. Tools v7과 evaluator e6는 유지한다.
+
+## 2026-10-12 (KST): probe·위임 문구 보완과 입력 중복 제거 (v19/r22/e6)
+
+사용자 피드백에 따라 probe 가정에는 context·instruction의 미검증 전제도 포함한다. 도구 관측은 기존
+네 항목 안에 `observed:`와 출처를 적으며 파서와 보고 항목은 유지한다. 전체 실행을 목표로 삼지는 않되
+허용된 확인 중 발견한 답은 근거와 함께 보고한다. Orchestrator는 state 미해결 항목뿐 아니라 아직 state가
+다루지 않은 원 질문의 부분도 위임할 수 있다. 보고서 선택만으로 연결 도구 본문이 전달되지 않음을 명시한다.
+목표 결과와 범위가 같은 probed assignment는 방법·표현 변경으로 새 지시를 만들지 않고 저장된 ID로
+실행해 probe→실행 귀속을 유지한다. 수정본이 있어도 초안은 목록에 남기는 기존 선택 정책을 유지한다.
+
+모델 입력을 만들 때 `latest_probe` 복사본에서 중복 `instructions`·`evaluation`을 제외한다. Refiner 결과와
+상태는 유지하고 trace·checkpoint의 전체 probe 기록은 변경하지 않는다. 실행 v19·probe/refiner r22로
+올리며 evaluator e6·tools v7·checkpoint format 4는 유지한다. Evaluator 판단 기준과 refiner 경계의 추가
+수정은 보류하고 reader·시간 기준·must_finish는 변경하지 않는다. 검증은 오프라인으로 한정하며 모델의
+행동 개선을 입증하는 변경으로 보고하지 않는다.

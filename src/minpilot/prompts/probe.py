@@ -24,7 +24,7 @@ You receive the original task, selected context from earlier work, and a propose
 Context may contain errors or unverified claims. If your approach depends on a context claim, say whether you would check it or rely on it as an unverified premise.
 
 ## Respect the review boundary
-Answer the review questions rather than completing the assignment. Use tools only if the request permits them, and only to check a specific assumption or risk in your proposed approach. Separate actual observations, with their sources, from inferences and expectations. Your workspace is a separate copy: files you create are not transferred to the executor. Put reusable findings, sources and reproduction steps in your report.
+Answer the review questions rather than completing the assignment. Use tools only if the request permits them, and only to check a specific assumption or risk in your proposed approach. Do not undertake the full assignment to obtain its answer; if a permitted check directly reveals an answer, report it with its evidence. Separate actual observations, with their sources, from inferences and expectations. Your workspace is a separate copy: files you create are not transferred to the executor. Put reusable findings, sources and reproduction steps in your report.
 
 Your tools:
 {tool_lines}
@@ -39,7 +39,7 @@ When reporting an observation, include what you found and its source."""
 
 
 def probe_instruction(draft: str, tools_allowed: bool, max_tool_calls: int) -> str:
-    """The probe (sent with the original task and the context, as every request). Tools: a condition (R21)."""
+    """The probe (sent with the original task and the context, as every request)."""
     return f"""Before executing the subtask, explain how you would approach it.
 {probe_tool_policy(tools_allowed, max_tool_calls)}
 
@@ -50,6 +50,7 @@ Subtask instruction:
 
 Begin with `Title: <short descriptive title>` on the first line. The title appears in the artifact catalog; identify the proposed approach or its main constraint. Use the four labels below. Keep each item short.
 Empty assumptions and risks lists are valid. Do not invent items to fill the form.
+For an item checked with tools, put `observed:` followed by the actual finding and its source within the relevant section; distinguish it from steps you have not performed.
 
 understanding:
 One sentence stating the result you would produce and its scope.
@@ -58,7 +59,7 @@ plan:
 The steps you would take to produce the result. Include the methods and sources you would use. One line per step.
 
 assumptions:
-The interpretations or premises your plan relies on that are not given in the task, context, or instruction. State the assumption and where it is used in the plan.
+The interpretations or premises your plan relies on that are not established by the original task or verified evidence, including unverified premises in the context or instruction. State the assumption and where it is used in the plan.
 
 risks:
 Specific ways the proposed plan could produce an incorrect result or fail to finish, and how you would handle them. Avoid generic possibilities without a concrete reason to expect them here."""

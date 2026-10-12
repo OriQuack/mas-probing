@@ -62,6 +62,8 @@ worker에게만 있다. 새 보고 전문과 실제 instruction/context/종료 �
 전체는 자동 첨부하지 않는다. 모든 실제 모델 입력은 기존 messages/LLM trace에 보존한다.
 
 Probe는 같은 초안과 context를 받고 각자 독립 대화·scratch workspace에서 최대 도구 3회를 쓴다.
+전체 실행을 목표로 하지 않되 허용된 확인 중 답을 발견하면 근거와 함께 보고한다. Assumptions에는
+context·instruction의 미검증 전제도 포함하며, 실제 도구 관측은 해당 항목 안에 `observed:`와 출처를 적는다.
 Executor에게 probe 대화와 파일을 자동 이어주지 않는다. Rewrite 여부와 관계없이 orchestrator가 선택한
 probe 관측 artifact는 전달한다. 실행 worker는 `Title:`과 Result / Evidence / Interpretation / Unfinished를 쓴다.
 
@@ -84,6 +86,8 @@ Evaluator가 계속 실패하면 이전 state와 새 보고를 보존하고 실�
 Probe 평가 실패 시 refiner를 생략한다. Refiner 실패·수정 불가 시 원 초안 ID를 선택할 수 있다.
 자동 실행이나 재검토는 없다. Probe 직후 판단에는 원 초안 ID·실제 context·새 보고 전문·최신 평가·
 refiner 결과와 상태·사용 가능한 instruction ID/전문/context notes를 제공한다. 다음 판단부터 과거 본문은 기록 조회로 읽는다.
+모델 입력의 `latest_probe`에는 최상위 입력과 중복되는 `instructions`·`evaluation`을 넣지 않는다.
+원본 probe 기록과 checkpoint 저장 시점·내용은 기존 방식을 유지한다.
 
 ## Checkpoint와 버전
 
@@ -91,7 +95,7 @@ refiner 결과와 상태·사용 가능한 instruction ID/전문/context notes�
 공통 행동 번호·첫 행동 여부·행동 기록·실행 횟수·pending action·instruction artifact·선택 ID·실제 전달 지시를 함께 저장한다.
 복원 조건이 pending action을 허용하지 않으면 거부하며 probe를 execute로 바꾸지 않는다. Artifact pool, state, 평가, context 선택 snapshot,
 실제 context, 누적 예산·검색 credit, workspace·도구 상태를 포함한다. 복원 시 fingerprint, 모델·도구 설정,
-실행 `v18`·probe/refiner `r21`·evaluator `e6`을 검사한다. 이전 checkpoint는 변환하지 않는다.
+실행 `v19`·probe/refiner `r22`·evaluator `e6`을 검사한다. 이전 checkpoint는 변환하지 않는다.
 도구는 `v7`, cache는 `tools_v7.sqlite`이며 기존 원본·snapshot·cache를 수정하지 않는다.
 
 구현은 scripted model·fake web/HTTP로 검증한다. 오프라인 계약 검사는 실제 모델의 성능 향상을 입증하지 않는다.

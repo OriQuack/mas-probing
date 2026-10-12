@@ -5,7 +5,7 @@ from minpilot.prompts.refiner import REFINER
 
 
 def test_prompt_versions_and_report_contract():
-    assert (prompts.PROMPTS_VERSION, prompts.REFINER_PROMPTS_VERSION, prompts.EVALUATOR_VERSION) == ("v18", "r21", "e6")
+    assert (prompts.PROMPTS_VERSION, prompts.REFINER_PROMPTS_VERSION, prompts.EVALUATOR_VERSION) == ("v19", "r22", "e6")
     text = prompts.worker_system("worker", ())
     assert text.index("Result:") < text.index("Evidence:") < text.index("Interpretation:") < text.index("Unfinished:")
     assert "Title:" in text and "access blocking" in text

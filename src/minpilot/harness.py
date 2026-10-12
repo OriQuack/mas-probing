@@ -183,8 +183,11 @@ class Run:
         return self._guarded(lambda: self._loop(None))
 
     def _payload(self, **extra):
+        # Keep the complete probe record in traces/checkpoints; these fields are already top-level inputs.
+        latest_probe = ({k: v for k, v in self.latest_probe.items() if k not in ("instructions", "evaluation")}
+                        if self.latest_probe is not None else None)
         return {"available_actions": self.available_actions(), "first_action": not self.actions,
-                "instructions": self._instructions(), "latest_probe": self.latest_probe, "original_task": self.original_task, "state": self.memory.state,
+                "instructions": self._instructions(), "latest_probe": latest_probe, "original_task": self.original_task, "state": self.memory.state,
                 "artifacts": self.memory.catalog(), "workers": self.worker_list(),
                 "condition": self.cfg.condition.name, "evaluation": self.latest_evaluation,
                 "remaining_delegations": self.cfg.max_delegations - len(self.delegations),

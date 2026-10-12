@@ -16,7 +16,7 @@ orchestrator–worker 프레임워크입니다. `direct_execution`과 `adaptive_
 | 구성 설계·도입 범위 | [Executor 선택·작업 기록·실행 후 평가 설계안](docs/design/shared-state-evaluation-and-routing.ko.md) |
 | 실행 환경·GPU 운영 | [Slurm 운영](docs/operations/slurm.md) |
 
-현재 프롬프트는 실행 `v18`, probe/refiner `r21`, evaluator `e6`이며 도구는 `v7`입니다. 최신 구성의 전체 비교 결과는 아직 없습니다.
+현재 프롬프트는 실행 `v19`, probe/refiner `r22`, evaluator `e6`이며 도구는 `v7`입니다. 최신 구성의 전체 비교 결과는 아직 없습니다.
 과거 결과의 한계와 정정은 최신 종합 보고서를 기준으로 읽습니다.
 
 ## 구조
