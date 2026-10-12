@@ -1,8 +1,8 @@
 # min_pilot
 
 작업 기록과 evaluator 평가를 바탕으로 다음 작업·context·executor를 선택하는 최소
-orchestrator–worker 프레임워크입니다. `direct_execution`과 `multi_worker_probe` 두 조건을 지원합니다.
-기본 pool의 Luna와 Haiku 모두 executor가 될 수 있습니다.
+orchestrator–worker 프레임워크입니다. `direct_execution`과 `adaptive_probe` 두 조건을 지원합니다.
+기본 pool의 Luna와 Haiku 모두 executor가 될 수 있습니다. 매번 probe/execute/finish/read_memory 중 허용된 행동을 선택하며, probe 뒤 바로 답을 제출할 수 있습니다.
 
 ## 어디부터 읽나
 
@@ -16,7 +16,7 @@ orchestrator–worker 프레임워크입니다. `direct_execution`과 `multi_wor
 | 구성 설계·도입 범위 | [Executor 선택·작업 기록·실행 후 평가 설계안](docs/design/shared-state-evaluation-and-routing.ko.md) |
 | 실행 환경·GPU 운영 | [Slurm 운영](docs/operations/slurm.md) |
 
-현재 프롬프트는 실행 `v13`, probe/refiner `r15`, evaluator `e3`이며 도구는 `v6`입니다. 최신 구성의 전체 비교 결과는 아직 없습니다.
+현재 프롬프트는 실행 `v18`, probe/refiner `r21`, evaluator `e6`이며 도구는 `v7`입니다. 최신 구성의 전체 비교 결과는 아직 없습니다.
 과거 결과의 한계와 정정은 최신 종합 보고서를 기준으로 읽습니다.
 
 ## 구조
@@ -32,7 +32,7 @@ src/minpilot/
   tools/, llm/         도구와 모델 호출
 configs/
   pools/               등록된 executor 후보 전체
-  conditions/          direct_execution / multi_worker_probe
+  conditions/          direct_execution / adaptive_probe
   refiners/            지원이 종료된 과거 설정; 당시 snapshot에서만 사용
 docs/                  현재 설계·실험 안내·보고서
 outputs/experiments/   목적별 원본 실행, manifest, 당시 코드 snapshot

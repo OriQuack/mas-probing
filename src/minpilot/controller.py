@@ -32,6 +32,9 @@ def decide(client, trace, memory, *, stage, system, payload, validate, with_raw=
                     raise DecisionError("reply must be a JSON object")
             if not isinstance(data, dict):
                 raise DecisionError("reply must be a JSON object")
+            unknown = set(data) - set(decision_schema(stage)["properties"])
+            if unknown:
+                raise DecisionError(f"unknown fields for {stage}: {', '.join(sorted(unknown))}")
             if data.get("action") == "read_memory":
                 if reads >= 3:
                     raise DecisionError("read_memory limit is three rounds; return a decision")
@@ -46,7 +49,8 @@ def decide(client, trace, memory, *, stage, system, payload, validate, with_raw=
             validate(data)
             trace.event("decision", stage=stage, input=payload, output=data, memory_rounds=reads)
             return (data, response.content) if with_raw else data
-        except (BudgetExceeded, InfraError):
+        except (BudgetExceeded, InfraError) as error:
+            error.responses = list(responses)
             raise
         except Exception as error:
             trace.event("decision_error", stage=stage, error=repr(error), repair=repairs)

@@ -1,3 +1,8 @@
+> 현재 비교는 `direct_execution`과 `adaptive_probe`다. Probe 뒤 자동 실행하지 않는다.
+> Execute 최대 12회, probe 별도 집계. Probe 라운드와 refinement 각각 $1/LLM 60회 보조 상한.
+> Format 3 checkpoint는 행동 수행 전 `aN`에 저장하며, 조건에 맞지 않는 pending action은 거부한다.
+> 아래 과거 실험과 snapshot은 당시 조건 의미로 해석한다. 새 성능 효과는 평가하지 않았다.
+
 # 실험·용어·산출물 안내
 
 ## 서로 다른 축
@@ -9,11 +14,12 @@
 | run | 한 문제를 한 조건으로 한 번 실행한 기록 |
 | condition / arm | 비교 조건. 조건과 fresh/restore, pool, override 여부를 함께 구분 |
 | replicate | 같은 조건의 반복. 기존 label의 `_r0`, `_r1`은 반복 번호 |
-| fresh / restore | 처음부터 실행 / 위임 직전 checkpoint에서 재개 |
-| delegation / d0 | worker 위임 한 번 / 0부터 센 첫 위임. 독립 subtask 개수와 같지 않음 |
-| executor / probe worker | 선택된 실행 worker / 실행 전 질문에 답하는 pool worker |
+| fresh / restore | 처음부터 실행 / 선택한 행동 직전 checkpoint에서 재개 |
+| delegation | execute 한 번. 최대 12회이며 probe는 소비하지 않음 |
+| action / a0 | probe·execute 공통 행동 번호 / 0부터 센 첫 행동. Checkpoint 경로에 사용 |
+| executor / probe worker | 선택된 실행 worker / 독립 probe에 답하는 pool worker |
 | context / instruction | 이전 보고 정보 / 현재 작업 지시 |
-| trace stage | `orchestrator`, `orchestrator.select`, `probe`, `evaluator.probe`, `refiner`, `execution`, `evaluator.execution` |
+| trace stage | `orchestrator`, `probe`, `evaluator.probe`, `refiner`, `execution`, `evaluator.execution` |
 
 과거 실험의 stage 1~4, Phase A/B는 실험 진행 순서였으며 trace의 `stage`와 무관합니다.
 새 실험은 순서 대신 **목적을 이름에 씁니다**. 이름만으로 모델·프롬프트·도구 조건을 추측하지 않습니다.
@@ -22,8 +28,8 @@
 
 | 조건 | 실행 |
 |---|---|
-| `direct_execution` | 작업·context·executor 선택 → 실행 → evaluator → state 제안 검토 |
-| `multi_worker_probe` | 초안 → pool 전체 독립 probe 각 1회/도구 최대 3회 → evaluator → executor·context 선택 → 필요한 refiner → 실행 → evaluator |
+| `direct_execution` | 작업·context·executor 선택 → 실행 → evaluator의 state 갱신 |
+| `adaptive_probe` | probe / execute / finish / read_memory 선택 → probe 평가·state 갱신 → refiner → 다음 판단; execute는 실행 평가 후 판단; 첫 probe는 prompt 지시 |
 
 Orchestrator·evaluator·refiner는 `luna-high`를 별도 호출합니다. 초기 `multi` pool의 `gen_luna`, `gen_haiku` 모두
 executor 후보입니다. 다른 pool도 등록 worker 전체를 공개합니다. 역할별 고정 executor는 없습니다.
@@ -33,18 +39,18 @@ executor 후보입니다. 다른 pool도 등록 worker 전체를 공개합니다
 
 | 식별자 | 현재 값 | 복원 |
 |---|---|---|
-| 실행 | `v13` | 동일 버전만 |
-| Probe/refiner | `r15` | 동일 버전만 |
-| Evaluator | `e3` | 동일 버전만 |
-| Tools | `v6`, `tools_v6.sqlite` | 도구 설정 동일; 기존 cache 유지 |
-| Checkpoint | format 2 | 초안 후/probe 전; 과거 format 변환 없음 |
+| 실행 | `v18` | 동일 버전만 |
+| Probe/refiner | `r21` | 동일 버전만 |
+| Evaluator | `e6` | 동일 버전만 |
+| Tools | `v7`, `tools_v7.sqlite` | 도구 설정 동일; 기존 cache 유지 |
+| Checkpoint | format 4 | 행동 선택 후/probe 또는 실행 전; instruction artifact·선택 ID 보존; 과거 format 변환 없음 |
 
-Artifact 원본·state 교체 전후·context 선택 snapshot·executor 선택/평가 채택 이유·실제 지시·도구 원문을
+Artifact 원본·state 교체 전후·context 선택 snapshot·executor 선택 이유·evaluator 갱신 근거·실제 지시·도구 원문을
 trace로 연결합니다. `render_trace.py`는 해당 이벤트와 모델/도구 호출을 표시합니다. 비용은 모든 단계·재시도·
 조회·실패 호출을 포함합니다. `score_runs.py`의 기존 `refine_usd`는 과거 의미를 유지하며 현재 실행에는
-`pre_execution_usd`, `evaluator_usd`, Serper billed/unknown credit 열을 추가합니다. 전체 비교는 `cost_usd`를 봅니다.
+`probe_usd`, `refinement_usd`, `n_probes`, `evaluator_usd`, Serper billed/unknown credit 열을 추가합니다. 전체 비교는 `cost_usd`를 봅니다.
 
-Run 상한은 위임 12회, LLM/도구 각각 400회, $5, 3시간입니다. 위임 전 상한은 LLM 60회/$1입니다.
+Run 상한은 위임 12회, LLM/도구 각각 400회, $5, 3시간입니다. Probe 라운드와 probe 평가 후 refinement 각각의 보조 상한은 LLM 60회/$1입니다.
 Serper는 task당 100 credits이며 probe와 실행·재시도를 합산하고 cache는 제외합니다. 429 등의 비과금 응답과
 과금 불명 시도를 구분합니다. Unknown은 한도의 여유를 소비하고 알려진 청구 비용과 별도로 기록합니다.
 한도 이후 cache/무료 fallback이 가능하며 제한 상태를 입력과 trace에 표시합니다.
@@ -65,7 +71,7 @@ Serper는 task당 100 credits이며 probe와 실행·재시도를 합산하고 c
 | c1_self_review | self_review |
 | c2_probe_executor | executor_probe |
 | c2_probe_tools | executor_probe_tools |
-| c3_probe_multi | multi_worker_probe |
+| c3_probe_multi | adaptive_probe |
 | 역사적 B / C | 예측 응답 / 실제 응답. 당시 버전은 기록을 확인; 현재 preset과 동일하다고 가정하지 않음 |
 | r5 | 삭제한 과거 refiner 구현. 현재 코드에서 선택 불가 |
 
@@ -76,7 +82,7 @@ Serper는 task당 100 credits이며 probe와 실행·재시도를 합산하고 c
   (예: `--compare A_none c3_probe_multi`). 기록에 없는 이름을 주면 비교 결과가 출력되지 않습니다.
 - **Restore:** `run_batch.py --checkpoints`와 `run_task.py restore`는 이동 대응표를 쓰지 않고 주어진 경로를
   그대로 엽니다. 과거 실험의 `cks*.txt`는 정리 전 `outputs/sessions/...` 경로이므로 먼저 현재 경로로 바꿉니다.
-  현재 코드(v13)에서는 기존 v7 `2026-10-10_updated-prompt-diagnostics/base`의 checkpoint도 restore할 수 없습니다. 당시 코드 snapshot을 사용하거나 v13로 새 checkpoint를 생성해야 합니다.
+  현재 코드(v18)에서는 기존 v7 `2026-10-10_updated-prompt-diagnostics/base`의 checkpoint도 restore할 수 없습니다. 당시 코드 snapshot을 사용하거나 v18로 새 checkpoint를 생성해야 합니다.
 
 ```bash
 while read -r ck; do python scripts/experiments.py resolve "$ck"; done \
@@ -119,8 +125,8 @@ python scripts/experiments.py verify
 
 ```bash
 python scripts/run_task.py fresh --task-id <id> --pool multi --condition direct_execution
-python scripts/run_task.py fresh --task-id <id> --pool multi --condition multi_worker_probe
-python scripts/run_task.py restore --checkpoint <v13-run>/checkpoints/d0 --condition multi_worker_probe
+python scripts/run_task.py fresh --task-id <id> --pool multi --condition adaptive_probe
+python scripts/run_task.py restore --checkpoint <v18-run>/checkpoints/a0 --condition adaptive_probe
 python scripts/run_batch.py --tasks <exploratory-tasks.csv> --pool multi --condition direct_execution \
   --reps <fixed-reps> --purpose "Shared state fresh comparison" \
   --experiment outputs/experiments/<date>_shared-state-comparison

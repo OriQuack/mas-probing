@@ -11,11 +11,11 @@ STATE = {"type": "array", "items": {"type": "object", "properties": {
 def decision_schema(stage):
     common = {"action": STRING, "refs": STRINGS, "rationale": STRING}
     if stage.startswith("evaluator"):
-        fields = {"title": STRING, "state": STATE, "changes": STRING, "requires_decision": BOOLEAN}
+        fields = {"title": STRING, "state": STATE, "changes": STRING}
     elif stage == "refiner":
-        fields = {"reconsider": BOOLEAN, "instruction": STRING, "context_notes": STRING}
+        fields = {"can_refine": BOOLEAN, "instruction": STRING, "context_notes": STRING}
     else:
         fields = {"worker_id": STRING, "instruction": STRING, "answer": STRING,
                   "artifact_ids": STRINGS, "state_rows": {"type": "array", "items": {"type": "integer"}},
-                  "accept_state": BOOLEAN, "state_reason": STRING, "refine": BOOLEAN, "changes": STRING}
-    return {"type": "object", "properties": {**common, **fields}, "required": ["action"]}
+                  "instruction_id": STRING}
+    return {"type": "object", "properties": {k: {**v, "type": [v["type"], "null"]} if k != "action" else v for k, v in {**common, **fields}.items()}, "required": ["action"]}

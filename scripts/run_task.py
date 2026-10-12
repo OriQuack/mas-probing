@@ -1,4 +1,4 @@
-"""Run a current condition fresh or restore a v13/r15/e3 checkpoint."""
+"""Run a current condition fresh or restore a current-version checkpoint."""
 from __future__ import annotations
 
 import argparse
@@ -57,9 +57,10 @@ def main() -> int:
     f = sub.add_parser("fresh")
     f.add_argument("--task-id", required=True)
     f.add_argument("--pool", default="multi")
-    f.add_argument("--condition", default="direct_execution", choices=["direct_execution", "multi_worker_probe"])
+    f.add_argument("--condition", default="direct_execution", choices=["direct_execution", "adaptive_probe"])
     f.add_argument("--orchestrator-model", default="luna-high", choices=["luna-high"])
-    f.add_argument("--refiner-model", default="luna-high", choices=["luna-high"])
+    f.add_argument("--refiner-model", default="luna-high", choices=["luna-high"],
+                   help="Instruction rewrite after each valid probe evaluation, before next action selection")
     f.add_argument("--max-delegations", type=int, default=12)
     f.add_argument("--max-cost-usd", type=float, default=5.0)
     f.add_argument("--max-wall-s", type=float, default=3 * 3600)
@@ -71,7 +72,7 @@ def main() -> int:
                         "in the run's tool settings; restores use the checkpoint's chain)")
     r = sub.add_parser("restore")
     r.add_argument("--checkpoint", required=True)
-    r.add_argument("--condition", default=None, choices=["direct_execution", "multi_worker_probe"])
+    r.add_argument("--condition", default=None, choices=["direct_execution", "adaptive_probe"])
     for p in (f, r):
         p.add_argument("--label", default=None)
         p.add_argument("--runs-root", default=str(REPO / "outputs" / "runs"))

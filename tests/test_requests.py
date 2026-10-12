@@ -14,10 +14,10 @@ def test_new_reports_full_and_tool_results_not_auto_attached(tmp_path, task):
 
 
 def test_probes_are_isolated_with_three_tool_limit(tmp_path, task):
-    run, llm = make_run(tmp_path, task, probe_script(), "multi_worker_probe")
+    run, llm = make_run(tmp_path, task, probe_script(), "adaptive_probe")
     assert run.run_fresh()["status"] == "ok"
     for body in llm.by_kind["worker"][:2]:
         assert len(body["messages"]) == 2
         assert "up to 3 tool calls" in body["messages"][1]["content"]
-    assert (run.run_dir / "scratch/d0/gen_luna").is_dir()
-    assert (run.run_dir / "scratch/d0/gen_haiku").is_dir()
+    assert (run.run_dir / "scratch/a0/gen_luna").is_dir()
+    assert (run.run_dir / "scratch/a0/gen_haiku").is_dir()

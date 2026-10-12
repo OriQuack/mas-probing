@@ -4,7 +4,7 @@ restores of checkpoints under several conditions (paired comparisons).
 
   python scripts/run_batch.py --tasks data/splits/executor_selection_v1.csv --reps 3 --pool multi \
       --condition direct_execution --experiment outputs/experiments/<date>_baseline [--parallel 4] [--session-cost-usd 20]
-  python scripts/run_batch.py --checkpoints cks.txt --conditions direct_execution multi_worker_probe --reps 3 \
+  python scripts/run_batch.py --checkpoints cks.txt --conditions direct_execution adaptive_probe --reps 3 \
       --experiment outputs/experiments/<date>_probe-comparison          # cks.txt: one checkpoint dir per line
 
 Session dir: planned.csv (every planned run with its arm: task_id, label, mode, pool, condition, checkpoint,
@@ -78,8 +78,8 @@ def main() -> int:
     ap.add_argument("--reps", type=int, default=1)
     ap.add_argument("--rep-offset", type=int, default=0)
     ap.add_argument("--pool", default="multi", help="fresh runs only (restores keep the checkpoint's)")
-    ap.add_argument("--condition", default="direct_execution", choices=["direct_execution", "multi_worker_probe"], help="fresh runs")
-    ap.add_argument("--conditions", nargs="+", default=None, choices=["direct_execution", "multi_worker_probe"], help="restores: the conditions to compare")
+    ap.add_argument("--condition", default="direct_execution", choices=["direct_execution", "adaptive_probe"], help="fresh runs")
+    ap.add_argument("--conditions", nargs="+", default=None, choices=["direct_execution", "adaptive_probe"], help="restores: the conditions to compare")
     ap.add_argument("--label-prefix", default="base")
     ap.add_argument("--experiment", "--session", dest="session", default=None,
                     help="experiment directory (--session is the existing CLI spelling)")

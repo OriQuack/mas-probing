@@ -4,12 +4,12 @@ Adapted from AOrchestra's `ExtractUrlContentAction` (FoundationAgents/AOrchestra
 benchmark/gaia/tools/extract_url_jina.py; Apache License 2.0; that file credits WebExplorer's browse tool).
 
 Kept from the original:
-- the extraction prompts, verbatim (the single-text and the per-part prompt differ slightly there, and here);
 - the long-document handling: cl100k_base tokens; above 95,000 tokens the text is split into
   max(2, n // 95000 + 1) parts of n // parts tokens, each extended by 1,024 tokens; every part is answered
   separately and the answers are joined under the original header;
 - failure when any part fails or the answer is empty.
 Changed (the adapter):
+- tools v7 scopes missing information to the supplied source or part instead of asking the reader to refuse;
 - the text comes from min_pilot's fetch chain (cache, blocklist, Crawl4AI -> direct -> Playwright, Wayback by
   date) instead of Jina;
 - the model is a fixed min_pilot key (`ToolConfig.reader_model`) called through `LLMClient`: the run's budgets,

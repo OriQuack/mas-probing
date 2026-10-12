@@ -61,9 +61,10 @@ class ToolConfig:
     # v5 (2026-10-11): an archived snapshot's header shows the date of the capture Wayback actually served (the
     #     reader's final URL), with the requested date when they differ (decision C16).
     # v6: shared task-level 100-credit cap at the Serper request boundary; unknown billing tracked separately.
-    tools_version: str = "v6"
+    # v7: reader reports missing or partial information within the supplied source/part.
+    tools_version: str = "v7"
     blocklist_version: str = BLOCKLIST_VERSION
-    cache_path: Path = REPO_ROOT / "outputs" / "cache" / "tools_v6.sqlite"
+    cache_path: Path = REPO_ROOT / "outputs" / "cache" / "tools_v7.sqlite"
     # Page readers, in fallback order (names: crawl4ai, direct, playwright).
     reader_chain: tuple[str, ...] = ("crawl4ai", "direct", "playwright")
     crawl4ai_endpoint: Path = field(default_factory=_crawl4ai_endpoint)

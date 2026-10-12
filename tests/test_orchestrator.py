@@ -7,7 +7,7 @@ def test_invalid_reference_repaired_once(tmp_path, task):
     script = direct_script(orchestrator=[action(artifact_ids=["missing"]), action(), action("finish")])
     run, llm = make_run(tmp_path, task, script)
     assert run.run_fresh()["status"] == "ok"
-    assert "unknown artifact" in llm.by_kind["orchestrator"][1]["messages"][-1]["content"]
+    assert "unknown memory ID" in llm.by_kind["orchestrator"][1]["messages"][-1]["content"]
 
 
 def test_repeated_invalid_decisions_stop(tmp_path, task):

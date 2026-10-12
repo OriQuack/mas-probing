@@ -10,16 +10,15 @@ from minpilot.runtime.trace import Limits
 from minpilot.tools.config import ToolConfig
 
 
-def action(kind="delegate", wid="gen_luna", **extra):
+def action(kind="execute", wid="gen_luna", **extra):
     return {"action": kind, "worker_id": wid, "instruction": "Count unique orders in 2025.",
             "answer": "2", "rationale": "Use reported order IDs.", "artifact_ids": [], "state_rows": [],
-            "accept_state": True, "state_reason": "Evidence matches original scope.",
-            "refine": False, "changes": "", **extra}
+            "instruction_id": None, **extra}
 
 
 def evaluation(state=None, **extra):
     return {"action": "evaluate", "title": "Order evidence", "state": state or [],
-            "rationale": "Evidence matches scope.", "changes": "", "requires_decision": False, **extra}
+            "rationale": "Evidence matches scope.", "changes": "", **extra}
 
 
 def row(ref="a00000", **extra):
@@ -42,7 +41,7 @@ def direct_script(**extra):
 
 
 def test_two_delegations_use_selected_context_and_keep_state(tmp_path, task):
-    script = direct_script(orchestrator=[action(), action(wid="gen_haiku", artifact_ids=["a00000"], state_rows=[]),
+    script = direct_script(orchestrator=[action(), action(wid="gen_haiku", artifact_ids=["a00001"], state_rows=[]),
                                          action("finish")],
                            worker=["Title: Count\nFIRST FULL REPORT", "Title: Check\nSECOND FULL REPORT"],
                            evaluator_execution=[evaluation([row()]), evaluation([row(), row("a00002")])])
@@ -65,7 +64,7 @@ def test_two_delegations_use_selected_context_and_keep_state(tmp_path, task):
 def test_restore_preserves_memory_context_and_budget(tmp_path, task):
     run, _ = make_run(tmp_path, task, direct_script())
     assert run.run_fresh()["status"] == "ok"
-    ck = run.run_dir / "checkpoints/d0"
+    ck = run.run_dir / "checkpoints/a0"
     web = fake_web(tmp_path, task.question)
     llm = ScriptedLLM({"worker": ["Title: Count\n2"], "evaluator_execution": [evaluation([row()])],
                        "orchestrator": [action("finish")]})
@@ -84,7 +83,7 @@ def test_old_checkpoint_and_tamper_rejected(tmp_path, task):
         Run.restore(ck, tmp_path / "restore", task=task)
     run, _ = make_run(tmp_path, task, direct_script())
     run.run_fresh()
-    ck = run.run_dir / "checkpoints/d0"
+    ck = run.run_dir / "checkpoints/a0"
     (ck / "work/attachments/sheet.csv").write_text("tampered")
     with pytest.raises(ValueError, match="fingerprint"):
         Run.restore(ck, tmp_path / "tampered", task=task, web=fake_web(tmp_path), tool_cfg=run.tool_cfg, transport=ScriptedLLM({}))
@@ -95,22 +94,14 @@ def test_run_budget_is_terminal(tmp_path, task):
     assert run.run_fresh()["status"] == "budget_exceeded"
 
 
-@pytest.mark.parametrize("original,target", [("direct_execution", "multi_worker_probe"), ("multi_worker_probe", "direct_execution")])
-def test_current_checkpoints_restore_across_conditions(tmp_path, task, original, target):
+def test_restore_rejects_pending_probe_under_direct(tmp_path, task):
     from test_refiners import probe_script
-    run, _ = make_run(tmp_path, task, direct_script() if original == "direct_execution" else probe_script(), original)
+    run, _ = make_run(tmp_path, task, probe_script(), "adaptive_probe")
     assert run.run_fresh()["status"] == "ok"
-    script = {"orchestrator": [action("finish")], "worker": ["Title: Report\n2"],
-              "evaluator_execution": [evaluation()], "orchestrator_select": [action("select", wid="gen_haiku")]}
-    if target == "multi_worker_probe":
-        script.update(worker=["Title: Probe\nplan: read", "Title: Probe\nplan: read", "Title: Report\n2"],
-                      evaluator_probe=[evaluation()])
-    restored = Run.restore(run.run_dir / "checkpoints/d0", tmp_path / "restored", task=task,
-                           condition=ConditionConfig(target), web=fake_web(tmp_path), tool_cfg=run.tool_cfg,
-                           transport=ScriptedLLM(script))
-    info = restored.run_restored()
-    assert info["status"] == "ok", info
-    assert info["delegations"][0]["worker"] == "gen_haiku"
+    with pytest.raises(ValueError, match="pending action.*not allowed"):
+        Run.restore(run.run_dir / "checkpoints/a0", tmp_path / "restored", task=task,
+                    condition=ConditionConfig("direct_execution"), web=fake_web(tmp_path),
+                    tool_cfg=run.tool_cfg, transport=ScriptedLLM({}))
 
 
 def test_checkpoint_after_two_delegations_has_state_and_artifact_pool(tmp_path, task):
@@ -119,10 +110,10 @@ def test_checkpoint_after_two_delegations_has_state_and_artifact_pool(tmp_path, 
                            evaluator_execution=[evaluation([row()]), evaluation([row()]), evaluation([row()])])
     run, llm = make_run(tmp_path, task, script)
     assert run.run_fresh()["status"] == "ok"
-    checkpoint = run.run_dir / "checkpoints/d2"
+    checkpoint = run.run_dir / "checkpoints/a2"
     saved = json.loads((checkpoint / "state.json").read_text())
     assert saved["memory"]["state"] == [row()]
-    assert len(saved["memory"]["artifacts"]) == 4
+    assert len(saved["memory"]["artifacts"]) == 7
     assert saved["pending_action"]["context_snapshot"] == [row()]
     context = json.loads(saved["pending_action"]["context"])
     assert context["state"][0]["status"] == "supported"
@@ -131,14 +122,14 @@ def test_checkpoint_after_two_delegations_has_state_and_artifact_pool(tmp_path, 
         tool_cfg=run.tool_cfg, transport=ScriptedLLM({"worker": ["Title: Restored\n2"],
         "evaluator_execution": [evaluation([row()])], "orchestrator": [action("finish")]}))
     assert restored.run_restored()["status"] == "ok"
-    assert len(restored.memory.artifacts) == 6
+    assert len(restored.memory.artifacts) == 9
 
 
 def test_restore_rejects_tool_version_and_prompt_tamper(tmp_path, task):
     from dataclasses import replace
     run, _ = make_run(tmp_path, task, direct_script())
     run.run_fresh()
-    ck = run.run_dir / "checkpoints/d0"
+    ck = run.run_dir / "checkpoints/a0"
     for change in [{"tools_version": "v5"}, {"page_chars": 1}, {"reader_chain": ("direct",)}]:
         with pytest.raises(ValueError, match="tool settings"):
             Run.restore(ck, tmp_path / str(len(change)) / str(change), task=task, web=fake_web(tmp_path),
@@ -159,9 +150,9 @@ def test_trace_connects_artifacts_state_choices_tools_and_final_answer(tmp_path,
         {"tool_calls": [("read_file", {"path": "attachments/sheet.csv"})]}, "Title: Count\n2"]))
     assert run.run_fresh()["status"] == "ok"
     events = [json.loads(line) for line in (run.run_dir / "events.jsonl").read_text().splitlines()]
-    assert next(e for e in events if e["event"] == "report")["artifact_id"] == "a00000"
+    assert next(e for e in events if e["event"] == "report")["artifact_id"] == "a00001"
     state = next(e for e in events if e["event"] == "state_replace")
-    assert state["before"] == [] and state["after"] == [row()] and state["evaluation"] == "a00001"
+    assert state["before"] == [] and state["after"] == [row()] and state["evaluation"] == "a00002"
     assert next(e for e in events if e["event"] == "action" and e["action"] == "finish")["rationale"]
     spec = importlib.util.spec_from_file_location("render_trace", REPO_ROOT / "scripts/render_trace.py")
     module = importlib.util.module_from_spec(spec)

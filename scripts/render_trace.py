@@ -95,25 +95,26 @@ def render(run_dir: Path, max_chars: int) -> str:
         if kind == "event":
             ev = r["event"]
             if ev == "action":
-                out.append(f"## [event] orchestrator action at delegation {r.get('delegation')}: {r.get('action')}"
+                out.append(f"## [event] orchestrator action {r.get('action_index')} at execution count {r.get('delegation')}: {r.get('action')}"
                            + (" (forced finish)" if r.get("forced") else ""))
                 if r.get("invalid_before"):
                     out.append(f"(invalid replies before this action, each answered with error feedback: "
                                f"{r['invalid_before']})")
                 if r.get("rationale"):
                     out.append(f"rationale: {_clip(r['rationale'], max_chars)}")
-                if r.get("action") == "delegate":
+                if r.get("action") in ("probe", "execute"):
                     out.append(f"role: {r.get('worker_id')}")
                     if r.get("context"):
                         out.append(f"context:\n<<<\n{r.get('context')}\n>>>")
-                    out.append(f"instruction:\n<<<\n{r.get('instruction')}\n>>>")
+                    out.append(f"instruction ID: {r.get('selected_instruction_id')}\ninstruction:\n<<<\n{r.get('delivered_instruction', r.get('instruction'))}\n>>>")
                 else:
                     out.append(f"answer: {r.get('answer')!r}")
             elif ev == "delegation":
                 out.append(f"## [event] delegation {r.get('delegation')} -> {r.get('worker')} (role {r.get('role')}); "
                            f"refiner {r.get('refiner')}: {r.get('refine_status')}, changed={r.get('changed')}, "
                            f"connected={r.get('connected')}")
-                if r.get("changed"):
+                out.append(f"instruction ID: {r.get('instruction_id')}; draft ID: {r.get('draft_instruction_id')}")
+                if r.get("final"):
                     out.append(f"FINAL instruction sent to the worker:\n<<<\n{r.get('final')}\n>>>")
                 if r.get("selection_reason"):
                     out.append(f"selection: {r['selection_reason']}\nActual context:\n{r.get('context', '')}")
@@ -121,12 +122,12 @@ def render(run_dir: Path, max_chars: int) -> str:
                     out.append(f"context additions sent after the context:\n<<<\n{r.get('context_additions')}\n>>>")
             elif ev in ("report", "refine_worker_call"):
                 out.append(f"## [event] {ev} {_where(r)}: status={r.get('status')}, tool calls={r.get('n_tool_calls')}")
-            elif ev in ("artifact", "state_replace", "context_selection", "evaluation_decision", "read_memory", "decision"):
+            elif ev in ("artifact", "tool_artifact", "state_replace", "context_selection", "probe_refinement", "evaluation_decision", "read_memory", "decision"):
                 out.append(f"## [event] {ev} {_where(r)}")
                 rest = {k: v for k, v in r.items() if k not in ("ts", "event")}
                 out.append(_clip(json.dumps(rest, ensure_ascii=False, indent=2, default=str), max_chars))
             elif ev == "checkpoint":
-                out.append(f"## [event] checkpoint d{r.get('delegation')}")
+                out.append(f"## [event] checkpoint a{r.get('action_index')}")
             else:
                 rest = {k: v for k, v in r.items() if k not in ("ts", "event")}
                 out.append(f"## [event] {ev}: {_clip(json.dumps(rest, ensure_ascii=False, default=str), 3000)}")

@@ -11,7 +11,7 @@ from minpilot.runtime.trace import Limits
 from minpilot.tools.toolbox import TOOL_NAMES
 
 CONFIG_DIR = Path(__file__).resolve().parents[2] / "configs"
-CONDITIONS = ("direct_execution", "multi_worker_probe")
+CONDITIONS = ("direct_execution", "adaptive_probe")
 
 
 @dataclass(frozen=True)
@@ -96,6 +96,8 @@ def load_pool(value):
 
 
 def load_condition(value):
+    if str(value) == "multi_worker_probe":
+        raise ValueError("multi_worker_probe is retired; use adaptive_probe for new runs or a historical code snapshot")
     data = yaml.safe_load(_resolve(value, "conditions").read_text())
     if "budget" in data:
         data["budget"] = Limits.from_dict(data["budget"])
@@ -120,4 +122,4 @@ def run_config_from_dict(data):
 
 
 def load_refiner(*args, **kwargs):
-    raise ValueError("refiner presets are retired; select --condition direct_execution or multi_worker_probe")
+    raise ValueError("refiner presets are retired; select --condition direct_execution or adaptive_probe")

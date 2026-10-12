@@ -1,3 +1,9 @@
+> 2026-10-12 KST 현재 계약: 실행 v17 / probe·refiner r20 / evaluator e6 / tools v7.
+> `adaptive_probe`가 이전 `multi_worker_probe`를 대체한다. Orchestrator는 매번 probe/execute/finish/read_memory를
+> 고르며 probe 뒤 자동 실행과 별도 executor 선택 호출은 없다. 최대 12회는 execute 횟수다.
+> Probe 라운드와 refinement는 각각 $1/LLM 60회 보조 상한이며, 소진 시 자동 executor 배정하지 않는다.
+> Format 3 checkpoint는 probe·execute 공통 행동 번호 aN을 쓴다. 아래 이전 결정 중 충돌하는 흐름은 이 계약으로 대체한다.
+
 # 현재 구현 결정
 
 현재 유지하는 설계의 요약입니다. 실험 순서와 과거 변경은
@@ -73,3 +79,51 @@
 | ID | 선택 | 이유 / 범위 | 위치 |
 |---|---|---|---|
 | C29 | 첫 subtask perturbation 일관성으로 worker를 고르는 실험을 `minpilot` framework 밖 별도 패키지 `perturbation_consistency`로 구현. LongCoT math chain을 노드 단위로 실행하고, 각 worker가 첫 노드를 풀이 방식 지시만 다른 n개 variant(단계별 CoT·Plan-and-Solve·풀고 검산·Step-back·풀이 지시 없음)로 풀어 동치 답 최대 묶음 비율로 선택. 비교는 같은 노드 단위 실행의 고정 worker 반복. LongCoT 공식 math 비교에 표기 정리, LLM fallback judge 없음 | 사용자 결정(2026-10-11): worker luna-high·haiku-high·gemini, 문제 본문 불변·풀이 방식 variant n=5, baseline은 같은 노드 단위 실행, linear easy 23·hard 26. framework와 섞이지 않게 별도 패키지로 두고 minpilot의 LLM client·trace·loader만 사용. 노드 간 값 전달은 benchmark 의존관계를 따르는 실험 장치. 결과는 reports/2026-10-12-longcot-perturbation-consistency.ko.md (branch에서는 C18로 기록했다가 main 병합 시 재번호) | src/perturbation_consistency, scripts/*perturbation*, outputs/experiments/2026-10-1*_longcot-perturbation-consistency-* |
+
+
+## 2026-10-12 KST 기록 참조 통일
+
+| ID | 선택 | 이유 / 범위 | 위치 |
+|---|---|---|---|
+| C30 | 실행 v14, probe/refiner r16, evaluator e4. 보고와 도구 결과를 저장된 ID로 조회·인용·context 선택. State 네 필드와 행 선택은 유지 | 사용자 피드백. Live 진단의 `/tool/N` 조회 주소와 state 근거 ID 혼동을 줄이기 위한 계약 변경. 도구 원문에 `tNNNNN` ID와 원 보고 `parent_id`를 부여하고 보고의 `tool_ids`로 연결한다. Catalog에 도구 본문은 추가하지 않는다. Prompt의 역할·절 구성은 유지하고 참조 설명만 수정한다. 실제 모델의 개선 효과는 미검증 | memory.py, prompts, tests/test_context.py |
+
+
+## 2026-10-12 KST prompt 검토 반영
+
+| ID | 선택 | 이유 / 범위 | 위치 |
+|---|---|---|---|
+| C31 | 실행 v15, probe/refiner r17, evaluator e5, tools v7. 채택 제안에서 변경·삭제된 이전 state 행 선택 거부, 도구 호출 이름·인자 연결, 전달 경계·조건부 지지·state 정리 기준 보완 | 사용자 승인. 이전 snapshot 행 번호는 유지하되 바뀐 행을 현재 판단으로 전달하는 것을 validation과 기존 1회 수정 요청으로 막는다. 도구 기록의 ID·state 네 필드·전체 승인·역할과 호출 구조는 유지한다. 이미지 재전달은 추가하지 않는다. Reader의 답 없음은 제공된 source/part에 한정하고 새 tools_v7 cache를 사용한다. 기존 run·cache는 보존하며 실제 모델 개선 효과는 미검증 | harness.py, memory.py, prompts, tools/config.py, tests/test_context.py |
+
+
+## 2026-10-12 KST probe 답변 순서
+
+| ID | 선택 | 이유 / 범위 | 위치 |
+|---|---|---|---|
+| C32 | Probe/refiner 식별자 r18. Probe 답변을 understanding → plan → assumptions → risks 순으로 작성 | 사용자 요청. 계획을 먼저 작성하고 그 계획에 사용한 가정과 실패 가능성을 설명하게 한다. Probe는 본 실행이 아니며, 실행 worker의 보고·state·평가 흐름·refiner 본문은 유지한다. 실제 모델 효과는 미검증 | prompts/probe.py |
+
+
+## 2026-10-12 KST evaluator 단독 갱신
+
+| ID | 선택 | 이유 / 범위 | 위치 |
+|---|---|---|---|
+| C33 | 실행 v16, probe/refiner r19, evaluator e6. Evaluator의 유효한 state 출력을 즉시 저장하고 orchestrator는 작업·executor·context 선택만 수행 | 사용자 결정. `accept_state`, `state_reason`, `requires_decision`, `_adopt` 및 변경된 이전 행 선택 검사를 제거한다. 전체 목록 교체는 저장 방식으로 유지한다. Refiner는 `can_refine=false`이면 초안 유지·사유 기록으로 끝내며 별도 재검토 호출을 제거한다. 평가 실패 시 기존 state와 원본을 유지하고 orchestrator에게 재평가 권한을 넘기지 않는다. Tools v7·기존 기록은 유지. C18의 승인 방식과 C31의 행 충돌 검사를 대체하며 모델 효과는 미검증 | harness.py, memory.py, controller.py, prompts, tests |
+
+
+## 2026-10-12 KST evaluator 단독 갱신 live 진단 계획
+
+| ID | 선택 | 이유 / 범위 | 위치 |
+|---|---|---|---|
+| C34 | Secret Santa → OpenCV → Freud 순서, `multi_worker_probe` fresh 각 1회. Run당 $0.30·15분, 합계 $0.90 상한. v16/r19/e6, tools v7 고정 | 사용자 요청. 기존 저비용 탐색 과제 3개로 갱신·선택·전달 계약을 확인한다. 전체 비교나 개선 효과 추정은 하지 않는다. 실행 전에 manifest·planned.csv·코드 snapshot을 저장하며 실행 중 production 코드를 바꾸지 않는다. 모든 호출·실패·비용 불명과 검색 credit을 집계하고 eval_v1은 접근하지 않는다 | outputs/experiments/2026-10-12_evaluator-owned-state-live; reports/2026-10-12-evaluator-owned-state-live.ko.md |
+
+C34 결과: 예정 3회 모두 정상 종료, 2/3 정답, 총 알려진 비용 $0.18047882·비용 불명 0건·Serper 61 credit. State 갱신 10건과 context 선택 13건의 계약 검사 통과, 참조/JSON 수정 요청 0건. Secret Santa 답 보류와 probe 해결 후 추가 실행은 남은 문제로 기록했다. 개선 효과를 추정하지 않는다.
+
+
+## 2026-10-12 (KST): probe 평가 뒤 rewrite, 저장된 지시 선택 (v18/r21/e6)
+
+유효한 probe 평가마다 executor 선택 전에 refiner가 표현을 수정하거나 유지한다. Refiner는 최신 state와
+평가 rationale·changes를 받고 state를 바꾸지 않는다. Orchestrator는 그 결과를 보고 finish/probe/execute를
+선택한다. Probe 초안과 refiner 원문은 artifact로 보존하며 실행은 instruction_id로 저장된 지시를 그대로
+전달한다. 새 작업 직접 실행은 새 instruction을 허용하고 refinement는 하지 않는다. Context notes는
+orchestrator의 선택 참고다. 평가 실패는 rewrite를 생략하고 refiner 실패·수정 불가·보조 예산 소진은 초안
+ID를 유지한 채 다음 판단으로 돌아간다. Probe/refinement 각각 $1·60회와 run 공통 예산을 유지한다.
+Checkpoint format 4이며 과거 checkpoint 변환은 하지 않는다. Tools v7과 evaluator e6는 유지한다.

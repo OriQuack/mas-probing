@@ -112,7 +112,7 @@ def test_legacy_refiners_rejected(name):
 
 
 def test_conditions_share_pre_execution_budget_caps():
-    a, b = load_condition("direct_execution"), load_condition("multi_worker_probe")
+    a, b = load_condition("direct_execution"), load_condition("adaptive_probe")
     assert a.budget == b.budget
     assert a.budget.max_llm_calls == 60 and a.budget.max_cost_usd == 1
 
@@ -472,17 +472,17 @@ def test_restore_batches_plan_arms_and_rotate_conditions(tmp_path):
     for i in range(2):
         ck = tmp_path / f"run{i}" / "checkpoints" / "d0"
         ck.mkdir(parents=True)
-        (ck / "state.json").write_text(json.dumps({"format": 2, "task_id": f"t{i}", "config": {"pool": {"name": "redundant"}}}))
+        (ck / "state.json").write_text(json.dumps({"format": 4, "task_id": f"t{i}", "config": {"pool": {"name": "redundant"}}}))
         cks.append(str(ck))
     (tmp_path / "cks.txt").write_text("\n".join(cks))
 
     class A:
-        checkpoints, conditions, reps, rep_offset, only = str(tmp_path / "cks.txt"), ["direct_execution", "multi_worker_probe"], 2, 0, None
+        checkpoints, conditions, reps, rep_offset, only = str(tmp_path / "cks.txt"), ["direct_execution", "adaptive_probe"], 2, 0, None
     plan = rb.restore_plan(A)
     assert len(plan) == 8 and all(p["mode"] == "restore" and p["pool"] == "redundant" for p in plan)
     firsts = [plan[i]["condition"] for i in range(0, 8, 2)]
-    assert firsts == ["direct_execution", "multi_worker_probe", "multi_worker_probe", "direct_execution"]  # order rotates per (rep, checkpoint)
-    assert {p["label"] for p in plan} == {"direct_execution_r0", "multi_worker_probe_r0", "direct_execution_r1", "multi_worker_probe_r1"}
+    assert firsts == ["direct_execution", "adaptive_probe", "adaptive_probe", "direct_execution"]  # order rotates per (rep, checkpoint)
+    assert {p["label"] for p in plan} == {"direct_execution_r0", "adaptive_probe_r0", "direct_execution_r1", "adaptive_probe_r1"}
 
 
 # -- tools v4: K8 on-or-before snapshots, K9 failure causes, K11, K14 ---------------------------------
