@@ -10,7 +10,7 @@ frequent answer to the segment's last node over all its probe samples. Each (tar
 following nodes one call each (perturbation_consistency.segment_routing.continue_chain) up to the last requested node,
 and stops at the first requested node it gets wrong: the requested nodes' gold answers are read for that check only.
 All runs go out at once; under the batch transport each node is one batch round trip. One line per run in
-continuation.jsonl; traces under continuation/<target>/<worker>_r<rep>/.
+continuation.jsonl (`--out`); traces under continuation/<target>/<worker>_r<rep>/.
 """
 
 from __future__ import annotations
@@ -48,16 +48,33 @@ def main() -> None:
     ap.add_argument("--session-cost-usd", type=float, default=30.0)
     ap.add_argument("--run-cost-usd", type=float, default=2.0, help="per (target, worker, rep)")
     ap.add_argument("--env-file", type=Path, default=REPO / ".env")
+    ap.add_argument("--name", default="continuation",
+                    help="this invocation's run record (<name>_run.json) and batch log; runs already in "
+                         "the output file are skipped, so workers can be started in separate invocations")
+    ap.add_argument("--out", default="continuation.jsonl",
+                    help="output file in the experiment (two invocations running at once should not share one)")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
     exp = args.experiment
-    if (exp / "continuation.jsonl").exists():
-        sys.exit(f"{exp} already has continuation.jsonl")
+    if not set(args.batch_workers) <= set(args.workers):
+        sys.exit("--batch-workers must be a subset of --workers")
+    if (exp / f"{args.name}_run.json").exists():
+        sys.exit(f"{exp}/{args.name}_run.json exists; use a new --name")
     targets = [segment.Target(**{k: tuple(v) if k == "nodes" else v for k, v in json.loads(x).items()})
                for x in (exp / "targets.jsonl").read_text().splitlines()]
     probes = defaultdict(list)
     for r in map(json.loads, (exp / "results.jsonl").read_text().splitlines()):
         probes[(r["target_id"], r["worker"])].append(r)
+    sent = defaultdict(int)
+    for p in map(json.loads, (exp / "prompts.jsonl").read_text().splitlines()):
+        sent[p["target_id"]] += 1
+    incomplete = sorted({w for t in targets for w in args.workers if len(probes[(t.target_id, w)]) < sent[t.target_id]})
+    if incomplete:
+        sys.exit(f"probe results incomplete for {incomplete}: start a worker once all its probes are in")
+    out = exp / args.out
+    done = set()
+    if out.exists():
+        done = {(r["target_id"], r["worker"], r["rep"]) for r in map(json.loads, out.read_text().splitlines())}
     chains, gold = {}, {}
     for d in {t.difficulty for t in targets}:
         prompt_of = {q.question_id: q.prompt for q in longcot.load_questions("math", d, template="linear")}
@@ -72,7 +89,8 @@ def main() -> None:
         for w in args.workers:
             rs = sorted(probes[(t.target_id, w)], key=lambda r: (order[r["condition"]], r["sample"]))
             starts[(t.target_id, w)] = sr.start_answer([r["answer"] for r in rs])
-    jobs = [(t, w, k) for t in targets for w in args.workers for k in range(args.reps)]
+    jobs = [(t, w, k) for t in targets for w in args.workers for k in range(args.reps)
+            if (t.target_id, w, k) not in done]
     after = {t.target_id: len(chains[t.question_id].nodes) for t in targets}
     print(f"{len(targets)} targets x {len(args.workers)} workers x {args.reps} reps = {len(jobs)} runs; "
           f"starts without an answer: {sum(s['answer'] is None for s in starts.values())}")
@@ -90,7 +108,7 @@ def main() -> None:
     key = os.environ["OPENROUTER_API_KEY"]
     commit = subprocess.run(["git", "-C", str(REPO), "rev-parse", "HEAD"], capture_output=True,
                             text=True).stdout.strip()
-    (exp / "continuation_run.json").write_text(json.dumps({
+    (exp / f"{args.name}_run.json").write_text(json.dumps({
         "workers": args.workers, "models": {w: get_spec(w).identity() for w in args.workers},
         "transport": {w: "openrouter_batch" if w in args.batch_workers else "openrouter_sync" for w in args.workers},
         "reps": args.reps, "starts": {f"{tid}|{w}": s for (tid, w), s in starts.items()},
@@ -98,7 +116,7 @@ def main() -> None:
         "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}, indent=1, ensure_ascii=False))
     dispatcher = None
     if args.batch_workers:
-        dispatcher = BatchDispatcher(requests_http(key), exp / "openrouter_batches_continuation.jsonl",
+        dispatcher = BatchDispatcher(requests_http(key), exp / f"openrouter_batches_{args.name}.jsonl",
                                      {w: get_spec(w) for w in args.batch_workers},
                                      max_cost_usd=args.session_cost_usd)
     sync, slots = http_transport(key), threading.Semaphore(args.sync_concurrency)
@@ -123,7 +141,7 @@ def main() -> None:
         cost = trace.run_scope.counters()["cost_usd"]
         with lock:
             spent[0] += cost
-            with (exp / "continuation.jsonl").open("a") as f:
+            with out.open("a") as f:
                 f.write(json.dumps({"target_id": t.target_id, "worker": w, "rep": k,
                                     "start_support": starts[(t.target_id, w)], **rec, "cost_usd": cost},
                                    ensure_ascii=False) + "\n")
