@@ -108,24 +108,40 @@ def insertion_problems(original: str, new: str, sentence: str) -> list[str]:
     return out
 
 
+def judge_irrelevant(client: LLMClient, chain: Chain, nodes: tuple, node: str, sentence: str, new: str) -> dict:
+    """One candidate through the insertion check and the checker model."""
+    problems = ["unknown problem label"] if node not in nodes else \
+        insertion_problems(chain.node(node).text, new, sentence)
+    check = None if problems else perturb._ask(
+        client, IRRELEVANT_CHECK.format(node=node, text=segment.segment_text(chain, nodes), new=new,
+                                        sentence=sentence), "irrelevant_check", _IRRELEVANT_CHECK_SCHEMA)
+    ok = not problems and bool(check) and check.get("changes_answer") is False and check.get("hints") is False \
+        and check.get("contradicts") is False
+    return {"node": node, "sentence": sentence, "text": new, "problems": problems, "check": check, "ok": ok}
+
+
 def irrelevant_context(client: LLMClient, chain: Chain, nodes: tuple, tries: int = TRIES) -> dict:
     """Up to `tries` candidates until one passes the insertion check and the checker model."""
     text = segment.segment_text(chain, nodes)
     attempts = []
     for _ in range(max(0, tries)):
         out = perturb._ask(client, IRRELEVANT.format(text=text), "irrelevant_context", _IRRELEVANT_SCHEMA) or {}
-        node, sentence, new = (str(out.get(k, "")).strip() for k in ("node", "sentence", "text"))
-        problems = ["unknown problem label"] if node not in nodes else \
-            insertion_problems(chain.node(node).text, new, sentence)
-        check = None if problems else perturb._ask(
-            client, IRRELEVANT_CHECK.format(node=node, text=text, new=new, sentence=sentence), "irrelevant_check",
-            _IRRELEVANT_CHECK_SCHEMA)
-        attempts.append({"node": node, "sentence": sentence, "text": new, "problems": problems, "check": check})
-        if not problems and check and check.get("changes_answer") is False and check.get("hints") is False \
-                and check.get("contradicts") is False:
-            return {"kind": "irrelevant_context", "node": node, "sentence": sentence, "text": new, "ok": True,
-                    "attempts": attempts}
+        a = judge_irrelevant(client, chain, nodes, *(str(out.get(k, "")).strip() for k in ("node", "sentence", "text")))
+        attempts.append(a)
+        if a["ok"]:
+            return {"kind": "irrelevant_context", "node": a["node"], "sentence": a["sentence"], "text": a["text"],
+                    "ok": True, "attempts": attempts}
     return {"kind": "irrelevant_context", "ok": False, "attempts": attempts}
+
+
+def manual_irrelevant(client: LLMClient, chain: Chain, nodes: tuple, node: str, sentence: str, before: str) -> dict:
+    """A sentence written by hand (not by the rewriter), inserted before `before` in `node` and judged as a generated
+    one; recorded with `author`."""
+    original = chain.node(node).text if node in nodes else ""
+    new = original.replace(before, f"{sentence} {before}", 1) if before in original else original
+    a = judge_irrelevant(client, chain, nodes, node, sentence, new) | {"author": "claude_manual"}
+    out = {"kind": "irrelevant_context", "ok": a["ok"], "attempts": [a], "author": "claude_manual"}
+    return out | ({"node": node, "sentence": sentence, "text": new} if a["ok"] else {})
 
 
 def _numbers(text: str) -> list[str]:

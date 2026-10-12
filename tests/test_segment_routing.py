@@ -135,3 +135,16 @@ def test_a_paraphrase_keeps_placeholders_labels_and_numbers_but_may_reformat_for
         "[For this value use the answer from problem node_0 and add 1]"]
     assert sr.paraphrase_problems(text, split.replace("Problem node_1:", "Then:"), nodes) == ["node_1", "1"]
     assert sr.paraphrase_problems("$\\frac 32$ of $5", "$\\frac{3}{2}$ of $5", ()) == []
+
+
+def test_a_hand_written_sentence_is_inserted_and_judged_like_a_generated_one(tmp_path):
+    c = chain()
+    judge = ScriptedLLM({"worker": [{"changes_answer": False, "hints": False, "contradicts": False,
+                                     "looks_related": True, "reason": "ok"}]})
+    out = sr.manual_irrelevant(client(tmp_path, judge, "sonnet-high"), c, ("node_0", "node_1", "node_2"), "node_0",
+                               "Tom's sister has 4 pears.", "How many apples")
+    assert out["ok"] and out["author"] == "claude_manual"
+    assert out["text"] == "Tom has $3$ apples. Tom's sister has 4 pears. How many apples does Tom have?"
+    missing = sr.manual_irrelevant(client(tmp_path, ScriptedLLM({"worker": []}), "sonnet-high"), c,
+                                   ("node_0", "node_1", "node_2"), "node_0", "Tom's sister has 4 pears.", "Nowhere")
+    assert not missing["ok"] and missing["attempts"][0]["problems"] == ["sentence not found once in the new text"]

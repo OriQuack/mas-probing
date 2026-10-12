@@ -14,7 +14,8 @@ segment_routing); every call is traced under prep/. Each item gets at most `TRIE
    "drop_targets": [{"target_id", "reason"}]}
 
 A rejected item is generated again while candidates remain (the rejected text stays in its history); `--recheck`
-judges reused paraphrase candidates that failed again with the current checks, without a new one; a dropped target
+judges reused paraphrase candidates that failed again with the current checks, without a new one; `--manual` puts in
+hand-written irrelevant sentences for items left without one (same checks, recorded as `claude_manual`); a dropped target
 gets no prompts. Writes manifest.json, targets.jsonl, prep.jsonl and prompts.jsonl, the input of
 scripts/run_perturbation_pilot.py. No gold answer is read here.
 """
@@ -62,6 +63,9 @@ def main() -> None:
     ap.add_argument("--env-file", type=Path, default=REPO / ".env")
     ap.add_argument("--recheck", action="store_true",
                     help="judge reused paraphrase candidates that failed again with the current checks (no new one)")
+    ap.add_argument("--manual", type=Path, default=None,
+                    help='JSON {"irrelevant_context": [{"target_id", "node", "sentence", "before"}]}: hand-written '
+                         "sentences for items left without an accepted candidate, judged like generated ones")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
@@ -103,6 +107,8 @@ def main() -> None:
             p = json.loads(line)
             reused[p["target_id"]] = p | {"reused_from": str(path)}
     rejected = {(r["target_id"], r["item"]): r["reason"] for r in review.get("reject", [])}
+    manual = {m["target_id"]: m for m in json.loads(args.manual.read_text())["irrelevant_context"]} \
+        if args.manual else {}
 
     def prepare(t) -> tuple[dict, list[dict]]:
         chain = chains[t.question_id]
@@ -119,6 +125,8 @@ def main() -> None:
             elif args.recheck and k == "paraphrase" and not item.get("ok") and item.get("attempts") \
                     and not any(a.get("rechecked") for a in item["attempts"]):
                 todo.append("recheck:paraphrase")
+            elif k == "irrelevant_context" and not item.get("ok") and t.target_id in manual:
+                todo.append("manual:irrelevant_context")
             items[k] = item
         if todo:
             with lock:
@@ -128,6 +136,13 @@ def main() -> None:
             client = LLMClient(spec, trace)
             with trace.tags(stage="segment_routing_prep", target=t.target_id):
                 for k in todo:
+                    if k == "manual:irrelevant_context":
+                        m, before = manual[t.target_id], items["irrelevant_context"]
+                        items["irrelevant_context"] = sr.manual_irrelevant(
+                            client, chain, t.nodes, m["node"], m["sentence"], m["before"]) | {
+                            "history": before.get("history", []) + [
+                                {k2: v for k2, v in before.items() if k2 != "history"}]}
+                        continue
                     if k == "recheck:paraphrase":
                         items["paraphrase"] = sr.recheck_paraphrase(client, chain, t.nodes, items["paraphrase"]) | {
                             "history": items["paraphrase"].get("history", [])}
@@ -162,6 +177,7 @@ def main() -> None:
         instructions=[name for name, _ in sr.INSTRUCTIONS], surface=list(sr.SURFACE), tries=sr.TRIES,
         rewriter=spec.identity(), prep_cost_usd=round(spent[0], 4), prompt_count=len(prompts),
         reused_prep=[str(p) for p in args.reuse], review=review,
+        manual=json.loads(args.manual.read_text()) if args.manual else None,
         equivalence_version=longcot_math.EQUIVALENCE_VERSION, git_commit=commit, uncommitted_changes=dirty,
         created_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
     (exp / "manifest.json").write_text(json.dumps(manifest, indent=1))
