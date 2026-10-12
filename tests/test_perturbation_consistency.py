@@ -10,7 +10,7 @@ import time
 import pytest
 
 from fakes import Raw, ScriptedLLM
-from minpilot.llm.client import LLMClient
+from minpilot.llm.client import LLMClient, TransientError
 from minpilot.llm.specs import get_spec
 from minpilot.runtime.trace import Limits, Trace
 from perturbation_consistency import longcot_math
@@ -268,10 +268,11 @@ def test_real_linear_chains_parse(tmp_path):
 class FakeBatchAPI:
     """OpenRouter Batch API stand-in: each POSTed batch completes on its `delay`-th poll, every request answered by
     `llm`. `bare` drops `usage.cost` and `provider` from result bodies (the batch docs do not promise them);
-    `fail` makes every request an error."""
+    `fail` makes every request an error; the first `provider_failures` batches end as `failed` without results."""
 
-    def __init__(self, llm, delay: int = 1, bare: bool = False, fail: bool = False):
+    def __init__(self, llm, delay: int = 1, bare: bool = False, fail: bool = False, provider_failures: int = 0):
         self.llm, self.delay, self.bare, self.fail = llm, delay, bare, fail
+        self.provider_failures = provider_failures
         self.batches: dict[str, dict] = {}
         self.payloads: list[dict] = []
         self.lock = threading.Lock()
@@ -287,6 +288,11 @@ class FakeBatchAPI:
             b["polls"] += 1
             if b["polls"] < self.delay:
                 return 200, {"status": "in_progress", "results": None}
+            if self.provider_failures and not b.get("failed_once"):
+                self.provider_failures -= 1
+                b["failed_once"] = True
+                return 200, {"status": "failed", "usage": {}, "results": None,
+                             "error": {"message": "The provider ended this batch without producing results."}}
         p, results = b["payload"], []
         for r in p["requests"]:
             if self.fail:
@@ -302,10 +308,35 @@ class FakeBatchAPI:
                      "usage": {"cost": 0.01 * len(results)}, "results": results}
 
 
-def dispatcher(api, tmp_path):
+def dispatcher(api, tmp_path, **kw):
     specs = {k: get_spec(k) for k in ("luna-high", "haiku-high", "gemini", "flash-medium")}
-    return BatchDispatcher(api, tmp_path / "batches.jsonl", specs, quiet_s=0.05, poll_s=0.0,
-                           sleep=lambda s: time.sleep(0.005))
+    return BatchDispatcher(api, tmp_path / "batches.jsonl", specs, quiet_s=0.05, poll_s=0.0, resubmit_delay_s=0.0,
+                           sleep=lambda s: time.sleep(0.005), **kw)
+
+
+def test_a_batch_the_provider_drops_is_resubmitted(tmp_path):
+    api = FakeBatchAPI(ScriptedLLM({"worker": lambda b: "answer = 1"}), provider_failures=2)
+    d = dispatcher(api, tmp_path)
+    try:
+        client = LLMClient(get_spec("flash-medium"), Trace(tmp_path / "t", Limits()), transport=d.transport,
+                           sleep=lambda s: None)
+        res = client.chat([{"role": "user", "content": "hi"}])
+    finally:
+        d.close()
+    assert res.content == "answer = 1" and len(api.payloads) == 3
+    log = [json.loads(x) for x in (tmp_path / "batches.jsonl").read_text().splitlines()]
+    assert [x["resubmits"] for x in log if x["event"] == "resubmit"] == [1, 2]
+
+
+def test_resubmits_are_capped_then_the_call_fails_as_transient(tmp_path):
+    api = FakeBatchAPI(ScriptedLLM({"worker": lambda b: "answer = 1"}), provider_failures=10)
+    d = dispatcher(api, tmp_path, max_resubmits=1)
+    try:
+        with pytest.raises(TransientError, match="after 1 resubmits"):
+            d.transport({"model": get_spec("flash-medium").model, "messages": []}, None)
+    finally:
+        d.close()
+    assert len(api.payloads) == 2
 
 
 def batch_client(d):

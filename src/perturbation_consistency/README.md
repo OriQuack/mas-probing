@@ -19,13 +19,16 @@ python scripts/run_perturbation_consistency.py --experiment outputs/experiments/
     --template linear --limit 3 --dry-run          # 호출 없이 노드 분해와 prompt 확인
 python scripts/run_perturbation_consistency.py --experiment ... --template linear --limit 3 --session-cost-usd 8
 python scripts/run_perturbation_consistency.py --experiment ... --difficulty medium --sample 20 --seed 0 \
-    --workers luna-medium haiku-medium flash-medium --batch   # OpenRouter Batch API (batch.py)
+    --workers luna-medium haiku-medium flash-medium --batch-workers flash-medium   # flash만 Batch API
 python scripts/analyze_perturbation_consistency.py outputs/experiments/<date>_longcot-perturbation-consistency
 ```
 
 결과는 문제 단위로 비교한다(노드를 독립 표본으로 세지 않음). 우리 multi-agent 노드 단위 실행 결과는 단일 호출·도구
 없는 공식 LongCoT 점수와 구분해 보고한다.
 
-`--batch`는 모든 호출을 OpenRouter Batch API로 보낸다(`batch.py`, token 가격 절반). 호출 thread는 결과가 올 때까지
-기다리고, 새 호출이 잠시 없으면 모인 호출을 model별 batch 하나로 제출한다. 노드 하나가 batch 왕복 하나라서 chain
-길이만큼 왕복이 필요하다(왕복당 수 분~최대 24시간). 제출과 실제 청구액은 `openrouter_batches.jsonl`에 남는다.
+`--batch-workers`에 적은 worker의 호출만 OpenRouter Batch API로 보낸다(`batch.py`, token 가격 절반). 나머지 worker는
+동기 호출(동시 `--sync-concurrency`개)로 간다. batch 호출 thread는 결과가 올 때까지 기다리고, 새 호출이 잠시 없으면 모인
+호출을 model별 batch 하나로 제출한다. 노드 하나가 batch 왕복 하나라서 chain 길이만큼 왕복이 필요하다. 2026-10-12 시험
+실행에서 왕복은 Gemini·Luna 5–10분, Anthropic 17–25분 이상이었고 Vertex batch 하나는 결과 없이 실패했다. 실패·만료된
+batch의 요청은 2분 뒤 최대 4번 다시 제출한다. 제출·재제출과 실제 청구액은 `openrouter_batches.jsonl`에 남는다(시험
+실행에서 token 기반 추정 합계와 청구액이 같았다).

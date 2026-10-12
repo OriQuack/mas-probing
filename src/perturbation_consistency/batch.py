@@ -6,6 +6,11 @@ thread blocks; once no new request has arrived for `quiet_s` seconds (all pipeli
 submitted as one batch per (model, provider pin), polled every `poll_s` seconds, and every waiting call gets its
 own result body. A chain of N dependent nodes therefore takes N batch round trips.
 
+A batch the provider ends without results (seen on Google Vertex: "The provider ended this batch without producing
+results"), an expired batch, a transient submit failure or a transient per-request error puts the request back in
+the queue after `resubmit_delay_s`, at most `max_resubmits` times (logged as `resubmit`); after that the call fails as
+transient and `LLMClient`'s own retries apply. A 4xx request error fails at once.
+
 Batch requests take only `provider.only` and `allow_fallbacks` (no `require_parameters`, no `data_collection`), so
 the pin is sent at batch level and the per-request `provider` field is dropped. Two fields the client validates may
 be missing from a batch result body; when they are, they are filled and flagged rather than invented silently:
@@ -64,16 +69,20 @@ class _Pending:
     body: dict
     spec: ModelSpec
     future: Future = field(default_factory=Future)
+    resubmits: int = 0
+    ready_at: float = 0.0
 
 
 class BatchDispatcher:
     def __init__(self, http: HTTP, log_path: Path, specs: dict[str, ModelSpec], *, quiet_s: float = 20.0,
                  poll_s: float = 30.0, price_factor: float = 0.5, max_cost_usd: float | None = None,
+                 max_resubmits: int = 4, resubmit_delay_s: float = 120.0,
                  sleep: Callable[[float], None] = time.sleep, clock: Callable[[], float] = time.monotonic):
         self.http = http
         self.log_path = log_path
         self.by_model = {s.model: s for s in specs.values()}
         self.quiet_s, self.poll_s, self.price_factor = quiet_s, poll_s, price_factor
+        self.max_resubmits, self.resubmit_delay_s = max_resubmits, resubmit_delay_s
         self.max_cost_usd = max_cost_usd
         self.sleep, self.clock = sleep, clock
         self._lock = threading.Lock()
@@ -108,8 +117,11 @@ class BatchDispatcher:
         last_poll = 0.0
         while not self._stop.is_set():
             with self._lock:
-                due = self._queue and self.clock() - self._last_put >= self.quiet_s
-                batch, self._queue = (self._queue, []) if due else ([], self._queue)
+                now = self.clock()
+                ready = [p for p in self._queue if p.ready_at <= now]
+                batch = ready if ready and now - self._last_put >= self.quiet_s else []
+                taken = {id(p) for p in batch}
+                self._queue = [p for p in self._queue if id(p) not in taken]
             if batch:
                 self._submit(batch)
             if self._active and self.clock() - last_poll >= self.poll_s:
@@ -149,10 +161,11 @@ class BatchDispatcher:
                 continue
             self._log({"event": "submit_failed", "model": model, "n": len(ps), "status": status,
                        "error": (data.get("error") or {}).get("message", "")[:300]})
-            err = (TransientError(f"batch submit HTTP {status}: {data.get('error')}") if status in (0, 429)
-                   or status >= 500 else HTTPError(status, json.dumps(data.get("error"))[:300]))
             for p in ps:
-                p.future.set_exception(err)
+                if status in (0, 429) or status >= 500:
+                    self._retry(p, f"batch submit HTTP {status}: {data.get('error')}")
+                else:
+                    p.future.set_exception(HTTPError(status, json.dumps(data.get("error"))[:300]))
 
     def _poll(self, bid: str) -> None:
         status, data = self.http("GET", f"/batches/{bid}", None)
@@ -169,14 +182,31 @@ class BatchDispatcher:
         for p in ps:
             r = results.get(p.custom_id)
             if data["status"] != "completed" or r is None:
-                p.future.set_exception(TransientError(f"batch {bid} {data['status']}: no result for {p.custom_id}"))
+                self._retry(p, f"batch {bid} {data['status']}: no result")
             elif r.get("error") or not r.get("response"):
                 err = r.get("error") or {}
                 code = int(err.get("code") or (r.get("response") or {}).get("status_code") or 0)
-                p.future.set_exception(TransientError(f"batch request error {code}: {err}") if code in (0, 429)
-                                       or code >= 500 else HTTPError(code, json.dumps(err)[:300]))
+                if code in (0, 429) or code >= 500:
+                    self._retry(p, f"batch request error {code}: {err}")
+                else:
+                    p.future.set_exception(HTTPError(code, json.dumps(err)[:300]))
             else:
                 p.future.set_result(self._complete(r["response"].get("body") or {}, p.spec))
+
+    def _retry(self, p: _Pending, reason: str) -> None:
+        """Queue a request again after `resubmit_delay_s` (a failed or expired batch is not charged), at most
+        `max_resubmits` times; then the call fails as transient and the client's own retries take over."""
+        if p.resubmits >= self.max_resubmits:
+            p.future.set_exception(TransientError(f"{reason} (after {p.resubmits} resubmits)"))
+            return
+        old = p.custom_id
+        p.resubmits += 1
+        p.custom_id = f"r-{uuid.uuid4().hex[:16]}"
+        p.ready_at = self.clock() + self.resubmit_delay_s
+        self._log({"event": "resubmit", "custom_id": old, "new_custom_id": p.custom_id, "resubmits": p.resubmits,
+                   "reason": reason[:300]})
+        with self._lock:
+            self._queue.append(p)
 
     def _complete(self, body: dict, spec: ModelSpec) -> dict:
         body = dict(body)

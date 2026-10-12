@@ -3,16 +3,19 @@
 
   python scripts/run_perturbation_consistency.py --experiment outputs/experiments/<date>_longcot-perturbation-consistency \
       --template linear --difficulty easy --limit 3 [--workers luna-medium haiku-medium flash-medium] [--n 5] [--reps 3] \
-      [--probe-fraction 0.2 | --probe-depth K] [--batch] [--parallel 12] [--session-cost-usd 8] [--run-cost-usd 2] [--env-file .env] [--dry-run]
+      [--probe-fraction 0.2 | --probe-depth K] [--batch-workers flash-medium] [--sync-concurrency 12] \
+      [--parallel 12] [--session-cost-usd 8] [--run-cost-usd 2] [--env-file .env] [--dry-run]
 
 Questions are taken in data-file order (`--offset`, `--limit`), by exact id (`--only`), or as a seeded random sample
 (`--sample K --seed S`, drawn before any run and listed in the manifest). Per question: the consistency probes and the
 routed pipeline (one job), and `--reps` fixed pipelines per worker. New jobs are not started once the recorded spend
 reaches --session-cost-usd. `--dry-run` parses the chains and prints prompts without any model call.
 
-`--batch` sends every model call through the OpenRouter Batch API (perturbation_consistency.batch): all jobs run at
-once, calls are pooled into batches, and a batch stops being submitted once the charged batch spend reaches
---session-cost-usd. Each node of a chain is one batch round trip (minutes, up to 24 h). Batch submissions and their
+`--batch-workers` sends the listed workers' calls through the OpenRouter Batch API (perturbation_consistency.batch);
+the other workers stay on synchronous calls, at most --sync-concurrency at a time. With any batch worker all jobs run
+at once, calls are pooled into batches, and a batch stops being submitted once the charged batch spend reaches
+--session-cost-usd. Each node of a chain is one batch round trip: 5-10 min for Gemini and Luna, 17-25+ min for
+Anthropic in the 2026-10-12 smoke run, so batch pays off mainly for the expensive worker. Batch submissions and their
 charged usage are logged in openrouter_batches.jsonl; batch.jsonl stays the per-job log.
 Gold answers are not read here; score with scripts/analyze_perturbation_consistency.py.
 """
@@ -35,7 +38,7 @@ sys.path.insert(0, str(REPO / "src"))
 
 from minpilot.artifacts import experiment_manifest  # noqa: E402
 from minpilot.data import longcot  # noqa: E402
-from minpilot.llm.client import LLMClient  # noqa: E402
+from minpilot.llm.client import LLMClient, http_transport  # noqa: E402
 from minpilot.llm.specs import get_spec  # noqa: E402
 from perturbation_consistency import longcot_math  # noqa: E402
 from perturbation_consistency.batch import BatchDispatcher, requests_http  # noqa: E402
@@ -88,7 +91,8 @@ def main() -> None:
                        help="probe from the first node on until the consistency tie breaks, at most this share of "
                             "the chain's nodes (easy 15 -> 3, medium 35 -> 7, hard 50 -> 10)")
     probe.add_argument("--probe-depth", type=int, default=None, help="a fixed node limit instead of --probe-fraction")
-    ap.add_argument("--batch", action="store_true", help="OpenRouter Batch API for every call")
+    ap.add_argument("--batch-workers", nargs="*", default=[], help="workers whose calls use the OpenRouter Batch API")
+    ap.add_argument("--sync-concurrency", type=int, default=12, help="concurrent synchronous calls (batch mode)")
     ap.add_argument("--parallel", type=int, default=12)
     ap.add_argument("--session-cost-usd", type=float, default=8.0)
     ap.add_argument("--run-cost-usd", type=float, default=2.0)
@@ -97,6 +101,8 @@ def main() -> None:
     args = ap.parse_args()
     if not 1 <= args.n <= len(VARIANTS):
         sys.exit(f"--n must be 1..{len(VARIANTS)} (fixed instruction variants)")
+    if not set(args.batch_workers) <= set(args.workers):
+        sys.exit("--batch-workers must be a subset of --workers")
 
     chains = [parse_chain(q.question_id, q.prompt) for q in select_questions(args)]
     if not chains:
@@ -134,7 +140,7 @@ def main() -> None:
         variants=list(VARIANTS[:args.n]), equivalence_version=longcot_math.EQUIVALENCE_VERSION,
         probe_depth=args.probe_depth,
         probe_fraction=None if args.probe_depth else args.probe_fraction,
-        transport="openrouter_batch" if args.batch else "openrouter_sync",
+        transport={w: "openrouter_batch" if w in args.batch_workers else "openrouter_sync" for w in args.workers},
         run_cost_usd=args.run_cost_usd, session_cost_usd=args.session_cost_usd,
         git_commit=commit, uncommitted_changes=dirty, planned_run_count=len(planned),
         created_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
@@ -143,10 +149,18 @@ def main() -> None:
     s = Settings(workers=tuple(args.workers), n_variants=args.n, fixed_reps=args.reps, run_cost_usd=args.run_cost_usd,
                  probe_depth=args.probe_depth or 1, probe_fraction=None if args.probe_depth else args.probe_fraction)
     dispatcher = None
-    if args.batch:
-        dispatcher = BatchDispatcher(requests_http(os.environ["OPENROUTER_API_KEY"]), exp / "openrouter_batches.jsonl",
-                                     {w: get_spec(w) for w in args.workers}, max_cost_usd=args.session_cost_usd)
-        s.client = lambda key, trace: LLMClient(get_spec(key), trace, transport=dispatcher.transport)
+    if args.batch_workers:
+        key = os.environ["OPENROUTER_API_KEY"]
+        dispatcher = BatchDispatcher(requests_http(key), exp / "openrouter_batches.jsonl",
+                                     {w: get_spec(w) for w in args.batch_workers}, max_cost_usd=args.session_cost_usd)
+        sync, slots = http_transport(key), threading.Semaphore(args.sync_concurrency)
+
+        def limited(body: dict, timeout: float | None) -> dict:
+            with slots:
+                return sync(body, timeout)
+
+        s.client = lambda w, trace: LLMClient(get_spec(w), trace, transport=dispatcher.transport
+                                              if w in args.batch_workers else limited)
     lock, spent, log = threading.Lock(), [0.0], exp / "batch.jsonl"
 
     def job(kind: str, chain, worker=None, rep=0):
@@ -179,7 +193,7 @@ def main() -> None:
     for c in chains:  # routed first: its probes and pipeline are sequential, so it is the longest job
         jobs.append(("routed", c, None, 0))
         jobs += [("fixed", c, w, r) for r in range(args.reps) for w in args.workers]
-    with ThreadPoolExecutor(len(jobs) if args.batch else args.parallel) as pool:
+    with ThreadPoolExecutor(len(jobs) if args.batch_workers else args.parallel) as pool:
         list(pool.map(lambda j: job(*j), jobs))
     if dispatcher is not None:
         dispatcher.close()
