@@ -90,6 +90,7 @@ def main() -> None:
         client = LLMClient(spec, trace)
         with trace.tags(stage="perturbation_prep", target=t.target_id):
             rewrites = {k: perturb.rewrite(client, k, node.text) for k in ("paraphrase", "structured")}
+            rewrites["related_fact"] = perturb.related_fact(client, node.text)
             methods = perturb.approaches(client, perturb.body(node, node.text, t.inputs))
         cost = trace.run_scope.counters()["cost_usd"]
         with lock:

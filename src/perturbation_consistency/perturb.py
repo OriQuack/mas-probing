@@ -6,7 +6,7 @@ every worker call can go out at once. For each target node five conditions give 
 - `repeat`: the plain problem, sent `SAMPLES` times (the resampling baseline every other condition is compared with);
 - `instruction`: solving instructions around the unchanged problem (step by step, plan first, principles first);
 - `surface`: the problem text rewritten with the same meaning (a paraphrase, a Given/Conditions/Find restatement, and
-  the original plus an irrelevant sentence);
+  the original plus a true, topic-related sentence that the solution does not need);
 - `methods`: a separate model lists substantially different approaches; each sample must use one of them;
 - `avoid_first`: name the method that comes to mind first, then solve without it.
 
@@ -30,7 +30,6 @@ SAMPLES = 3
 CONDITIONS = ("repeat", "instruction", "surface", "methods", "avoid_first")
 FORMAT = ("End your response with two lines: first `method = <a few words naming the main technique you used>`, "
           "then a final line of the form: answer = <exact value>")
-IRRELEVANT = "(This problem was posed in a mathematics contest held in the spring.)"
 INSTRUCTIONS = tuple(VARIANTS[i].split("{body}")[0] for i in (0, 1, 3))  # step by step, plan first, principles first
 METHOD_PROMPT = ("Solve the following problem using this approach: {approach} If the approach cannot work for this "
                  "problem, say so in one sentence and solve it another way.\n\n")
@@ -110,6 +109,15 @@ STRUCTURED = ("Restate the following math problem as three labelled parts, 'Give
 SAME_PROBLEM = ("Do these two statements describe the same mathematical problem with the same answer? Answer false if "
                 "any quantity, condition, domain or the thing asked for differs, or if B hints at the solution."
                 "\n\nA:\n{a}\n\nB:\n{b}")
+RELATED_FACT = ("Write one true sentence of mathematical background that is related to the topic of the following "
+                "problem but is not needed to solve it: for example a related classical fact or a property of an "
+                "object that appears in the problem. It must not change the problem or its answer, must not state "
+                "the answer or any step, lemma or quantity that the solution uses, and must not refer to the "
+                "dependency placeholder. Start it with 'Note:'.\n\nProblem:\n{text}")
+FACT_CHECK = ("Here is a math problem and a sentence that will be appended to it.\n\nProblem:\n{text}\n\nSentence:\n"
+              "{fact}\n\nAnswer three questions. true: is the sentence a correct mathematical statement? "
+              "changes_problem: does appending it change the problem's meaning, conditions or answer? hints: does it "
+              "state or point to the answer, or to a step, lemma or quantity a solution would use?")
 APPROACHES = ("List three substantially different approaches to solving the following math problem: different "
               "techniques, representations or algorithms, not different write-ups of the same method. One or two "
               "sentences each, specific to this problem. Do not solve the problem and do not state or hint at its "
@@ -118,6 +126,10 @@ APPROACHES = ("List three substantially different approaches to solving the foll
 _REWRITE_SCHEMA = {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}
 _SAME_SCHEMA = {"type": "object", "properties": {"same_problem": {"type": "boolean"}, "reason": {"type": "string"}},
                 "required": ["same_problem", "reason"]}
+_FACT_CHECK_SCHEMA = {"type": "object", "properties": {"true": {"type": "boolean"},
+                                                       "changes_problem": {"type": "boolean"},
+                                                       "hints": {"type": "boolean"}, "reason": {"type": "string"}},
+                      "required": ["true", "changes_problem", "hints", "reason"]}
 _APPROACH_SCHEMA = {"type": "object", "properties": {"approaches": {"type": "array", "items": {"type": "string"},
                                                                     "minItems": 3, "maxItems": 3}},
                     "required": ["approaches"]}
@@ -144,6 +156,21 @@ def rewrite(client: LLMClient, kind: str, text: str, tries: int = 2) -> dict:
     return {"kind": kind, "text": None, "ok": False, "attempts": attempts}
 
 
+def related_fact(client: LLMClient, text: str, tries: int = 2) -> dict:
+    """A checked topic-related sentence to append: true, not changing the problem, not hinting at the solution."""
+    attempts = []
+    for _ in range(tries):
+        out = _ask(client, RELATED_FACT.format(text=text), "rewrite", _REWRITE_SCHEMA)
+        fact = (out or {}).get("text", "").strip()
+        check = _ask(client, FACT_CHECK.format(text=text, fact=fact), "fact_check", _FACT_CHECK_SCHEMA) if fact \
+            else None
+        attempts.append({"text": fact, "check": check})
+        if fact and "[For this value" not in fact and check and check.get("true") is True \
+                and check.get("changes_problem") is False and check.get("hints") is False:
+            return {"kind": "related_fact", "text": fact, "ok": True, "attempts": attempts}
+    return {"kind": "related_fact", "text": None, "ok": False, "attempts": attempts}
+
+
 def approaches(client: LLMClient, problem: str) -> list[str]:
     out = _ask(client, APPROACHES.format(body=problem), "approaches", _APPROACH_SCHEMA)
     items = [a.strip() for a in (out or {}).get("approaches", []) if isinstance(a, str) and a.strip()]
@@ -163,11 +190,11 @@ def build_prompts(node: Node, target: Target, rewrites: dict[str, dict], methods
         add("repeat", i, plain, "plain")
     for i, prefix in enumerate(INSTRUCTIONS[:SAMPLES]):
         add("instruction", i, prefix + plain, ("step_by_step", "plan_first", "principles_first")[i])
-    for i, kind in enumerate(("paraphrase", "structured", "irrelevant")[:SAMPLES]):
-        if kind == "irrelevant":
-            add("surface", i, body(node, f"{node.text} {IRRELEVANT}", target.inputs), kind)
-        elif rewrites.get(kind, {}).get("ok"):
-            add("surface", i, body(node, rewrites[kind]["text"], target.inputs), kind)
+    for i, kind in enumerate(("paraphrase", "structured", "related_fact")[:SAMPLES]):
+        if not rewrites.get(kind, {}).get("ok"):
+            continue
+        text = f"{node.text}\n\n{rewrites[kind]['text']}" if kind == "related_fact" else rewrites[kind]["text"]
+        add("surface", i, body(node, text, target.inputs), kind)
     for i, approach in enumerate(methods[:SAMPLES]):
         add("methods", i, METHOD_PROMPT.format(approach=approach.rstrip(".") + ".") + plain, approach)
     for i in range(SAMPLES):

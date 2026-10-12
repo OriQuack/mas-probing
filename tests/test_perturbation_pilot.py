@@ -61,7 +61,8 @@ def test_a_rewrite_must_keep_formulas_numbers_and_placeholders():
 def test_build_prompts_gives_three_samples_per_condition_and_drops_failed_rewrites():
     t = perturb.eligible_targets(chain(), GOLD, "hard", "linear")[1]
     node = chain().node("node_1")
-    rewrites = {"paraphrase": {"ok": True, "text": "P"}, "structured": {"ok": False, "text": None}}
+    rewrites = {"paraphrase": {"ok": True, "text": "P"}, "structured": {"ok": False, "text": None},
+                "related_fact": {"ok": True, "text": "Note: QM >= AM."}}
     rows = perturb.build_prompts(node, t, rewrites, ["Use Cauchy-Schwarz", "Use Lagrange multipliers", "Use QM-AM"])
     by = {}
     for r in rows:
@@ -70,8 +71,9 @@ def test_build_prompts_gives_three_samples_per_condition_and_drops_failed_rewrit
                                                   "avoid_first": 3}
     assert all(r["prompt"].endswith(perturb.FORMAT) and "- node_0: 38" in r["prompt"] for r in rows)
     assert len({r["prompt"] for r in by["repeat"]}) == 1 and len({r["prompt"] for r in by["instruction"]}) == 3
-    assert [r["detail"] for r in by["surface"]] == ["paraphrase", "irrelevant"]
-    assert "Problem node_1: P" in by["surface"][0]["prompt"] and perturb.IRRELEVANT in by["surface"][1]["prompt"]
+    assert [r["detail"] for r in by["surface"]] == ["paraphrase", "related_fact"]
+    assert "Problem node_1: P" in by["surface"][0]["prompt"]
+    assert f"{node.text}\n\nNote: QM >= AM." in by["surface"][1]["prompt"]
     assert "Use Lagrange multipliers." in by["methods"][1]["prompt"]
 
 
@@ -89,6 +91,15 @@ def test_rewrite_retries_and_drops_a_rewrite_that_loses_a_number(tmp_path):
     out = perturb.rewrite(LLMClient(get_spec("sonnet-medium"), Trace(tmp_path / "b", Limits()), transport=bad),
                           "structured", text)
     assert not out["ok"] and out["text"] is None and len(out["attempts"]) == 2
+
+
+def test_a_related_fact_is_kept_only_if_true_neutral_and_hint_free(tmp_path):
+    checks = iter([{"true": True, "changes_problem": False, "hints": True, "reason": "points to a step"},
+                   {"true": True, "changes_problem": False, "hints": False, "reason": "background"}])
+    facts = iter(["Note: the answer uses carries.", "Note: digit sums are congruent to the number mod 9."])
+    llm = ScriptedLLM({"rewrite": lambda b: {"text": next(facts)}, "worker": lambda b: next(checks)})
+    out = perturb.related_fact(LLMClient(get_spec("sonnet-medium"), Trace(tmp_path, Limits()), transport=llm), "x")
+    assert out["ok"] and out["text"].endswith("mod 9.") and len(out["attempts"]) == 2
 
 
 def test_approaches_come_from_the_rewriter_with_a_schema(tmp_path):
