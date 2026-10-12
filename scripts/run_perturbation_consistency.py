@@ -3,7 +3,7 @@
 
   python scripts/run_perturbation_consistency.py --experiment outputs/experiments/<date>_longcot-perturbation-consistency \
       --template linear --difficulty easy --limit 3 [--workers luna-high haiku-high gemini] [--n 5] [--reps 3] \
-      [--probe-depth 3] [--batch] [--parallel 12] [--session-cost-usd 8] [--run-cost-usd 2] [--env-file .env] [--dry-run]
+      [--probe-fraction 0.2 | --probe-depth K] [--batch] [--parallel 12] [--session-cost-usd 8] [--run-cost-usd 2] [--env-file .env] [--dry-run]
 
 Questions are taken in data-file order (`--offset`, `--limit`), by exact id (`--only`), or as a seeded random sample
 (`--sample K --seed S`, drawn before any run and listed in the manifest). Per question: the consistency probes and the
@@ -82,8 +82,11 @@ def main() -> None:
     ap.add_argument("--workers", nargs="+", default=list(DEFAULT_WORKERS))
     ap.add_argument("--n", type=int, default=5)
     ap.add_argument("--reps", type=int, default=3)
-    ap.add_argument("--probe-depth", type=int, default=3,
-                    help="probe up to this many first nodes; a node is probed only by workers still tied")
+    probe = ap.add_mutually_exclusive_group()
+    probe.add_argument("--probe-fraction", type=float, default=0.2,
+                       help="probe from the first node on until the consistency tie breaks, at most this share of "
+                            "the chain's nodes (easy 15 -> 3, medium 35 -> 7, hard 50 -> 10)")
+    probe.add_argument("--probe-depth", type=int, default=None, help="a fixed node limit instead of --probe-fraction")
     ap.add_argument("--batch", action="store_true", help="OpenRouter Batch API for every call")
     ap.add_argument("--parallel", type=int, default=12)
     ap.add_argument("--session-cost-usd", type=float, default=8.0)
@@ -128,6 +131,7 @@ def main() -> None:
         question_ids=[c.question_id for c in chains], workers=args.workers,
         models={w: get_spec(w).identity() for w in args.workers}, n_variants=args.n, fixed_reps=args.reps,
         variants=list(VARIANTS[:args.n]), probe_depth=args.probe_depth,
+        probe_fraction=None if args.probe_depth else args.probe_fraction,
         transport="openrouter_batch" if args.batch else "openrouter_sync",
         run_cost_usd=args.run_cost_usd, session_cost_usd=args.session_cost_usd,
         git_commit=commit, uncommitted_changes=dirty, planned_run_count=len(planned),
@@ -135,7 +139,7 @@ def main() -> None:
     (exp / "manifest.json").write_text(json.dumps(manifest, indent=1))
 
     s = Settings(workers=tuple(args.workers), n_variants=args.n, fixed_reps=args.reps, run_cost_usd=args.run_cost_usd,
-                 probe_depth=args.probe_depth)
+                 probe_depth=args.probe_depth or 1, probe_fraction=None if args.probe_depth else args.probe_fraction)
     dispatcher = None
     if args.batch:
         dispatcher = BatchDispatcher(requests_http(os.environ["OPENROUTER_API_KEY"]), exp / "openrouter_batches.jsonl",

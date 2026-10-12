@@ -6,8 +6,8 @@ loader (`minpilot.data.longcot`).
 
 | 단계 | 내용 |
 |---|---|
-| 일관성 probe | 각 worker가 첫 노드를 풀이 방식 지시만 다른 n개 variant(단계별 CoT, Plan-and-Solve, 풀고 검산, Step-back, 풀이 지시 없음)로 풀고, 동치 답 최대 묶음 비율을 일관성으로 계산. `--probe-depth K`이면 최고 일관성이 동점인 worker만 다음 노드를 같은 방식으로 풂(최대 K개 노드, variant마다 자기 앞 답을 이어받는 chain) |
-| `consistency_routed` | 일관성이 가장 높은 worker(K개 노드 뒤에도 동점이면 문제별 seed 무작위)가 마지막 probe 노드의 최빈 묶음에 든 가장 앞 variant chain의 답을 이어받아 나머지 노드를 풂 |
+| 일관성 probe | 각 worker가 첫 노드를 풀이 방식 지시만 다른 n개 variant(단계별 CoT, Plan-and-Solve, 풀고 검산, Step-back, 풀이 지시 없음)로 풀고, 동치 답 최대 묶음 비율을 일관성으로 계산. 최고 일관성이 동점이면 동점인 worker만 다음 노드를 같은 방식으로 풀어, 동점이 깨질 때까지 진행(최대 전체 노드의 `--probe-fraction`, 기본 20%: easy 3·medium 7·hard 10개. `--probe-depth K`는 고정 K개). variant마다 자기 앞 답을 이어받는 chain |
+| `consistency_routed` | 일관성이 가장 높은 worker(한도까지 동점이면 문제별 seed 무작위)가 마지막 probe 노드의 최빈 묶음에 든 가장 앞 variant chain의 답을 이어받아 나머지 노드를 풂 |
 | `fixed_<worker>` | 각 worker가 전체 노드를 반복 수행하는 비교용 실행. 선택에 쓰지 않음 |
 
 모든 arm은 노드를 하나씩 풀고 의존 노드의 값을 다음 노드 prompt에 넣는다. 문제 본문은 바꾸지 않는다. 답이 없거나
@@ -19,7 +19,7 @@ python scripts/run_perturbation_consistency.py --experiment outputs/experiments/
     --template linear --limit 3 --dry-run          # 호출 없이 노드 분해와 prompt 확인
 python scripts/run_perturbation_consistency.py --experiment ... --template linear --limit 3 --session-cost-usd 8
 python scripts/run_perturbation_consistency.py --experiment ... --difficulty medium --sample 20 --seed 0 \
-    --workers luna-high haiku-high flash-high --probe-depth 3 --batch   # OpenRouter Batch API (batch.py)
+    --workers luna-high haiku-high flash-high --batch   # OpenRouter Batch API (batch.py)
 python scripts/analyze_perturbation_consistency.py outputs/experiments/<date>_longcot-perturbation-consistency
 ```
 

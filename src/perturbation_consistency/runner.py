@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import contextvars
 import json
+import math
 import random
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -37,6 +38,7 @@ class Settings:
     fixed_reps: int = 3
     run_cost_usd: float = 2.0   # per run (one pipeline or one worker's probes)
     probe_depth: int = 1        # probe up to this many first nodes; later nodes only for workers still tied
+    probe_fraction: float | None = None  # if set, the limit is this share of the chain's nodes instead (at least 1)
     client: ClientFactory = default_client
 
 
@@ -100,8 +102,15 @@ def _consistency(samples: list[dict], n: int) -> dict:
             "modal_variants": sorted(top), "consistency": len(top) / n}
 
 
+def probe_limit(chain: Chain, s: Settings) -> int:
+    if s.probe_fraction is None:
+        return s.probe_depth
+    return max(1, math.floor(len(chain.nodes) * s.probe_fraction + 1e-9))
+
+
 def run_probes(chain: Chain, out: Path, s: Settings) -> dict:
-    """Consistency probes on the first `s.probe_depth` nodes, then the worker choice.
+    """Consistency probes from the first node on until the tie breaks (at most `probe_limit` nodes), then the
+    worker choice.
 
     Each worker solves the first node once per instruction variant; variant v's chain passes its own answer on to
     the next node, so a disagreement or a failed node propagates. After each node only the workers tied for the
@@ -123,7 +132,8 @@ def run_probes(chain: Chain, out: Path, s: Settings) -> dict:
         with traces[w].tags(stage="consistency_probe", worker=w):
             return _call(clients[w], traces[w], chain, node, paths[w][v], v)
 
-    for node in [x.name for x in chain.nodes[:s.probe_depth]]:
+    limit = probe_limit(chain, s)
+    for node in [x.name for x in chain.nodes[:limit]]:
         jobs = [(w, v) for w in contenders for v in range(n)]
         results = dict(zip(jobs, _parallel([lambda w=w, v=v: one(w, v, node) for w, v in jobs])))
         cons = {}
@@ -156,7 +166,7 @@ def run_probes(chain: Chain, out: Path, s: Settings) -> dict:
     last = rounds[chosen][-1]
     variant = last["modal_variants"][0] if last["modal_variants"] else None
     pick = {"chosen": chosen, "tied": tied, "consistency": {w: rounds[w][0]["consistency"] for w in s.workers},
-            "rounds": history, "probed_nodes": len(history), "path_variant": variant,
+            "rounds": history, "probed_nodes": len(history), "probe_limit": limit, "path_variant": variant,
             "given": dict(paths[chosen][variant]) if variant is not None else {},
             "modal_answer": last["modal_answer"]}
     (out / "choice.json").write_text(json.dumps(pick, indent=1, ensure_ascii=False))

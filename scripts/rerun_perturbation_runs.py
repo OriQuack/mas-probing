@@ -41,7 +41,7 @@ def main() -> None:
     prompts = {q.question_id: q.prompt for q in longcot.load_questions("math", manifest["dataset"]["difficulty"])}
     s = Settings(workers=tuple(manifest["workers"]), n_variants=manifest["n_variants"],
                  fixed_reps=manifest["fixed_reps"], run_cost_usd=manifest["run_cost_usd"],
-                 probe_depth=manifest.get("probe_depth", 1))
+                 probe_depth=manifest.get("probe_depth") or 1, probe_fraction=manifest.get("probe_fraction"))
     commit = subprocess.run(["git", "-C", str(REPO), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
     for name in args.runs:
         qid, run = name.split("/")

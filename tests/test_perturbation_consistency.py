@@ -16,7 +16,7 @@ from minpilot.runtime.trace import Limits, Trace
 from perturbation_consistency import longcot_math
 from perturbation_consistency.batch import BatchDispatcher
 from perturbation_consistency.longcot_nodes import VARIANTS, extract_answer, node_prompt, parse_chain
-from perturbation_consistency.runner import Settings, run_pipeline, run_routed
+from perturbation_consistency.runner import Settings, probe_limit, run_pipeline, run_routed
 
 PROMPT = """Solve this problem step by step and return the final solution at the end.
 
@@ -171,6 +171,25 @@ def test_a_tie_left_after_the_last_probed_node_is_broken_by_a_seed(tmp_path):
     assert res["choice"]["tied"] == ["haiku-high", "luna-high"] and res["choice"]["probed_nodes"] == 2
     assert res["choice"]["chosen"] == again["choice"]["chosen"]
     assert res["choice"]["given"] == {"node_0": "84", "node_1": "35"}
+
+
+def test_the_probe_limit_is_a_share_of_the_chain_nodes(tmp_path):
+    chain = parse_chain("q1", PROMPT)  # 4 nodes
+    assert [probe_limit(chain, Settings(workers=(), probe_fraction=f)) for f in (0.2, 0.5, 1.0)] == [1, 2, 4]
+    assert probe_limit(chain, Settings(workers=(), probe_depth=3)) == 3
+    res = run_routed(chain, tmp_path, settings(script(), probe_fraction=0.5))  # luna and haiku stay tied
+    assert res["choice"]["probe_limit"] == 2 and res["choice"]["probed_nodes"] == 2
+    assert len(res["choice"]["tied"]) == 2
+
+
+def test_real_chain_probe_limits_at_twenty_percent():
+    from minpilot.data import longcot
+    if not (longcot.LONGCOT_ROOT / "math" / "hard.json").exists():
+        pytest.skip("LongCoT data not downloaded")
+    s = Settings(workers=(), probe_fraction=0.2)
+    limits = {d: {probe_limit(parse_chain(q.question_id, q.prompt), s)
+                  for q in longcot.load_questions("math", d, template="linear")} for d in ("easy", "medium", "hard")}
+    assert limits == {"easy": {3}, "medium": {7}, "hard": {10}}
 
 
 def test_a_stopped_variant_chain_counts_as_no_answer_on_later_nodes(tmp_path):
