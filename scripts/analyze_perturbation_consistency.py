@@ -155,7 +155,7 @@ def summarize(qrows: list, wrows: list, workers: list, out: Path) -> None:
     differ_node = [r for r in qrows if r["workers_differ_node"]]
     untied = [r for r in qrows if "," not in r["tied"]]
     summary = {
-        "questions": n, "workers": workers,
+        "questions": n, "workers": workers, "equivalence_version": longcot_math.EQUIVALENCE_VERSION,
         "accuracy": {"consistency_routed": mean("routed_correct"), "fixed_mean (random worker)": mean("fixed_mean"),
                      "fixed_best_in_hindsight": mean("fixed_best"), "majority_vote_over_fixed": mean("vote_correct"),
                      **{f"fixed_{w}": sum(x["fixed_acc"] for x in wrows if x["worker"] == w) / n for w in workers}},

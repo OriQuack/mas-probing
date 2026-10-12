@@ -37,6 +37,7 @@ from minpilot.artifacts import experiment_manifest  # noqa: E402
 from minpilot.data import longcot  # noqa: E402
 from minpilot.llm.client import LLMClient  # noqa: E402
 from minpilot.llm.specs import get_spec  # noqa: E402
+from perturbation_consistency import longcot_math  # noqa: E402
 from perturbation_consistency.batch import BatchDispatcher, requests_http  # noqa: E402
 from perturbation_consistency.longcot_nodes import VARIANTS, node_prompt, parse_chain  # noqa: E402
 from perturbation_consistency.runner import Settings, run_pipeline, run_routed  # noqa: E402
@@ -130,7 +131,8 @@ def main() -> None:
                                                                "seed": args.seed}},
         question_ids=[c.question_id for c in chains], workers=args.workers,
         models={w: get_spec(w).identity() for w in args.workers}, n_variants=args.n, fixed_reps=args.reps,
-        variants=list(VARIANTS[:args.n]), probe_depth=args.probe_depth,
+        variants=list(VARIANTS[:args.n]), equivalence_version=longcot_math.EQUIVALENCE_VERSION,
+        probe_depth=args.probe_depth,
         probe_fraction=None if args.probe_depth else args.probe_fraction,
         transport="openrouter_batch" if args.batch else "openrouter_sync",
         run_cost_usd=args.run_cost_usd, session_cost_usd=args.session_cost_usd,

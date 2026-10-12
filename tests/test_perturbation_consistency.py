@@ -100,6 +100,41 @@ def test_grouping_uses_longcot_equivalence():
     assert longcot_math.compare_answer_lists(["16"], [None]) == "mismatch"
 
 
+@pytest.mark.parametrize("a,b", [  # same value, different notation (recorded answers and gold strings)
+    ("3\\sqrt{21}", "3√21"),
+    ("3*sqrt(21)", "3\\sqrt{21}"),
+    ("\\log\\frac{2007}{2006}", "\\ln\\left(\\frac{2007}{2006}\\right)"),
+    ("\\log\\frac{2007}{2006}", "log(2007/2006)"),
+    ("\\log_2(2015)-1", "\\log_2\\left(\\frac{2015}{2}\\right)"),
+    ("\\log_2 8", "3"),
+    ("\\sqrt[3]{8}", "2"),
+    ("\\frac{\\sqrt{3}}{2}", "\\sin(\\pi/3)"),
+    ("48+sqrt(2016)", "48 + 12\\sqrt{14}"),
+    ("\\frac{2\\sqrt{170}-9\\sqrt{5}}{5}", "\\frac{2\\sqrt{34}-9}{\\sqrt{5}}"),
+    ("2/3 + 1/(3*4^2013)", "\\displaystyle \\frac{2\\cdot4^{2013}+1}{3\\cdot4^{2013}}"),
+    ("3", "\\{3\\}"),
+    ("12,345", "12345"),
+    ("\\{(2025, 36), (4489, 2500)\\}", "(S₁, S₂) ∈ {(4489, 2500), (2025, 36)}"),
+])
+def test_equivalent_notation_matches(a, b):
+    assert longcot_math.compare(a, b) == "match" and longcot_math.compare(b, a) == "match"
+
+
+@pytest.mark.parametrize("a,b", [  # different values, some differing only far below float precision
+    ("3\\sqrt{21}", "3\\sqrt{22}"),
+    ("3^2021 - 2^2021", "3^{2021} - 2^{2021} - 1"),
+    ("2/3 + 1/(3*4^2013)", "2/3"),
+    ("(2^{2019} - 1)^{2018}", "3"),
+    ("3^{2014}/(2^{2014}*2014!)", "0"),
+    ("1/3", "0.333333333333"),
+    ("\\{1, 2\\}", "\\{1, 3\\}"),
+    ("(1, 2)", "(2, 1)"),
+    ("\\log\\frac{2007}{2006}", "\\log\\frac{2008}{2007}"),
+])
+def test_different_values_do_not_match(a, b):
+    assert longcot_math.compare(a, b) != "match" and longcot_math.compare(b, a) != "match"
+
+
 LUNA, HAIKU, GEMINI = (get_spec(k).model for k in ("luna-high", "haiku-high", "gemini"))
 TRUE = {"node_0": "84", "node_1": "35", "node_2": "-1", "node_3": "0"}
 
