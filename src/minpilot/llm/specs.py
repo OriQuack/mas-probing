@@ -88,11 +88,21 @@ SPECS: dict[str, ModelSpec] = {
         sampling={"temperature": 1.0, "top_p": 0.95}, reasoning={"effort": "minimal"}, preserve_reasoning=True,
         price_prompt=2.5e-7, price_completion=1.5e-6, image_tokens="fixed:1500",
         note="Gemini 3.1 Flash-Lite at effort minimal; reasoning_details are re-sent (thought signatures)."),
-    "flash-high": ModelSpec(
-        key="flash-high", model="google/gemini-3.8-flash", provider="google-vertex", max_tokens=MAX_TOKENS_REASONING,
-        reasoning={"effort": "high"}, preserve_reasoning=True, price_prompt=7.5e-7, price_completion=3.75e-6,
+    # Perturbation-consistency workers at effort medium (decision C30): high was too costly for the pilot.
+    "luna-medium": ModelSpec(
+        key="luna-medium", model="openai/gpt-6-luna-20260922", provider="openai", max_tokens=MAX_TOKENS_REASONING,
+        reasoning={"effort": "medium"}, preserve_reasoning=True, price_prompt=1e-7, price_completion=5e-7,
+        image_tokens="patch:1.2", note="GPT-6 Luna at effort medium; otherwise as luna-high."),
+    "haiku-medium": ModelSpec(
+        key="haiku-medium", model="anthropic/claude-haiku-5.5-20261007", provider="anthropic",
+        max_tokens=MAX_TOKENS_REASONING, reasoning={"effort": "medium"}, preserve_reasoning=True,
+        price_prompt=1e-7, price_completion=5e-7, image_tokens="fixed:10000",
+        note="Claude Haiku 5.5 at effort medium; otherwise as haiku-high."),
+    "flash-medium": ModelSpec(
+        key="flash-medium", model="google/gemini-3.8-flash", provider="google-vertex", max_tokens=MAX_TOKENS_REASONING,
+        reasoning={"effort": "medium"}, preserve_reasoning=True, price_prompt=7.5e-7, price_completion=3.75e-6,
         image_tokens="fixed:1500",
-        note="Gemini 3.8 Flash at effort high (released 2026-09-02), pinned to Google Vertex: its only OpenRouter "
+        note="Gemini 3.8 Flash at effort medium (released 2026-09-02), pinned to Google Vertex: its only OpenRouter "
              "batch endpoint (2026-10-12). No sampling parameters (the batch endpoint takes no temperature/top_p). "
              "Prices are the standard list prices (reservation bound); batch is half."),
 }

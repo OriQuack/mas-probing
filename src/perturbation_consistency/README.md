@@ -19,7 +19,7 @@ python scripts/run_perturbation_consistency.py --experiment outputs/experiments/
     --template linear --limit 3 --dry-run          # 호출 없이 노드 분해와 prompt 확인
 python scripts/run_perturbation_consistency.py --experiment ... --template linear --limit 3 --session-cost-usd 8
 python scripts/run_perturbation_consistency.py --experiment ... --difficulty medium --sample 20 --seed 0 \
-    --workers luna-high haiku-high flash-high --batch   # OpenRouter Batch API (batch.py)
+    --workers luna-medium haiku-medium flash-medium --batch   # OpenRouter Batch API (batch.py)
 python scripts/analyze_perturbation_consistency.py outputs/experiments/<date>_longcot-perturbation-consistency
 ```
 

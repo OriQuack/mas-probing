@@ -268,7 +268,7 @@ class FakeBatchAPI:
 
 
 def dispatcher(api, tmp_path):
-    specs = {k: get_spec(k) for k in ("luna-high", "haiku-high", "gemini", "flash-high")}
+    specs = {k: get_spec(k) for k in ("luna-high", "haiku-high", "gemini", "flash-medium")}
     return BatchDispatcher(api, tmp_path / "batches.jsonl", specs, quiet_s=0.05, poll_s=0.0,
                            sleep=lambda s: time.sleep(0.005))
 
@@ -301,7 +301,7 @@ def test_batch_transport_pools_calls_per_model_and_maps_results_back(tmp_path):
 def test_batch_results_without_cost_or_provider_are_filled_and_flagged(tmp_path):
     api = FakeBatchAPI(ScriptedLLM({"worker": lambda b: "answer = 1"}), bare=True)
     d = dispatcher(api, tmp_path)
-    spec = get_spec("flash-high")
+    spec = get_spec("flash-medium")
     try:
         client = LLMClient(spec, Trace(tmp_path / "t", Limits()), transport=d.transport, sleep=lambda s: None)
         res = client.chat([{"role": "user", "content": "hi"}])
@@ -325,6 +325,6 @@ def test_a_failed_batch_request_stops_the_pipeline_like_an_api_error(tmp_path):
 
 def test_google_vertex_responses_named_google_pass_the_provider_check(tmp_path):
     llm = ScriptedLLM({"worker": lambda b: "answer = 1"}, provider="Google")
-    res = LLMClient(get_spec("flash-high"), Trace(tmp_path, Limits()), transport=llm).chat(
+    res = LLMClient(get_spec("flash-medium"), Trace(tmp_path, Limits()), transport=llm).chat(
         [{"role": "user", "content": "x"}])
     assert res.content == "answer = 1"

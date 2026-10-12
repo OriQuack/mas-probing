@@ -2,7 +2,7 @@
 """Perturbation consistency on LongCoT math chains (package `perturbation_consistency`, not the minpilot framework).
 
   python scripts/run_perturbation_consistency.py --experiment outputs/experiments/<date>_longcot-perturbation-consistency \
-      --template linear --difficulty easy --limit 3 [--workers luna-high haiku-high gemini] [--n 5] [--reps 3] \
+      --template linear --difficulty easy --limit 3 [--workers luna-medium haiku-medium flash-medium] [--n 5] [--reps 3] \
       [--probe-fraction 0.2 | --probe-depth K] [--batch] [--parallel 12] [--session-cost-usd 8] [--run-cost-usd 2] [--env-file .env] [--dry-run]
 
 Questions are taken in data-file order (`--offset`, `--limit`), by exact id (`--only`), or as a seeded random sample
@@ -41,7 +41,7 @@ from perturbation_consistency.batch import BatchDispatcher, requests_http  # noq
 from perturbation_consistency.longcot_nodes import VARIANTS, node_prompt, parse_chain  # noqa: E402
 from perturbation_consistency.runner import Settings, run_pipeline, run_routed  # noqa: E402
 
-DEFAULT_WORKERS = ("luna-high", "haiku-high", "gemini")
+DEFAULT_WORKERS = ("luna-medium", "haiku-medium", "flash-medium")  # decision C30
 
 
 def select_questions(args) -> list:
