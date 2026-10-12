@@ -63,9 +63,9 @@ class Target:
     nodes: tuple = ()
 
 
-def segment_target(chain: Chain, difficulty: str, template: str = "linear") -> Target | None:
+def segment_target(chain: Chain, difficulty: str, template: str = "linear", max_last: int = MAX_LAST) -> Target | None:
     requested = sorted(int(n.split("_")[1]) for n in chain.requested)
-    last = next((i for i in requested if 1 <= i <= MAX_LAST), None)
+    last = next((i for i in requested if 1 <= i <= max_last), None)
     if last is None:
         return None
     nodes = tuple(f"node_{i}" for i in range(last + 1))

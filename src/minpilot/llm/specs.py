@@ -116,6 +116,13 @@ SPECS: dict[str, ModelSpec] = {
         note="Gemini 3.8 Flash at effort medium (released 2026-09-02), pinned to Google Vertex: its only OpenRouter "
              "batch endpoint (2026-10-12). No sampling parameters (the batch endpoint takes no temperature/top_p). "
              "Prices are the standard list prices (reservation bound); batch is half."),
+    "flash-lite-high": ModelSpec(
+        key="flash-lite-high", model="google/gemini-3.5-flash-lite", provider="google-vertex",
+        max_tokens=MAX_TOKENS_REASONING, reasoning={"effort": "high"}, preserve_reasoning=True,
+        price_prompt=3e-7, price_completion=2.5e-6, image_tokens="fixed:1500",
+        note="Gemini 3.5 Flash-Lite at effort high (its highest), pinned to Google Vertex: the segment routing "
+             "worker in place of flash-medium, closer in strength to haiku-medium and luna-medium (decision C34). "
+             "No sampling parameters, as flash-medium."),
 }
 
 
