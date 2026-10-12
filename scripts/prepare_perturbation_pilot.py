@@ -58,6 +58,10 @@ def main() -> None:
     ap.add_argument("--rewriter", default="sonnet-medium")
     ap.add_argument("--session-cost-usd", type=float, default=3.0)
     ap.add_argument("--env-file", type=Path, default=REPO / ".env")
+    ap.add_argument("--reuse", nargs="*", type=Path, default=[],
+                    help="earlier prep.jsonl files: targets found there are not regenerated")
+    ap.add_argument("--review", type=Path, default=None,
+                    help='manual review JSON {"drop": [{"target_id", "item": kind or "approach:<i>", "reason"}]}')
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
@@ -81,22 +85,47 @@ def main() -> None:
     spec = get_spec(args.rewriter)
     lock, spent = threading.Lock(), [0.0]
 
+    reused = {}
+    for path in args.reuse:
+        for line in path.read_text().splitlines():
+            p = json.loads(line)
+            reused[p["target_id"]] = p | {"reused_from": str(path)}
+    review = json.loads(args.review.read_text()) if args.review else {"drop": []}
+
+    def apply_review(prep: dict) -> tuple[dict, list[str]]:
+        """Items dropped in a manual review: a rewrite kind or `approach:<i>` of one target."""
+        rewrites = {k: dict(v) for k, v in prep["rewrites"].items()}
+        methods = list(prep["approaches"])
+        for d in review["drop"]:
+            if d["target_id"] != prep["target_id"]:
+                continue
+            if d["item"].startswith("approach:"):
+                methods[int(d["item"].split(":")[1])] = None
+            else:
+                rewrites[d["item"]] |= {"ok": False, "dropped_by_review": d["reason"]}
+        return rewrites, [m for m in methods if m is not None]
+
     def prepare(t: perturb.Target) -> tuple[dict, list[dict]]:
         node = chains[t.question_id].node(t.node)
-        with lock:
-            if spent[0] >= args.session_cost_usd:
-                return {"target_id": t.target_id, "skipped": "session cost cap"}, []
-        trace = Trace(exp / "prep" / t.target_id.replace(":", "__"), Limits(max_cost_usd=1.0))
-        client = LLMClient(spec, trace)
-        with trace.tags(stage="perturbation_prep", target=t.target_id):
-            rewrites = {k: perturb.rewrite(client, k, node.text) for k in ("paraphrase", "structured")}
-            rewrites["related_fact"] = perturb.related_fact(client, node.text)
-            methods = perturb.approaches(client, perturb.body(node, node.text, t.inputs))
-        cost = trace.run_scope.counters()["cost_usd"]
-        with lock:
-            spent[0] += cost
-        prep = {"target_id": t.target_id, "rewrites": rewrites, "approaches": methods, "cost_usd": cost}
-        return prep, perturb.build_prompts(node, t, rewrites, methods)
+        if t.target_id in reused:
+            prep = reused[t.target_id]
+        else:
+            with lock:
+                if spent[0] >= args.session_cost_usd:
+                    return {"target_id": t.target_id, "skipped": "session cost cap"}, []
+            trace = Trace(exp / "prep" / t.target_id.replace(":", "__"), Limits(max_cost_usd=1.0))
+            client = LLMClient(spec, trace)
+            with trace.tags(stage="perturbation_prep", target=t.target_id):
+                rewrites = {k: perturb.rewrite(client, k, node.text) for k in ("paraphrase", "structured")}
+                rewrites["related_fact"] = perturb.related_fact(client, node.text)
+                methods = perturb.approaches(client, perturb.body(node, node.text, t.inputs))
+            cost = trace.run_scope.counters()["cost_usd"]
+            with lock:
+                spent[0] += cost
+            prep = {"target_id": t.target_id, "rewrites": rewrites, "approaches": methods, "cost_usd": cost}
+        rewrites, methods = apply_review(prep)
+        return prep | {"reviewed": {"rewrites": rewrites, "approaches": methods}}, \
+            perturb.build_prompts(node, t, rewrites, methods)
 
     with ThreadPoolExecutor(8) as pool_:
         done = list(pool_.map(prepare, targets))
@@ -116,11 +145,13 @@ def main() -> None:
         quota={f"{d}:{k}": n for (d, k), n in quota.items()}, seed=args.seed,
         target_ids=[t.target_id for t in targets], conditions=list(perturb.CONDITIONS), samples=perturb.SAMPLES,
         rewriter=spec.identity(), prep_cost_usd=round(spent[0], 4), prompt_count=len(prompts),
+        reused_prep=[str(p) for p in args.reuse], review=review,
         equivalence_version=longcot_math.EQUIVALENCE_VERSION, git_commit=commit, uncommitted_changes=dirty,
         created_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
     (exp / "manifest.json").write_text(json.dumps(manifest, indent=1))
-    failed = [(p["target_id"], k) for p, _ in done for k, r in (p.get("rewrites") or {}).items() if not r["ok"]]
-    short = [p["target_id"] for p, _ in done if len(p.get("approaches") or []) < perturb.SAMPLES]
+    failed = [(p["target_id"], k) for p, _ in done for k, r in p.get("reviewed", {}).get("rewrites", {}).items()
+              if not r["ok"]]
+    short = [p["target_id"] for p, _ in done if len(p.get("reviewed", {}).get("approaches", [])) < perturb.SAMPLES]
     print(f"prompts {len(prompts)}, prep cost ${spent[0]:.3f}, rewrites dropped {failed}, short approach lists {short}")
 
 

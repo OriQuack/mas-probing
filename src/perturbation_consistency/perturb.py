@@ -18,8 +18,8 @@ model's same-problem check; otherwise it is retried and finally dropped (the con
 
 from __future__ import annotations
 
+import hashlib
 import json
-import random
 import re
 from dataclasses import asdict, dataclass
 
@@ -51,23 +51,34 @@ class Target:
     inputs: dict        # dependency node -> gold value given in the prompt
 
 
+def _unresolved_reference(text: str) -> bool:
+    """A bracket that refers to an earlier answer but that `parse_chain` does not read as a dependency: dag
+    templates have conditional ones ("[If the answer from problem node_18 is >= 3, then ...]") and ones naming no
+    node ("[For this value use the largest integer from the answer ...]"). Such a node cannot be given its inputs."""
+    for bracket in re.findall(r"\[[^\[\]]*\]", text):
+        if "answer" in bracket and not (_PLACEHOLDER.fullmatch(bracket) and re.search(r"node_\d+", bracket)):
+            return True
+    return False
+
+
 def eligible_targets(chain: Chain, gold: dict[str, str], difficulty: str, template: str) -> list[Target]:
-    """Requested nodes (gold to score) whose dependencies are all requested too (gold to give as inputs)."""
+    """Requested nodes (gold to score) whose dependencies are all requested too (gold to give as inputs) and whose
+    text has no reference to an earlier answer that cannot be resolved."""
     out = []
     for n in chain.nodes:
-        if n.name in gold and all(d in gold for d in n.deps):
+        if n.name in gold and all(d in gold for d in n.deps) and not _unresolved_reference(n.text):
             out.append(Target(f"{chain.question_id}:{n.name}", chain.question_id, difficulty, template, n.name,
                               "middle" if n.deps else "first", {d: gold[d] for d in n.deps}))
     return out
 
 
 def pick_targets(pool: list[Target], quota: dict[tuple[str, str], int], seed: int) -> list[Target]:
-    """`quota[(difficulty, kind)]` targets per stratum, seeded, at most one per question."""
-    rng = random.Random(f"perturbation-pilot:{seed}")
+    """`quota[(difficulty, kind)]` targets per stratum, at most one per question. Candidates are taken in the order
+    of a seeded hash of their id, so removing one candidate does not reorder the others."""
     picked, used = [], set()
     for (difficulty, kind), k in sorted(quota.items()):
-        stratum = sorted((t for t in pool if t.difficulty == difficulty and t.kind == kind), key=lambda t: t.target_id)
-        rng.shuffle(stratum)
+        stratum = sorted((t for t in pool if t.difficulty == difficulty and t.kind == kind),
+                         key=lambda t: hashlib.sha256(f"perturbation-pilot:{seed}:{t.target_id}".encode()).hexdigest())
         chosen = []
         for t in stratum:
             if len(chosen) < k and t.question_id not in used:
@@ -89,7 +100,8 @@ def body(node: Node, text: str, inputs: dict) -> str:
 
 
 def _squash(s: str) -> str:
-    """Whitespace and math delimiters removed; a form feed read as \\f (LongCoT has `\\frac` stored as form feed + rac)."""
+    """Whitespace and math delimiters removed; a form feed read as \\f (LongCoT stores some `\\frac` as form feed +
+    `rac`)."""
     return re.sub(r"\s|\$|\\\(|\\\)|\\\[|\\\]", "", s.replace("\x0c", "\\f"))
 
 

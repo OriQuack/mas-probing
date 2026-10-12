@@ -38,6 +38,20 @@ def test_eligible_targets_need_gold_for_the_node_and_its_inputs():
                                                         ("node_2", "middle", {"node_1": "3"})]
 
 
+def test_nodes_with_unreadable_references_are_not_targets():
+    assert perturb._unresolved_reference("[If the answer from problem node_18 is >= 3, then use 4, otherwise use 5]")
+    assert perturb._unresolved_reference("$|x|-[For this value use the largest integer from the answer and subtract 3]$")
+    assert not perturb._unresolved_reference("[For this value use the answer from problem node_0 and subtract 35]")
+    assert not perturb._unresolved_reference("Let $S=[0,1]$ and find the answer.")
+
+
+def test_removing_a_candidate_does_not_reorder_the_others():
+    pool = [perturb.Target(f"q{i}:node_0", f"q{i}", "hard", "linear", "node_0", "first", {}) for i in range(12)]
+    full = perturb.pick_targets(pool, {("hard", "first"): 4}, seed=0)
+    rest = perturb.pick_targets([t for t in pool if t != full[0]], {("hard", "first"): 3}, seed=0)
+    assert rest == full[1:]
+
+
 def test_pick_targets_fills_each_stratum_with_one_target_per_question():
     pool = [perturb.Target(f"q{i}:node_{k}", f"q{i}", "hard", "linear", f"node_{k}", "middle" if k else "first", {})
             for i in range(5) for k in (0, 1)]
