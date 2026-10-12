@@ -56,6 +56,7 @@ def test_a_rewrite_must_keep_formulas_numbers_and_placeholders():
     assert perturb.preserved(text, ok.replace("subtract 35", "subtract 36"))  # placeholder changed
     plain = chain().node("node_0").text
     assert perturb.preserved(plain, plain.replace("multiples of 11", "multiples of eleven")) == ["11"]
+    assert perturb.preserved("Let $3 x \\in S$ and $\x0crac{1}{2}$.", "Suppose $3x \\in S$ and $\\frac{1}{2}$.") == []
 
 
 def test_build_prompts_gives_three_samples_per_condition_and_drops_failed_rewrites():

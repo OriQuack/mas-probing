@@ -88,9 +88,16 @@ def body(node: Node, text: str, inputs: dict) -> str:
     return out
 
 
+def _squash(s: str) -> str:
+    """Whitespace and math delimiters removed; a form feed read as \\f (LongCoT has `\\frac` stored as form feed + rac)."""
+    return re.sub(r"\s|\$|\\\(|\\\)|\\\[|\\\]", "", s.replace("\x0c", "\\f"))
+
+
 def preserved(original: str, rewrite: str) -> list[str]:
-    """What a rewrite lost: formulas, dependency placeholders and numbers of the original that it does not contain."""
-    lost = [m for m in _MATH.findall(original) + _PLACEHOLDER.findall(original) if m not in rewrite]
+    """What a rewrite lost: formulas, dependency placeholders and numbers of the original that it does not contain.
+    Formulas and placeholders are compared without whitespace or math delimiters (`$3 x$` = `$3x$`)."""
+    flat = _squash(rewrite)
+    lost = [m for m in _MATH.findall(original) + _PLACEHOLDER.findall(original) if _squash(m) not in flat]
     numbers = _NUMBER.findall(_PLACEHOLDER.sub(" ", _MATH.sub(" ", original)))
     have = _NUMBER.findall(rewrite)
     lost += [x for x in numbers if numbers.count(x) > have.count(x)]
@@ -109,11 +116,12 @@ STRUCTURED = ("Restate the following math problem as three labelled parts, 'Give
 SAME_PROBLEM = ("Do these two statements describe the same mathematical problem with the same answer? Answer false if "
                 "any quantity, condition, domain or the thing asked for differs, or if B hints at the solution."
                 "\n\nA:\n{a}\n\nB:\n{b}")
-RELATED_FACT = ("Write one true sentence of mathematical background that is related to the topic of the following "
-                "problem but is not needed to solve it: for example a related classical fact or a property of an "
-                "object that appears in the problem. It must not change the problem or its answer, must not state "
-                "the answer or any step, lemma or quantity that the solution uses, and must not refer to the "
-                "dependency placeholder. Start it with 'Note:'.\n\nProblem:\n{text}")
+RELATED_FACT = ("Write one true sentence of background that is related to the setting or topic of the following "
+                "problem but that a solver would not use: for example a historical note about the topic, or a true "
+                "property of an object in the problem that answers a different question from the one asked. It must "
+                "not mention any theorem, identity, formula, technique or quantity that could help solve this "
+                "problem, must not change the problem or its answer, and must not refer to the dependency "
+                "placeholder. Start it with 'Note:'.\n\nProblem:\n{text}")
 FACT_CHECK = ("Here is a math problem and a sentence that will be appended to it.\n\nProblem:\n{text}\n\nSentence:\n"
               "{fact}\n\nAnswer three questions. true: is the sentence a correct mathematical statement? "
               "changes_problem: does appending it change the problem's meaning, conditions or answer? hints: does it "
@@ -156,7 +164,7 @@ def rewrite(client: LLMClient, kind: str, text: str, tries: int = 2) -> dict:
     return {"kind": kind, "text": None, "ok": False, "attempts": attempts}
 
 
-def related_fact(client: LLMClient, text: str, tries: int = 2) -> dict:
+def related_fact(client: LLMClient, text: str, tries: int = 3) -> dict:
     """A checked topic-related sentence to append: true, not changing the problem, not hinting at the solution."""
     attempts = []
     for _ in range(tries):
