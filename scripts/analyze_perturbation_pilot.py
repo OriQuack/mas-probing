@@ -56,11 +56,19 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("experiment", type=Path)
     ap.add_argument("--out", type=Path, default=None)
+    ap.add_argument("--exclude", type=Path, default=None,
+                    help='JSON {"exclude": [{"target_id", "condition", "sample", "reason"}]}: prompts dropped from '
+                         "the analysis after a review (default: <experiment>/exclusions.json if present)")
     args = ap.parse_args()
     exp = args.experiment
+    exclude_path = args.exclude or (exp / "exclusions.json" if (exp / "exclusions.json").exists() else None)
+    excluded = json.loads(exclude_path.read_text())["exclude"] if exclude_path else []
+    drop = {(e["target_id"], e["condition"], e["sample"]) for e in excluded}
     targets = {t["target_id"]: t for t in map(json.loads, (exp / "targets.jsonl").read_text().splitlines())}
-    results = [json.loads(x) for x in (exp / "results.jsonl").read_text().splitlines()]
-    prompts = [json.loads(x) for x in (exp / "prompts.jsonl").read_text().splitlines()]
+    results = [r for r in map(json.loads, (exp / "results.jsonl").read_text().splitlines())
+               if (r["target_id"], r["condition"], r["sample"]) not in drop]
+    prompts = [p for p in map(json.loads, (exp / "prompts.jsonl").read_text().splitlines())
+               if (p["target_id"], p["condition"], p["sample"]) not in drop]
     sent = defaultdict(int)  # (target, condition) -> prompts per worker
     for p in prompts:
         sent[(p["target_id"], p["condition"])] += 1
@@ -95,7 +103,7 @@ def main() -> None:
                      "cost_usd": sum(r.get("cost_usd") or 0.0 for r in rs)})
 
     summary = {"experiment": str(exp), "equivalence_version": longcot_math.EQUIVALENCE_VERSION, "workers": workers,
-               "conditions": {}}
+               "excluded_prompts": excluded, "conditions": {}}
     for cond in perturb.CONDITIONS:
         cr = [r for r in rows if r["condition"] == cond]
         if not cr:
