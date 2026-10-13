@@ -7,7 +7,7 @@ Latest findings: [docs/reports/index.md](docs/reports/index.md).
 ## Scope and code
 
 - Keep the framework small and portable: one orchestrator selecting among registered workers, stateless workers,
-  evaluator-owned state proposals and a wording-only refiner (v19/r22/e6). Do not introduce OWL's planner/coordinator/answerer split,
+  state updates owned solely by the evaluator and a wording-only refiner (v19/r22/e6). Do not introduce OWL's planner/coordinator/answerer split,
   structured `TaskResult`, OWL prompts/tool names, or automatic dependency passing.
 - Read the original study design before changing experiment logic:
   `../pilot/docs/design/2026-10-05-GAIA-Probe-Query-Pilot-Study.md`.
