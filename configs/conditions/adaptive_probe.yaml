@@ -1,5 +1,5 @@
-name: multi_worker_probe
-prompts: r15
+name: adaptive_probe
+prompts: r22
 budget:
   max_llm_calls: 60
   max_cost_usd: 1.0

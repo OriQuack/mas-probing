@@ -103,22 +103,22 @@ def test_harness_forks_and_checkpoint_keep_paid_headroom(tmp_path, task, monkeyp
     web, sent = web_with_http(tmp_path, monkeypatch)
     web.paid_search.billed = 99  # prefix already spent before this delegation checkpoint
     def script():
-        return {"orchestrator": [action(wid=None), action("finish")],
+        return {"orchestrator": [action("probe", wid=None), action("execute", wid="gen_haiku"), action("finish")],
                 "worker": [{"tool_calls": [("web_search", {"query": "probe one source"})]}, "Title: Probe one\nplan: read",
                            {"tool_calls": [("web_search", {"query": "probe two source"})]}, "Title: Probe two\nplan: read",
                            {"tool_calls": [("web_search", {"query": "execution source"})]}, "Title: Execution\n2"],
-                "evaluator_probe": [evaluation()], "orchestrator_select": [action("select", wid="gen_haiku")],
+                "evaluator_probe": [evaluation()],
                 "evaluator_execution": [evaluation()]}
-    run = Run(RunConfig(load_pool("multi"), ConditionConfig("multi_worker_probe")), task, tmp_path / "run",
+    run = Run(RunConfig(load_pool("multi"), ConditionConfig("adaptive_probe")), task, tmp_path / "run",
               web=web, tool_cfg=web.cfg, transport=ScriptedLLM(script()))
     assert run.run_fresh()["status"] == "ok"
     assert len(sent) == 1 and run.web.paid_search.billed == 100
-    assert "credit limit" in run.memory.read("a00001/tool/0")["content"]
+    assert "credit limit" in run.memory.read(run.memory.read("a00002")["tool_ids"][0])["content"]
     # Restore starts from the pre-probe 99-credit prefix; cache hits never spend its remaining credit.
     restored_web, restored_sent = web_with_http(tmp_path, monkeypatch)
     restored_script = script()
-    restored_script["orchestrator"] = [action("finish")]
-    restored = Run.restore(run.run_dir / "checkpoints/d0", tmp_path / "restored", task=task,
+    restored_script["orchestrator"] = [action("execute", wid="gen_haiku"), action("finish")]
+    restored = Run.restore(run.run_dir / "checkpoints/a0", tmp_path / "restored", task=task,
         web=restored_web, tool_cfg=web.cfg, transport=ScriptedLLM(restored_script))
     assert restored.web.paid_search.billed == 99
     assert restored.run_restored()["status"] == "ok"

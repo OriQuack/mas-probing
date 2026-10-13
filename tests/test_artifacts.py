@@ -34,9 +34,9 @@ def test_manifest_cannot_read_outside_experiment(tmp_path):
 def test_historical_checkpoint_paths_resolve_without_rewriting_records(tmp_path):
     old = tmp_path / "old-experiment"
     new = tmp_path / "named-experiment"
-    checkpoint = new / "runs/task/run/checkpoints/d0"
+    checkpoint = new / "runs/task/run/checkpoints/a0"
     checkpoint.mkdir(parents=True)
-    saved = old / "runs/task/run/checkpoints/d0"
+    saved = old / "runs/task/run/checkpoints/a0"
     assert resolve_artifact_path(saved, {str(old): str(new)}) == checkpoint
     assert not old.exists()
 

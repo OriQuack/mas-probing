@@ -1,3 +1,9 @@
+> 2026-10-12 KST 현재 계약: 실행 v17 / probe·refiner r20 / evaluator e6 / tools v7.
+> `adaptive_probe`가 이전 `multi_worker_probe`를 대체한다. Orchestrator는 매번 probe/execute/finish/read_memory를
+> 고르며 probe 뒤 자동 실행과 별도 executor 선택 호출은 없다. 최대 12회는 execute 횟수다.
+> Probe 라운드와 refinement는 각각 $1/LLM 60회 보조 상한이며, 소진 시 자동 executor 배정하지 않는다.
+> Format 3 checkpoint는 probe·execute 공통 행동 번호 aN을 쓴다. 아래 이전 결정 중 충돌하는 흐름은 이 계약으로 대체한다.
+
 # 현재 구현 결정
 
 현재 유지하는 설계의 요약입니다. 실험 순서와 과거 변경은
@@ -73,8 +79,71 @@
 | ID | 선택 | 이유 / 범위 | 위치 |
 |---|---|---|---|
 | C29 | 첫 subtask perturbation 일관성으로 worker를 고르는 실험을 `minpilot` framework 밖 별도 패키지 `perturbation_consistency`로 구현. LongCoT math chain을 노드 단위로 실행하고, 각 worker가 첫 노드를 풀이 방식 지시만 다른 n개 variant(단계별 CoT·Plan-and-Solve·풀고 검산·Step-back·풀이 지시 없음)로 풀어 동치 답 최대 묶음 비율로 선택. 비교는 같은 노드 단위 실행의 고정 worker 반복. LongCoT 공식 math 비교에 표기 정리, LLM fallback judge 없음 | 사용자 결정(2026-10-11): worker luna-high·haiku-high·gemini, 문제 본문 불변·풀이 방식 variant n=5, baseline은 같은 노드 단위 실행, linear easy 23·hard 26. framework와 섞이지 않게 별도 패키지로 두고 minpilot의 LLM client·trace·loader만 사용. 노드 간 값 전달은 benchmark 의존관계를 따르는 실험 장치. 결과는 reports/2026-10-12-longcot-perturbation-consistency.ko.md (branch에서는 C18로 기록했다가 main 병합 시 재번호) | src/perturbation_consistency, scripts/*perturbation*, outputs/experiments/2026-10-1*_longcot-perturbation-consistency-* |
-| C30 | perturbation 일관성 실험 2차 설정: 일관성 probe를 첫 노드에서 동점이 깨질 때까지 확장(동점인 worker만 다음 노드를 probe, 최대 전체 노드의 20%: easy 3·medium 7·hard 10개, 각 variant chain은 자기 답을 다음 노드로 넘김, 한도까지 동점이면 문제별 seed). worker를 luna·haiku·Gemini 3.8 Flash(Google Vertex 고정)로 바꾸고 셋 모두 effort medium(`luna-medium`, `haiku-medium`, `flash-medium`). 고른 worker의 호출을 OpenRouter Batch API(`--batch-workers`)로 보낼 수 있게 하고 기본 사용은 flash만(시험 실행에서 Anthropic batch 왕복이 17–25분 이상으로 너무 느리고, haiku·luna는 token 가격이 flash의 1/7.5라 batch 절감이 작음). 실패·만료된 batch의 요청은 2분 뒤 최대 4번 재제출. 문제는 seed 고정 무작위 추출(`--sample`, `--seed`) | 사용자 결정(2026-10-12): 첫 노드는 너무 쉬워 동점이 많음(easy 20/23, hard 19/26), 기존 gemini(3.1 Flash-Lite, effort minimal)는 다른 두 worker와 실력 차가 커서 3.8 Flash로 교체, high는 pilot에 비싸서 세 worker 모두 medium, easy 10·medium 20·hard 10. batch는 pilot 비용을 줄이려는 선택으로 token 가격이 절반. 대신 노드마다 batch 왕복(수 분~최대 24시간)이 필요하고, batch는 provider `only`·`allow_fallbacks`만 받으므로 `require_parameters`·`data_collection: deny`를 보낼 수 없음(`llm/specs.py`의 "service tier를 쓰지 않음" 원칙의 예외, 이 실험에 한정). batch 결과 body에 `usage.cost`나 provider가 없으면 token 수×표준가×0.5 추정·batch 고정 provider로 채우고 표시하며, 실제 청구액은 batch 단위로 `openrouter_batches.jsonl`에 기록 | src/perturbation_consistency/{batch,runner}.py, scripts/run_perturbation_consistency.py, llm/specs.py `luna-medium`·`haiku-medium`·`flash-medium`, llm/client.py `SERVED_PROVIDER_ALIASES` |
-| C31 | perturbation 일관성 실험의 답 동치 판정 version 2(`longcot_math.EQUIVALENCE_VERSION`): LongCoT 공식 비교 전에 값을 바꾸지 않는 표기 변환(LaTeX 근호·로그·삼각함수를 sympy 호출로, `\text{}` 제거, 단독 수의 천 단위 쉼표, 원소 하나인 집합, 집합 앞 `x \in`). 공식 비교가 판정하지 못할 때만 집합은 순서 무시, tuple은 원소별, 닫힌 상수는 차이가 정확히 0(sympy strict evalf)인지로 일치 판정. 밑 없는 `\log`는 자연로그. "all integers n ≥ 13" 같은 서술형은 변환하지 않음 | LongCoT 파서는 LaTeX `\sqrt{}`·`\log`를 읽지 못해 같은 값이 문자열이 같을 때만 일치했음. 이전 node_0 probe에서 답이 갈린 사례의 약 절반이 표기 차이였음(trace 분석, 2026-10-12). 기록된 실행에 적용하면 probe 147개 중 8개의 일관성이 올라가고(만장일치 99→105), 정답 채점은 node 답 39건이 일치로 바뀜(14가지 표기 쌍 모두 수동 확인, 잘못된 일치 없음). float·상대오차 비교는 큰 수((2^2019−1)^2018 vs 3)와 아주 작은 차이(3^2021−2^2021 vs 거기서 1을 뺀 값)에서 잘못된 일치를 내서 쓰지 않음. 이미 보고된 분석은 version 1로 계산된 그대로 둠 | src/perturbation_consistency/longcot_math.py, manifest·summary의 `equivalence_version` |
-| C32 | perturbation pilot: 어떤 perturbation이 worker 일관성을 정보 있게 만드는지 node 하나 단위로 비교. 대상은 답을 요구하는 node 중 의존 node도 모두 답을 요구하는 것(linear·dag, seed 고정, 문제당 하나): hard 첫 node 8·중간 node 8, medium 2·2. 중간 node에는 의존 node의 **정답을 입력값으로 넣음**(대상 node 자신의 정답은 넣지 않음). 조건 5개 × 3 sample × worker 3개: `repeat`(같은 prompt 반복, 대조군), `instruction`(단계별·계획·원리 지시), `surface`(Sonnet paraphrase, Given/Conditions/Find 재구성, 문제 주제와 관련 있지만 풀이에 필요 없는 참인 사실 한 문장 — Sonnet이 쓰고 참·문제 불변·힌트 없음을 따로 확인), `methods`(Sonnet이 낸 서로 다른 접근 3개를 하나씩 배정), `avoid_first`(처음 떠오른 방법을 적고 그 방법 없이 풀기). 모든 prompt 끝에 `method =`·`answer =` 줄. 재작성은 수식·숫자·placeholder 보존 검사와 Sonnet의 같은 문제 확인을 통과해야 하고, 두 번 실패하면 그 sample을 뺌 | 사용자 결정(2026-10-12): 소수 문제로 perturbation을 먼저 고르고 큰 set으로 확대, hard 위주, 조건당 3번, 재작성·접근 목록은 worker가 아닌 Sonnet 5.5. LongCoT는 요구된 node의 정답만 주므로 중간 node를 떼어 풀려면 의존 node 정답을 입력으로 줄 수밖에 없음(정답을 채점에만 쓰던 원칙의 예외, 이 pilot에 한정). 단일 node라 chain이 없어 worker 호출은 batch 왕복 한 번에 끝남 | src/perturbation_consistency/perturb.py, scripts/{prepare,run,analyze}_perturbation_pilot.py, llm/specs.py `sonnet-medium` |
-| C33 | segment pilot: node 하나 대신 linear chain의 node_0부터 node_1–4 중 첫 요구 node까지를 한 묶음으로 한 번의 호출에 풀게 함(medium 13·hard 8, 해당 문제 전부). 채점은 마지막 node(정답 있음), 입력값으로 정답을 주지 않음. 응답 끝에 node마다 `node_i = …` 줄, `method =`, `answer =`(마지막 node). 변형은 묶음 전체 단위: `instruction`(단계별·chain 전체 계획·값을 넘기기 전 검산), `surface`(node label을 유지한 묶음 전체 paraphrase, Given/Dependencies/Find 재구성, 관련 note), `methods`(묶음 전체 진행 전략 3개), `avoid_first`, `repeat` 대조군. 재작성·전략은 Sonnet 5.5 effort high(`sonnet-high`). 수식·숫자·placeholder·node label 보존 검사, 같은 chain 확인, 수동 검토 후 실행. worker 출력 상한은 이 실행에서만 올릴 수 있음(`--max-tokens`) | 사용자 결정(2026-10-12): 단일 node pilot은 정답률 0.87–0.90으로 너무 쉬워 조건 차이를 볼 수 없었음. 묶음은 오류 전파 때문에 어렵고, 마지막 답에 정답이 있어 C32의 정답 입력 예외가 필요 없으며, "첫 확인 가능한 중간 답까지의 subtask"라는 RQ의 단위와 맞음. 묶음을 하나의 문제로 보고 계획·진행 방식을 흔드는 쪽이 node별 변형보다 목적에 맞음 | src/perturbation_consistency/segment.py, scripts/prepare_segment_pilot.py, scripts/run_perturbation_pilot.py `--max-tokens`, llm/specs.py `sonnet-high` |
-| C34 | segment routing: linear chain의 첫 묶음(node_0부터 node_1–k 중 첫 요구 node까지, k = easy 8·medium 6·hard 4; easy 20·medium 14·hard 8, 해당 문제 전부)을 worker마다 조건 3개 × 5 sample로 probe(전부 batch). `repeat`, `instruction`(문제 뒤에 붙이는 고정 문구: zero-shot CoT, Plan-and-Solve+, step-back, analogical prompting, joint chain-of-verification), `surface`(Sonnet paraphrase, Re2 다시 읽기, 문제를 감싸는 형식 변경, 문제 순서 변경, GSM-IC식 무관한 문장 한 개 삽입). paraphrase와 무관한 문장은 자동 검사(paraphrase는 placeholder·node label·숫자 보존과 같은 chain 판정, 수식 문자열 비교는 화폐 기호 `$`·수식 분할에서 오탐이 나서 쓰지 않음; 무관한 문장은 삽입 위치와 검사 모델)와 수동 검토(점수 대상 정답과 같은 숫자가 든 문장도 탈락)를 거치고 item당 후보 최대 3개(자동·검토 탈락 포함), 끝내 통과 못 한 무관한 문장 4개는 Claude가 직접 써서 같은 자동 검사를 거침(`claude_manual`로 기록, 정답과 같거나 가까운 숫자 없음). probe 뒤 worker 셋 모두(`haiku-medium`, `luna-medium`, `flash-lite-high`) 자기 probe 답 15개의 최빈값에서 시작해 나머지 node를 하나씩 3번 반복 진행하고, 일관성으로 고른 worker·무작위·사후 최고는 이 실행에서 계산. 진행은 첫 틀린 요구 node에서 멈추고 이후 요구 node는 오답 | 사용자 결정(2026-10-12): 의미 있던 조건만 남기고 sample을 늘림, 변형은 학회 게재 기법에서 고름(Kojima NeurIPS 2022, Wang ACL 2023, Zheng ICLR 2024, Yasunaga ICLR 2024, Dhuliawala Findings ACL 2024, SPUQ EACL 2024, Re2 EMNLP 2024, FormatSpread ICLR 2024, BatchPrompt ICLR 2024, GSM-IC ICML 2023; step-back·CoVe는 한 번의 호출, 예시 없는 형태로 줄임). Gemini 3.8 Flash는 혼자 너무 강해 선택이 "Flash 고르기"가 되므로 Gemini 3.5 Flash-Lite(effort high)로 교체. 멈춤 판정을 위해 실행 중에 요구 node 정답을 읽음(모델에는 보이지 않음; 정답은 채점에만 쓴다는 원칙의 예외, 이 실험에 한정). 묶음 이후 node는 C29 고정 pipeline과 같은 variant 0 | src/perturbation_consistency/segment_routing.py, scripts/{prepare_segment_routing,run_segment_continuation}.py, llm/specs.py `flash-lite-high` |
+| C35 | perturbation 일관성 실험 2차 설정: 일관성 probe를 첫 노드에서 동점이 깨질 때까지 확장(동점인 worker만 다음 노드를 probe, 최대 전체 노드의 20%: easy 3·medium 7·hard 10개, 각 variant chain은 자기 답을 다음 노드로 넘김, 한도까지 동점이면 문제별 seed). worker를 luna·haiku·Gemini 3.8 Flash(Google Vertex 고정)로 바꾸고 셋 모두 effort medium(`luna-medium`, `haiku-medium`, `flash-medium`). 고른 worker의 호출을 OpenRouter Batch API(`--batch-workers`)로 보낼 수 있게 하고 기본 사용은 flash만(시험 실행에서 Anthropic batch 왕복이 17–25분 이상으로 너무 느리고, haiku·luna는 token 가격이 flash의 1/7.5라 batch 절감이 작음). 실패·만료된 batch의 요청은 2분 뒤 최대 4번 재제출. 문제는 seed 고정 무작위 추출(`--sample`, `--seed`) | 사용자 결정(2026-10-12): 첫 노드는 너무 쉬워 동점이 많음(easy 20/23, hard 19/26), 기존 gemini(3.1 Flash-Lite, effort minimal)는 다른 두 worker와 실력 차가 커서 3.8 Flash로 교체, high는 pilot에 비싸서 세 worker 모두 medium, easy 10·medium 20·hard 10. batch는 pilot 비용을 줄이려는 선택으로 token 가격이 절반. 대신 노드마다 batch 왕복(수 분~최대 24시간)이 필요하고, batch는 provider `only`·`allow_fallbacks`만 받으므로 `require_parameters`·`data_collection: deny`를 보낼 수 없음(`llm/specs.py`의 "service tier를 쓰지 않음" 원칙의 예외, 이 실험에 한정). batch 결과 body에 `usage.cost`나 provider가 없으면 token 수×표준가×0.5 추정·batch 고정 provider로 채우고 표시하며, 실제 청구액은 batch 단위로 `openrouter_batches.jsonl`에 기록 | src/perturbation_consistency/{batch,runner}.py, scripts/run_perturbation_consistency.py, llm/specs.py `luna-medium`·`haiku-medium`·`flash-medium`, llm/client.py `SERVED_PROVIDER_ALIASES` |
+| C36 | perturbation 일관성 실험의 답 동치 판정 version 2(`longcot_math.EQUIVALENCE_VERSION`): LongCoT 공식 비교 전에 값을 바꾸지 않는 표기 변환(LaTeX 근호·로그·삼각함수를 sympy 호출로, `\text{}` 제거, 단독 수의 천 단위 쉼표, 원소 하나인 집합, 집합 앞 `x \in`). 공식 비교가 판정하지 못할 때만 집합은 순서 무시, tuple은 원소별, 닫힌 상수는 차이가 정확히 0(sympy strict evalf)인지로 일치 판정. 밑 없는 `\log`는 자연로그. "all integers n ≥ 13" 같은 서술형은 변환하지 않음 | LongCoT 파서는 LaTeX `\sqrt{}`·`\log`를 읽지 못해 같은 값이 문자열이 같을 때만 일치했음. 이전 node_0 probe에서 답이 갈린 사례의 약 절반이 표기 차이였음(trace 분석, 2026-10-12). 기록된 실행에 적용하면 probe 147개 중 8개의 일관성이 올라가고(만장일치 99→105), 정답 채점은 node 답 39건이 일치로 바뀜(14가지 표기 쌍 모두 수동 확인, 잘못된 일치 없음). float·상대오차 비교는 큰 수((2^2019−1)^2018 vs 3)와 아주 작은 차이(3^2021−2^2021 vs 거기서 1을 뺀 값)에서 잘못된 일치를 내서 쓰지 않음. 이미 보고된 분석은 version 1로 계산된 그대로 둠 | src/perturbation_consistency/longcot_math.py, manifest·summary의 `equivalence_version` |
+| C37 | perturbation pilot: 어떤 perturbation이 worker 일관성을 정보 있게 만드는지 node 하나 단위로 비교. 대상은 답을 요구하는 node 중 의존 node도 모두 답을 요구하는 것(linear·dag, seed 고정, 문제당 하나): hard 첫 node 8·중간 node 8, medium 2·2. 중간 node에는 의존 node의 **정답을 입력값으로 넣음**(대상 node 자신의 정답은 넣지 않음). 조건 5개 × 3 sample × worker 3개: `repeat`(같은 prompt 반복, 대조군), `instruction`(단계별·계획·원리 지시), `surface`(Sonnet paraphrase, Given/Conditions/Find 재구성, 문제 주제와 관련 있지만 풀이에 필요 없는 참인 사실 한 문장 — Sonnet이 쓰고 참·문제 불변·힌트 없음을 따로 확인), `methods`(Sonnet이 낸 서로 다른 접근 3개를 하나씩 배정), `avoid_first`(처음 떠오른 방법을 적고 그 방법 없이 풀기). 모든 prompt 끝에 `method =`·`answer =` 줄. 재작성은 수식·숫자·placeholder 보존 검사와 Sonnet의 같은 문제 확인을 통과해야 하고, 두 번 실패하면 그 sample을 뺌 | 사용자 결정(2026-10-12): 소수 문제로 perturbation을 먼저 고르고 큰 set으로 확대, hard 위주, 조건당 3번, 재작성·접근 목록은 worker가 아닌 Sonnet 5.5. LongCoT는 요구된 node의 정답만 주므로 중간 node를 떼어 풀려면 의존 node 정답을 입력으로 줄 수밖에 없음(정답을 채점에만 쓰던 원칙의 예외, 이 pilot에 한정). 단일 node라 chain이 없어 worker 호출은 batch 왕복 한 번에 끝남 | src/perturbation_consistency/perturb.py, scripts/{prepare,run,analyze}_perturbation_pilot.py, llm/specs.py `sonnet-medium` |
+| C38 | segment pilot: node 하나 대신 linear chain의 node_0부터 node_1–4 중 첫 요구 node까지를 한 묶음으로 한 번의 호출에 풀게 함(medium 13·hard 8, 해당 문제 전부). 채점은 마지막 node(정답 있음), 입력값으로 정답을 주지 않음. 응답 끝에 node마다 `node_i = …` 줄, `method =`, `answer =`(마지막 node). 변형은 묶음 전체 단위: `instruction`(단계별·chain 전체 계획·값을 넘기기 전 검산), `surface`(node label을 유지한 묶음 전체 paraphrase, Given/Dependencies/Find 재구성, 관련 note), `methods`(묶음 전체 진행 전략 3개), `avoid_first`, `repeat` 대조군. 재작성·전략은 Sonnet 5.5 effort high(`sonnet-high`). 수식·숫자·placeholder·node label 보존 검사, 같은 chain 확인, 수동 검토 후 실행. worker 출력 상한은 이 실행에서만 올릴 수 있음(`--max-tokens`) | 사용자 결정(2026-10-12): 단일 node pilot은 정답률 0.87–0.90으로 너무 쉬워 조건 차이를 볼 수 없었음. 묶음은 오류 전파 때문에 어렵고, 마지막 답에 정답이 있어 C32의 정답 입력 예외가 필요 없으며, "첫 확인 가능한 중간 답까지의 subtask"라는 RQ의 단위와 맞음. 묶음을 하나의 문제로 보고 계획·진행 방식을 흔드는 쪽이 node별 변형보다 목적에 맞음 | src/perturbation_consistency/segment.py, scripts/prepare_segment_pilot.py, scripts/run_perturbation_pilot.py `--max-tokens`, llm/specs.py `sonnet-high` |
+| C39 | segment routing: linear chain의 첫 묶음(node_0부터 node_1–k 중 첫 요구 node까지, k = easy 8·medium 6·hard 4; easy 20·medium 14·hard 8, 해당 문제 전부)을 worker마다 조건 3개 × 5 sample로 probe(전부 batch). `repeat`, `instruction`(문제 뒤에 붙이는 고정 문구: zero-shot CoT, Plan-and-Solve+, step-back, analogical prompting, joint chain-of-verification), `surface`(Sonnet paraphrase, Re2 다시 읽기, 문제를 감싸는 형식 변경, 문제 순서 변경, GSM-IC식 무관한 문장 한 개 삽입). paraphrase와 무관한 문장은 자동 검사(paraphrase는 placeholder·node label·숫자 보존과 같은 chain 판정, 수식 문자열 비교는 화폐 기호 `$`·수식 분할에서 오탐이 나서 쓰지 않음; 무관한 문장은 삽입 위치와 검사 모델)와 수동 검토(점수 대상 정답과 같은 숫자가 든 문장도 탈락)를 거치고 item당 후보 최대 3개(자동·검토 탈락 포함), 끝내 통과 못 한 무관한 문장 4개는 Claude가 직접 써서 같은 자동 검사를 거침(`claude_manual`로 기록, 정답과 같거나 가까운 숫자 없음). probe 뒤 worker 셋 모두(`haiku-medium`, `luna-medium`, `flash-lite-high`) 자기 probe 답 15개의 최빈값에서 시작해 나머지 node를 하나씩 3번 반복 진행하고, 일관성으로 고른 worker·무작위·사후 최고는 이 실행에서 계산. 진행은 첫 틀린 요구 node에서 멈추고 이후 요구 node는 오답 | 사용자 결정(2026-10-12): 의미 있던 조건만 남기고 sample을 늘림, 변형은 학회 게재 기법에서 고름(Kojima NeurIPS 2022, Wang ACL 2023, Zheng ICLR 2024, Yasunaga ICLR 2024, Dhuliawala Findings ACL 2024, SPUQ EACL 2024, Re2 EMNLP 2024, FormatSpread ICLR 2024, BatchPrompt ICLR 2024, GSM-IC ICML 2023; step-back·CoVe는 한 번의 호출, 예시 없는 형태로 줄임). Gemini 3.8 Flash는 혼자 너무 강해 선택이 "Flash 고르기"가 되므로 Gemini 3.5 Flash-Lite(effort high)로 교체. 멈춤 판정을 위해 실행 중에 요구 node 정답을 읽음(모델에는 보이지 않음; 정답은 채점에만 쓴다는 원칙의 예외, 이 실험에 한정). 묶음 이후 node는 C29 고정 pipeline과 같은 variant 0 | src/perturbation_consistency/segment_routing.py, scripts/{prepare_segment_routing,run_segment_continuation}.py, llm/specs.py `flash-lite-high` |
+
+
+## 2026-10-12 KST 기록 참조 통일
+
+| ID | 선택 | 이유 / 범위 | 위치 |
+|---|---|---|---|
+| C30 | 실행 v14, probe/refiner r16, evaluator e4. 보고와 도구 결과를 저장된 ID로 조회·인용·context 선택. State 네 필드와 행 선택은 유지 | 사용자 피드백. Live 진단의 `/tool/N` 조회 주소와 state 근거 ID 혼동을 줄이기 위한 계약 변경. 도구 원문에 `tNNNNN` ID와 원 보고 `parent_id`를 부여하고 보고의 `tool_ids`로 연결한다. Catalog에 도구 본문은 추가하지 않는다. Prompt의 역할·절 구성은 유지하고 참조 설명만 수정한다. 실제 모델의 개선 효과는 미검증 | memory.py, prompts, tests/test_context.py |
+
+
+## 2026-10-12 KST prompt 검토 반영
+
+| ID | 선택 | 이유 / 범위 | 위치 |
+|---|---|---|---|
+| C31 | 실행 v15, probe/refiner r17, evaluator e5, tools v7. 채택 제안에서 변경·삭제된 이전 state 행 선택 거부, 도구 호출 이름·인자 연결, 전달 경계·조건부 지지·state 정리 기준 보완 | 사용자 승인. 이전 snapshot 행 번호는 유지하되 바뀐 행을 현재 판단으로 전달하는 것을 validation과 기존 1회 수정 요청으로 막는다. 도구 기록의 ID·state 네 필드·전체 승인·역할과 호출 구조는 유지한다. 이미지 재전달은 추가하지 않는다. Reader의 답 없음은 제공된 source/part에 한정하고 새 tools_v7 cache를 사용한다. 기존 run·cache는 보존하며 실제 모델 개선 효과는 미검증 | harness.py, memory.py, prompts, tools/config.py, tests/test_context.py |
+
+
+## 2026-10-12 KST probe 답변 순서
+
+| ID | 선택 | 이유 / 범위 | 위치 |
+|---|---|---|---|
+| C32 | Probe/refiner 식별자 r18. Probe 답변을 understanding → plan → assumptions → risks 순으로 작성 | 사용자 요청. 계획을 먼저 작성하고 그 계획에 사용한 가정과 실패 가능성을 설명하게 한다. Probe는 본 실행이 아니며, 실행 worker의 보고·state·평가 흐름·refiner 본문은 유지한다. 실제 모델 효과는 미검증 | prompts/probe.py |
+
+
+## 2026-10-12 KST evaluator 단독 갱신
+
+| ID | 선택 | 이유 / 범위 | 위치 |
+|---|---|---|---|
+| C33 | 실행 v16, probe/refiner r19, evaluator e6. Evaluator의 유효한 state 출력을 즉시 저장하고 orchestrator는 작업·executor·context 선택만 수행 | 사용자 결정. `accept_state`, `state_reason`, `requires_decision`, `_adopt` 및 변경된 이전 행 선택 검사를 제거한다. 전체 목록 교체는 저장 방식으로 유지한다. Refiner는 `can_refine=false`이면 초안 유지·사유 기록으로 끝내며 별도 재검토 호출을 제거한다. 평가 실패 시 기존 state와 원본을 유지하고 orchestrator에게 재평가 권한을 넘기지 않는다. Tools v7·기존 기록은 유지. C18의 승인 방식과 C31의 행 충돌 검사를 대체하며 모델 효과는 미검증 | harness.py, memory.py, controller.py, prompts, tests |
+
+
+## 2026-10-12 KST evaluator 단독 갱신 live 진단 계획
+
+| ID | 선택 | 이유 / 범위 | 위치 |
+|---|---|---|---|
+| C34 | Secret Santa → OpenCV → Freud 순서, `multi_worker_probe` fresh 각 1회. Run당 $0.30·15분, 합계 $0.90 상한. v16/r19/e6, tools v7 고정 | 사용자 요청. 기존 저비용 탐색 과제 3개로 갱신·선택·전달 계약을 확인한다. 전체 비교나 개선 효과 추정은 하지 않는다. 실행 전에 manifest·planned.csv·코드 snapshot을 저장하며 실행 중 production 코드를 바꾸지 않는다. 모든 호출·실패·비용 불명과 검색 credit을 집계하고 eval_v1은 접근하지 않는다 | outputs/experiments/2026-10-12_evaluator-owned-state-live; reports/2026-10-12-evaluator-owned-state-live.ko.md |
+
+C34 결과: 예정 3회 모두 정상 종료, 2/3 정답, 총 알려진 비용 $0.18047882·비용 불명 0건·Serper 61 credit. State 갱신 10건과 context 선택 13건의 계약 검사 통과, 참조/JSON 수정 요청 0건. Secret Santa 답 보류와 probe 해결 후 추가 실행은 남은 문제로 기록했다. 개선 효과를 추정하지 않는다.
+
+
+## 2026-10-12 (KST): probe 평가 뒤 rewrite, 저장된 지시 선택 (v18/r21/e6)
+
+유효한 probe 평가마다 executor 선택 전에 refiner가 표현을 수정하거나 유지한다. Refiner는 최신 state와
+평가 rationale·changes를 받고 state를 바꾸지 않는다. Orchestrator는 그 결과를 보고 finish/probe/execute를
+선택한다. Probe 초안과 refiner 원문은 artifact로 보존하며 실행은 instruction_id로 저장된 지시를 그대로
+전달한다. 새 작업 직접 실행은 새 instruction을 허용하고 refinement는 하지 않는다. Context notes는
+orchestrator의 선택 참고다. 평가 실패는 rewrite를 생략하고 refiner 실패·수정 불가·보조 예산 소진은 초안
+ID를 유지한 채 다음 판단으로 돌아간다. Probe/refinement 각각 $1·60회와 run 공통 예산을 유지한다.
+Checkpoint format 4이며 과거 checkpoint 변환은 하지 않는다. Tools v7과 evaluator e6는 유지한다.
+
+## 2026-10-12 (KST): probe·위임 문구 보완과 입력 중복 제거 (v19/r22/e6)
+
+사용자 피드백에 따라 probe 가정에는 context·instruction의 미검증 전제도 포함한다. 도구 관측은 기존
+네 항목 안에 `observed:`와 출처를 적으며 파서와 보고 항목은 유지한다. 전체 실행을 목표로 삼지는 않되
+허용된 확인 중 발견한 답은 근거와 함께 보고한다. Orchestrator는 state 미해결 항목뿐 아니라 아직 state가
+다루지 않은 원 질문의 부분도 위임할 수 있다. 보고서 선택만으로 연결 도구 본문이 전달되지 않음을 명시한다.
+목표 결과와 범위가 같은 probed assignment는 방법·표현 변경으로 새 지시를 만들지 않고 저장된 ID로
+실행해 probe→실행 귀속을 유지한다. 수정본이 있어도 초안은 목록에 남기는 기존 선택 정책을 유지한다.
+
+모델 입력을 만들 때 `latest_probe` 복사본에서 중복 `instructions`·`evaluation`을 제외한다. Refiner 결과와
+상태는 유지하고 trace·checkpoint의 전체 probe 기록은 변경하지 않는다. 실행 v19·probe/refiner r22로
+올리며 evaluator e6·tools v7·checkpoint format 4는 유지한다. Evaluator 판단 기준과 refiner 경계의 추가
+수정은 보류하고 reader·시간 기준·must_finish는 변경하지 않는다. 검증은 오프라인으로 한정하며 모델의
+행동 개선을 입증하는 변경으로 보고하지 않는다.

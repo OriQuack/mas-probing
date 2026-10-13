@@ -33,7 +33,7 @@ python scripts/analyze_perturbation_consistency.py outputs/experiments/<date>_lo
 batch의 요청은 2분 뒤 최대 4번 다시 제출한다. 제출·재제출과 실제 청구액은 `openrouter_batches.jsonl`에 남는다(시험
 실행에서 token 기반 추정 합계와 청구액이 같았다).
 
-## Perturbation pilot (`perturb.py`, decision C32)
+## Perturbation pilot (`perturb.py`, decision C37)
 
 node 하나를 떼어(중간 node는 의존 node의 정답을 입력으로 줌) 조건 5개(`repeat`, `instruction`, `surface`, `methods`,
 `avoid_first`) × 3 sample × worker 3개로 풀고, 어떤 perturbation에서 일관성이 정답을 더 잘 가려내는지 비교한다.

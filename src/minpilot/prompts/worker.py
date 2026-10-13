@@ -38,7 +38,7 @@ Your final message is saved as a report. Begin with `Title: <short descriptive t
 Connect results to supporting evidence and distinguish what you found from what you assumed or could not verify. Use these four sections; if a section has nothing to report, say so briefly.
 
 Result: the result, or useful partial findings.
-Evidence: what supports each important result (URLs, files, computations, created file paths). For an aggregation, state the population and inclusion/exclusion criteria used.
+Evidence: what supports each important result (URLs, files, computations, created file paths). For a calculation, report the inputs and formula; for an aggregation, also state the population and inclusion/exclusion criteria used.
 Interpretation: the interpretations and assumptions you applied where the task or instruction left room for judgment.
 Unfinished: claims not verified, remaining work, failures, blockers and conflicts with the original task.
 

@@ -88,7 +88,7 @@ SPECS: dict[str, ModelSpec] = {
         sampling={"temperature": 1.0, "top_p": 0.95}, reasoning={"effort": "minimal"}, preserve_reasoning=True,
         price_prompt=2.5e-7, price_completion=1.5e-6, image_tokens="fixed:1500",
         note="Gemini 3.1 Flash-Lite at effort minimal; reasoning_details are re-sent (thought signatures)."),
-    # Perturbation-consistency workers at effort medium (decision C30): high was too costly for the pilot.
+    # Perturbation-consistency workers at effort medium (decision C35): high was too costly for the pilot.
     "luna-medium": ModelSpec(
         key="luna-medium", model="openai/gpt-6-luna-20260922", provider="openai", max_tokens=MAX_TOKENS_REASONING,
         reasoning={"effort": "medium"}, preserve_reasoning=True, price_prompt=1e-7, price_completion=5e-7,
@@ -103,12 +103,12 @@ SPECS: dict[str, ModelSpec] = {
         reasoning={"effort": "medium"}, preserve_reasoning=True, price_prompt=2e-6, price_completion=1e-5,
         image_tokens="fixed:10000",
         note="Claude Sonnet 5.5 at effort medium: writes the perturbation pilot's rewrites and approach lists (decision "
-             "C32), never a worker there."),
+             "C37), never a worker there."),
     "sonnet-high": ModelSpec(
         key="sonnet-high", model="anthropic/claude-sonnet-5.5", provider="anthropic", max_tokens=MAX_TOKENS_REASONING,
         reasoning={"effort": "high"}, preserve_reasoning=True, price_prompt=2e-6, price_completion=1e-5,
         image_tokens="fixed:10000",
-        note="Claude Sonnet 5.5 at effort high: writes the segment pilot's rewrites and strategies (decision C33)."),
+        note="Claude Sonnet 5.5 at effort high: writes the segment pilot's rewrites and strategies (decision C38)."),
     "flash-medium": ModelSpec(
         key="flash-medium", model="google/gemini-3.8-flash", provider="google-vertex", max_tokens=MAX_TOKENS_REASONING,
         reasoning={"effort": "medium"}, preserve_reasoning=True, price_prompt=7.5e-7, price_completion=3.75e-6,
@@ -121,7 +121,7 @@ SPECS: dict[str, ModelSpec] = {
         max_tokens=MAX_TOKENS_REASONING, reasoning={"effort": "high"}, preserve_reasoning=True,
         price_prompt=3e-7, price_completion=2.5e-6, image_tokens="fixed:1500",
         note="Gemini 3.5 Flash-Lite at effort high (its highest), pinned to Google Vertex: the segment routing "
-             "worker in place of flash-medium, closer in strength to haiku-medium and luna-medium (decision C34). "
+             "worker in place of flash-medium, closer in strength to haiku-medium and luna-medium (decision C39). "
              "No sampling parameters, as flash-medium."),
 }
 

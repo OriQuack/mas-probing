@@ -1,8 +1,8 @@
 """Segment pilot: the first nodes of a linear chain, solved as one problem in one call.
 
 A segment runs from node_0 to the first requested node t in node_1..node_4, so its last answer has gold and no gold
-value is ever given as an input (unlike the single-node pilot, decision C32). Each sample answers every node of the
-segment in one response; the score is the last node's answer. The segment is perturbed as a whole (decision C33),
+value is ever given as an input (unlike the single-node pilot, decision C37). Each sample answers every node of the
+segment in one response; the score is the last node's answer. The segment is perturbed as a whole (decision C38),
 with the same five conditions and `SAMPLES` prompts each as the single-node pilot:
 
 - `repeat`: the plain segment;

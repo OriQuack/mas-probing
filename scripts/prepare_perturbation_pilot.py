@@ -6,7 +6,7 @@
       [--rewriter sonnet-medium] [--session-cost-usd 3] [--env-file .env] [--dry-run]
 
 Targets are requested nodes whose dependencies are requested too, so a middle node gets its inputs from the gold
-answers of the nodes it depends on (decision C32; its own gold answer is never shown). The rewriting model writes the
+answers of the nodes it depends on (decision C37; its own gold answer is never shown). The rewriting model writes the
 paraphrase and structured restatement of each node and its approach list; every call is traced under prep/.
 Writes manifest.json, targets.jsonl, prep.jsonl (rewrites with their checks, approaches) and prompts.jsonl, the
 input of scripts/run_perturbation_pilot.py. `--dry-run` picks the targets and prints them without model calls.
@@ -38,7 +38,7 @@ from perturbation_consistency.longcot_nodes import parse_chain  # noqa: E402
 def target_pool(templates: list[str], difficulties: set[str]) -> tuple[list[perturb.Target], dict]:
     pool, chains = [], {}
     for difficulty in sorted(difficulties):
-        refs = longcot.load_references("math", difficulty)  # gold: dependency inputs only (C32)
+        refs = longcot.load_references("math", difficulty)  # gold: dependency inputs only (C37)
         for template in templates:
             for q in longcot.load_questions("math", difficulty, template=template):
                 chain = parse_chain(q.question_id, q.prompt)

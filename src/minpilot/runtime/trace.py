@@ -7,7 +7,7 @@ Records (JSONL files in the run dir):
 - `tool_calls.jsonl` one record per tool call (`started`, then the result record), with the stage tags.
 - `events.jsonl`     orchestrator actions, delegations, refinement steps, checkpoints, errors.
 
-Stage tags include orchestrator, orchestrator.select, probe, evaluator.probe, refiner, execution and
+Stage tags include orchestrator, probe, evaluator.probe, refiner, execution and
  evaluator.execution. Every record inherits stage/delegation/worker tags. Historical records retain their
 refine.* stages. Unknown paid-request charges are tracked separately from confirmed tool cost.
 

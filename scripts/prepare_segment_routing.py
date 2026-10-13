@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Segment routing, step 1: pick the linear chain segments and write every probe prompt (decision C34).
+"""Segment routing, step 1: pick the linear chain segments and write every probe prompt (decision C39).
 
   python scripts/prepare_segment_routing.py --experiment outputs/experiments/<date>_longcot-segment-routing \
       [--difficulties easy medium hard] [--rewriter sonnet-high] [--session-cost-usd 5] [--reuse PREP.jsonl ...] \

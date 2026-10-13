@@ -110,4 +110,4 @@
 첫 subtask 일관성은 첫 subtask의 답이 맞았는지는 잘 예측하지만(AUROC 약 0.9), trajectory 전체를 맞힐지는 약하게만 예측한다(약 0.6).
 그래서 일관성으로 고른 worker는 무작위보다 낫지만 가장 강한 worker를 고정해 쓰는 것보다 낫지 않았고, 변형 조건도 단순 반복보다 나은 점이 없었다.
 
-자료: `outputs/experiments/2026-10-12_longcot-segment-pilot-b/`(pre-pilot), `outputs/experiments/2026-10-12_longcot-segment-routing-i/`(pilot, 그림과 그림 스크립트는 `analysis/figures/`). 결정 C33·C34.
+자료: `outputs/experiments/2026-10-12_longcot-segment-pilot-b/`(pre-pilot), `outputs/experiments/2026-10-12_longcot-segment-routing-i/`(pilot, 그림과 그림 스크립트는 `analysis/figures/`). 결정 C38·C39.

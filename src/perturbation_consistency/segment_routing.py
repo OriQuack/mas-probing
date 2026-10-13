@@ -1,7 +1,7 @@
 """Segment routing: choose a worker by its consistency on the first segment of a linear chain, then see how the
-workers do on the rest of the chain (decision C34).
+workers do on the rest of the chain (decision C39).
 
-The segment is the segment pilot's (C33): node_0 up to the first requested node, here among node_1..node_k with k by
+The segment is the segment pilot's (C38): node_0 up to the first requested node, here among node_1..node_k with k by
 difficulty (`CAPS`), solved in one call and scored on its last node. Three conditions give `SAMPLES` prompts each,
 every variant taken from published prompting work:
 

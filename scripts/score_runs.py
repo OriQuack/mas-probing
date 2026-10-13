@@ -2,7 +2,7 @@
 """Score run directories against GAIA ground truth (a separate step: ground truth never enters a run dir).
 
   python scripts/score_runs.py [RUN_DIR_OR_ROOT ...] [--out outputs/scores/scores.csv] [--expected planned.csv]
-                               [--exclude runs.txt] [--compare self_review multi_worker_probe [--compare ...]]
+                               [--exclude runs.txt] [--compare direct_execution adaptive_probe [--compare ...]]
 
 Primary metric: `correct` on the extracted answer (eval/answer.py, version recorded); `correct_raw` alongside.
 Runs with status other than ok count as wrong. `--expected` is a session's planned.csv (run_batch.py): every
@@ -200,7 +200,11 @@ def main() -> None:
             "llm_usd": c.get("llm_usd", c.get("cost_usd")), "tool_usd": c.get("tool_usd"),
             "cost_usd": c.get("cost_usd"), "tool_usd_cold": c.get("tool_usd_cold"),
             "unknown_cost_calls": c.get("unknown_cost_calls"), "n_delegations": info.get("n_delegations"),
+            # Keep the historical aggregate while exposing independent current actions.
             "pre_execution_usd": stage_usd(info.get("usage"), {"probe", "evaluator.probe", "orchestrator.select", "refiner"}),
+            "probe_usd": stage_usd(info.get("usage"), {"probe", "evaluator.probe"}),
+            "refinement_usd": stage_usd(info.get("usage"), {"refiner"}),
+            "n_probes": info.get("n_probes"),
             "evaluator_usd": stage_usd(info.get("usage"), {"evaluator.probe", "evaluator.execution"}),
             "serper_billed_credits": (info.get("paid_search") or {}).get("billed"),
             "serper_unknown_credits": (info.get("paid_search") or {}).get("unknown"),

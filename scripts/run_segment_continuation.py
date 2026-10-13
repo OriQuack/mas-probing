@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Segment routing, step 3: every worker continues each chain node by node from its own segment answer (C34).
+"""Segment routing, step 3: every worker continues each chain node by node from its own segment answer (C39).
 
   python scripts/run_segment_continuation.py --experiment outputs/experiments/<date>_longcot-segment-routing \
       [--workers haiku-medium luna-medium flash-lite-high] [--batch-workers ...] [--reps 3] \

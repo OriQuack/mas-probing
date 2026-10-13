@@ -45,7 +45,7 @@ from perturbation_consistency.batch import BatchDispatcher, requests_http  # noq
 from perturbation_consistency.longcot_nodes import VARIANTS, node_prompt, parse_chain  # noqa: E402
 from perturbation_consistency.runner import Settings, run_pipeline, run_routed  # noqa: E402
 
-DEFAULT_WORKERS = ("luna-medium", "haiku-medium", "flash-medium")  # decision C30
+DEFAULT_WORKERS = ("luna-medium", "haiku-medium", "flash-medium")  # decision C35
 
 
 def select_questions(args) -> list:
