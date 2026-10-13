@@ -14,7 +14,7 @@
 | [최신 종합 재분석](2026-10-10-synthesis.ko.md) | 현재 가장 신뢰할 결론과 한계 |
 | [Benchmark 검토와 추천](benchmark-selection.ko.md) | 기존 probe와 worker 선택 실험에 맞는 후보·추천 이유·한계 |
 | [LongCoT perturbation 일관성 worker 선택](2026-10-12-longcot-perturbation-consistency.ko.md) | 별도 패키지 실험: 첫 노드 일관성으로 고른 worker vs 무작위·고정 worker (linear easy 23, hard 26) |
-| [LongCoT 묶음 일관성 worker 선택](2026-10-13-longcot-segment-routing.ko.md) | 별도 패키지 실험: 첫 묶음의 변형별 일관성이 묶음 끝·뒤 node 정답을 예측하는지, 그걸로 고른 worker vs 무작위·haiku 고정 (linear 41) |
+| [LongCoT 첫 subtask 일관성 worker 선택](2026-10-13-longcot-segment-routing.ko.md) | 별도 패키지 실험: 첫 subtask의 변형별 일관성이 첫 subtask·trajectory 전체 정답을 예측하는지, 그걸로 고른 worker vs 무작위·haiku 고정 (linear 41) |
 | [Baseline·probe 비교](2026-10-09-baseline-and-probe-comparison.ko.md) | 50문제 baseline과 47문제 조건 비교의 당시 기록 |
 | [Refiner 후속 진단](2026-10-10-refiner-diagnostics.ko.md) | 선택 문제의 기존 초안 회귀 점검과 최신 prompt 진단 |
 | [사례 심층 분석 종합](2026-10-10-case-analysis.ko.md) | 실패 경로와 사후 분류; 인과 효과와 구분 |
