@@ -2,7 +2,7 @@
 
 지금까지는 worker에게 보내는 지시문을 고쳤을 때의 효과를 알아보기 위해 실행 모델을 고정했다. 다음 실험에서는 **문제를 더 잘 푸는 전체 구성을 먼저 만들고, 이후 기능을 하나씩 제외하는 ablation으로 각 기능의 기여를 확인**하려 한다. 이 문서는 executor 선택, 기록·전달, probe와 실행 결과의 평가, 지시문 수정을 어떻게 연결할지 설명한다.
 
-현재 runtime은 실행 `v13` / probe·refiner `r15` / evaluator `e3` / tools `v6`로 구현했다. 실제 모델의 개선 효과는 아직 평가하지 않았다. 아래 사례와 설계 동기는 도입 전 기록을 설명한다. 근거는 과거 실행을 재분석한 [종합 보고서](../reports/2026-10-10-synthesis.ko.md), 연결된 trace 분석, 그리고 [v10/r12의 30개 실행 기록](../../outputs/experiments/2026-10-11_v10-r12-check/)이다. 새 실행은 task·조건당 1회이므로 실패 경로를 확인하는 자료로 사용하며, 기능별 평균 효과를 입증한 것으로 보지 않는다.
+현재 runtime은 실행 `v17` / probe·refiner `r20` / evaluator `e6` / tools `v7`로 구현했다. 실제 모델의 개선 효과는 아직 평가하지 않았다. 아래 사례와 설계 동기는 도입 전 기록을 설명한다. 근거는 과거 실행을 재분석한 [종합 보고서](../reports/2026-10-10-synthesis.ko.md), 연결된 trace 분석, 그리고 [v10/r12의 30개 실행 기록](../../outputs/experiments/2026-10-11_v10-r12-check/)이다. 새 실행은 task·조건당 1회이므로 실패 경로를 확인하는 자료로 사용하며, 기능별 평균 효과를 입증한 것으로 보지 않는다.
 
 ## 1. Executor를 선택하도록 바꾸는 이유
 
@@ -55,7 +55,7 @@ Artifact pool의 원본은 보존하고, state는 평가와 결정에 따라 갱
 | 다음 instruction | 31–50번을 확인하고, 항목별 판정·근거·확인하지 못한 항목을 보고하라 |
 | 다음 context | `m1` 중 31–50번 ID, `m2`의 판정 방법과 근거, 이 구간과 관련된 예외 |
 
-Orchestrator는 **state를 보고 다음 구간을 고른다.** Probe가 그 지시를 어떻게 이해했는지 답하면 evaluator가 가정과 근거를 검토한다. Refiner는 평가에서 필요한 것으로 판단한 변경을 instruction·context에 반영한다. Worker는 **선택된 context를 받아 그 구간을 실행한다.** 전체 과거 보고를 받을 필요는 없다. 이후 evaluator가 새 실행 보고를 검토하고 state의 완료 범위와 미확인 항목을 갱신하도록 제안한다.
+Orchestrator는 **state를 보고 다음 구간을 고른다.** Probe가 그 지시를 어떻게 이해했는지 답하면 evaluator가 가정과 근거를 검토한다. Refiner는 평가에서 필요한 것으로 판단한 변경을 instruction·context에 반영한다. Worker는 **선택된 context를 받아 그 구간을 실행한다.** 전체 과거 보고를 받을 필요는 없다. 이후 evaluator가 새 실행 보고를 검토하고 state의 완료 범위와 미확인 항목을 갱신한다.
 
 ### 목록과 읽기·쓰기 방식
 
@@ -104,12 +104,12 @@ State는 다음 판단과 작업에 영향을 주는 항목을 네 column으로 
 
 1. **Harness가 원본을 저장한다.** Harness는 모델 호출과 도구 실행을 관리하는 코드다. 새 응답에 ID·worker_id·stage를 붙이며, probe 정보도 지시문 수정 여부와 관계없이 저장한다. 평가와 결정 원문도 이력에 남긴다.
 2. **모델은 필요한 기록을 읽는다.** Orchestrator·refiner·evaluator는 목록에서 ID를 골라 `read_memory(ids)` 같은 도구로 본문을 읽는다. 과거 본문 전체를 매번 입력에 붙이지 않는다. Evaluator에게는 이번에 새로 나온 보고 전문을 직접 제공한다.
-3. **Evaluator가 state 변경을 제안한다.** Probe 이후에는 관측·가정·위험과 필요한 확인을, 실행 이후에는 결과·완료 범위·탐색 이력을 평가한다. Refiner는 state를 별도로 판정하거나 덮어쓰지 않는다.
-4. **Harness가 변경을 기록하고 orchestrator가 중요한 판단을 결정한다.** 원본 연결과 미확인 가정·시도 이력은 평가 결과에 따라 기록한다. 기존 결과를 뒤집거나 원 질문의 답 기준을 바꾸는 제안은 orchestrator가 근거를 보고 채택 여부를 결정한다. Harness는 참조 ID와 변경 이력을 관리하며, 참조 검사를 내용의 진실성 검사로 취급하지 않는다. 평가를 따르지 않을 때도 이유를 남긴다.
+3. **Evaluator가 state를 갱신한다.** Probe 이후에는 관측·가정·위험과 필요한 확인을, 실행 이후에는 결과·완료 범위·탐색 이력을 평가한다. Refiner는 state를 별도로 판정하거나 덮어쓰지 않는다.
+4. **Harness가 갱신을 저장하고 orchestrator가 다음 작업을 선택한다.** Evaluator 출력의 형식과 참조 ID가 유효하면 state를 바로 반영한다. 근거 상태·조건·집계 기준의 평가는 evaluator가 맡으며 orchestrator의 승인 단계는 없다. Harness는 원본과 변경 이력을 보존하고, 참조 검사를 내용의 진실성 검사로 취급하지 않는다.
 5. **Refiner가 필요한 수정만 반영한다.** 원 질문, 위임 초안·context, 관련 state와 평가 결과를 받는다. 해결되지 않은 판단을 임의로 확정하지 않는다. 수정이 필요 없으면 rewrite 호출을 생략할 수 있다.
-6. **Harness가 context를 구성해 worker에게 보낸다.** Orchestrator가 artifact ID와 필요한 state 항목을 선택하면 harness가 실제 내용·출처·확인 상태로 구성한다. Refiner는 전달 내용의 누락이나 표현을 보완할 수 있지만, context 수정으로 state의 판단을 바꾸지 않는다. 새 판단이 필요하면 evaluator에 재검토를 요청한다. Worker가 조회 도구 없이 ID만 받는 상황을 만들지 않는다.
+6. **Harness가 context를 구성해 worker에게 보낸다.** Orchestrator가 artifact ID와 필요한 state 항목을 선택하면 harness가 실제 내용·출처·확인 상태로 구성한다. Refiner는 전달 내용의 누락이나 표현을 보완할 수 있지만, context 수정으로 state의 판단을 바꾸지 않는다. 새 판단이 필요하면 수정 불가 사유를 기록하고 선택된 초안을 유지한다. Worker가 조회 도구 없이 ID만 받는 상황을 만들지 않는다.
 
-Context는 별도 저장소나 read/write 대상이 아니다. Artifact pool은 ID로 읽고, state는 evaluator의 갱신 제안을 harness가 반영한다. 실제 전달한 context는 위임별 trace에 저장한다.
+Context는 별도 저장소나 read/write 대상이 아니다. Artifact pool은 ID로 읽고, state는 evaluator의 갱신 결과를 harness가 바로 반영한다. 실제 전달한 context는 위임별 trace에 저장한다.
 
 여러 모델이 같은 기록을 직접 덮어쓰게 하지 않는다. 원본은 남기고, 현재 판단을 변경할 때 이전 판단과 변경 근거를 보존한다. 원 질문에 맞지 않는 기존 해석도 수정할 수 있어야 한다.
 
@@ -117,7 +117,7 @@ Context는 별도 저장소나 read/write 대상이 아니다. Artifact pool은 
 
 ### 기대하는 변화와 한계
 
-확인한 항목을 다시 맡기거나 미확인 항목을 빠뜨리는 일을 줄이고, 어떤 가정 때문에 결과를 채택·배제했는지 따라가기 쉽게 만드는 것이 목적이다. Probe가 발견한 출처나 단서도 instruction을 고치지 않은 경우에 전달할 수 있게 한다. 현재는 수정할 issue가 없으면 이를 추가하는 rewrite 단계도 건너뛴다. [현재 refiner 코드](../../src/minpilot/refine/review.py).
+확인한 항목을 다시 맡기거나 미확인 항목을 빠뜨리는 일을 줄이고, 어떤 가정 때문에 결과를 채택·배제했는지 따라가기 쉽게 만드는 것이 목적이다. Probe가 발견한 출처나 단서도 instruction을 고치지 않은 경우에 전달할 수 있게 한다. 현재는 수정할 issue가 없으면 이를 추가하는 rewrite 단계도 건너뛴다. [현재 refiner 코드](../../src/minpilot/prompts/refiner.py).
 
 반대로 잘못 작성한 state가 이후 모든 판단에 반복될 수 있고, 목록과 본문 조회의 비용도 늘 수 있다. 그래서 원문으로 돌아갈 수 있는 ID를 유지하고, 새 보고라는 이유만으로 이전 결과를 바꾸지 않는다. 효과는 최종 정답률·비용과 실제 전달 누락·중복 확인을 함께 보고 판단한다.
 
@@ -165,7 +165,7 @@ Evaluator는 다음 내용을 반환한다.
 - **수정할 판단:** 기존 결과·가정·기준 중 바꿔야 할 것이 있는가. 있다면 근거는 무엇인가.
 - **필요한 변경·확인:** 지시문 수정이 필요한가. 어떤 사실을 더 확인하면 답이나 다음 작업이 달라지며, 언제 어떤 자료로 확인할 것인가.
 
-부분합처럼 코드로 검사할 수 있는 것은 harness나 worker가 계산하고 evaluator가 그 결과를 읽는다. 외부 자료를 새로 찾아야 하면 확인할 작업을 제안한다. 다음 작업과 executor, 종료 여부는 orchestrator가 결정한다. Refiner는 평가에서 정한 변경을 instruction·context에 표현하고, 그 과정에서 새 판단이 필요해지면 임의로 확정하지 않고 재검토를 요청한다.
+부분합처럼 코드로 검사할 수 있는 것은 harness나 worker가 계산하고 evaluator가 그 결과를 읽는다. 외부 자료를 새로 찾아야 하면 확인할 작업을 제안한다. 다음 작업과 executor, 종료 여부는 orchestrator가 결정한다. Refiner는 평가에서 정한 변경을 instruction·context에 표현하고, 그 과정에서 새 판단이 필요해지면 임의로 확정하지 않고 수정 불가 사유를 기록한다.
 
 ### 원 질문의 기준을 바꾸는 판단
 
@@ -186,18 +186,18 @@ Probe의 우려가 근거 없이 실행 조건으로 바뀌는 일, 근거 없�
 ## 4. 전체 동작과 prompt·trace
 
 ```text
-Orchestrator: 원 질문과 state를 읽고 작업·executor·context·위임 초안 선택
-  → Probe: 위임 초안에 대한 이해·가정·위험·계획 응답
-  → Harness: probe 응답·도구 결과를 artifact pool에 저장
-  → Evaluator: probe 평가, state 갱신과 지시 수정·확인 필요성 제안
-      [기존 결과를 뒤집거나 답 기준을 바꾸는 제안은 orchestrator가 채택 여부 결정]
-  → Harness: state와 이력 반영
-  → Refiner: 평가에 따라 instruction·context 수정, 필요 없으면 생략
+Orchestrator: 원 질문과 현재 state에서 작업·context·위임 초안 선택
+  → Probe: understanding → plan → assumptions → risks 응답
+  → Harness: probe 응답·도구 결과 저장
+  → Evaluator: probe 평가와 전체 state 갱신
+  → Harness: 형식·참조 검사 후 state 즉시 저장
+  → Orchestrator: 갱신된 state에서 executor·전달 정보·작업 지시 선택
+  → Refiner: 요청된 표현 수정, 필요 없으면 생략; 수정 불가 시 초안 유지
   → Worker: instruction과 선택된 context로 실행
-  → Harness: 실행 보고·도구 결과·파일을 artifact pool에 저장
-  → Evaluator: 결과·근거 검토, state 갱신 제안
-  → Orchestrator: 평가와 변경 제안을 보고 다음 작업 또는 종료 결정
-  → Harness: 채택한 state 변경과 결정 이력 반영
+  → Harness: 실행 보고·도구 결과 저장
+  → Evaluator: 결과·근거 검토와 전체 state 갱신
+  → Harness: state 즉시 저장
+  → Orchestrator: 갱신된 state에서 다음 작업 또는 종료 선택
 ```
 
 첫 위임에는 이전 실행 기록이 없으므로 state와 context가 비어 있을 수 있다. 첫 실행의 평가를 반영한 뒤 orchestrator가 남은 작업을 골라 두 번째 위임 초안을 만든다. Refiner가 이전 instruction을 계속 고쳐 다음 작업을 정하는 구조는 아니다. Probe를 생략한 위임은 probe 수집·평가를 건너뛰며, 사전 확인이 필요하면 그 결과를 저장·평가한 뒤 수정으로 진행한다.
@@ -230,19 +230,20 @@ OpenCV, Ruffwear, arXiv, ORCID, Freud의 위 경로는 보존된 실행 기록�
 v10/r12의 새 사례는 [base 실행](../../outputs/experiments/2026-10-11_v10-r12-check/base/runs/)과 [probe 조건 실행](../../outputs/experiments/2026-10-11_v10-r12-check/restore/runs/)의 해당 task 기록을 근거로 한다. 새 사례를 과거 보고서의 동일 task 결과와 구분하며, 사후에 확인한 정답과 탐색 경로는 실행 prompt에 주입하지 않는다.
 
 
-## 구현된 초기 범위 (2026-10-11 KST)
+## 구현 범위 (초기 2026-10-11, 갱신 권한 정리 2026-10-12 KST)
 
 현재 동작 계약은 [framework](../framework.md), CLI·비교 조건과 검증은 [실험 안내](../experiments.md)를 기준으로 한다.
-두 조건은 `direct_execution`과 `multi_worker_probe`다. Probe 조건은 모든 등록 worker를 매 위임 한 번씩
-독립 호출하며 최대 도구 3회다. Direct 조건에는 실행 후 evaluator가 공통으로 있다.
+두 조건은 `direct_execution`과 `adaptive_probe`다. 매 판단에서 probe/execute/finish/read_memory를 선택한다.
+Probe는 모든 등록 worker를 같은 지시·context로 독립 호출하며 최대 도구 3회다. Probe 뒤 자동 실행하지 않는다.
+두 조건 모두 선택한 행동 이후 evaluator가 state를 갱신한다.
 Orchestrator·evaluator·refiner는 별도 prompt/call의 `luna-high`다. 고정 role→executor 매핑은 제거했다.
 
-원본은 run-local artifact ID로 저장·조회하며 제목 누락과 실패도 보존한다. State는 evaluator의 전체 교체
-제안을 orchestrator가 채택/거부한 뒤 반영한다. 행 선택은 입력 snapshot의 0-based 번호다. Controller 조회는
+원본은 run-local artifact ID로 저장·조회하며 제목 누락과 실패도 보존한다. State는 evaluator가 전체 갱신
+목록을 작성하고 harness가 형식·참조 검사 후 바로 반영한다. Orchestrator는 갱신에 개입하지 않는다. 행 선택은 입력 snapshot의 0-based 번호다. Controller 조회는
 JSON `read_memory` 행동으로 최대 3라운드이며 원본 기록 읽기만 제공한다. Refiner는 수정 표현만 수행한다.
 도구 원문은 보고에 연결해 조회한다. 별도 context 저장소·state ID·관계 graph는 없다.
 
-위임 초안 이후/probe 이전 format 2 checkpoint가 artifact·state·context 선택·누적 budget/credit을 포함한다.
+선택한 probe·execute 수행 전 format 3 checkpoint(aN)가 artifact·state·context 선택·누적 budget/credit을 포함한다.
 과거 checkpoint와 옵션은 새 의미로 재사용하지 않는다. 유료 검색은 실제 Serper 요청 지점에서 task당
 100-credit 상한을 적용하며 probe/실행/재시도와 복원에 걸쳐 유지한다. Cache와 무료 fallback은 허용한다.
 예산 소진 시 처리와 알려진 비용/과금 불명 구분은 framework에 명시했다.
