@@ -393,3 +393,13 @@ C42 보완(2026-10-15, 사용자 결정, v22 표적 재실행 뒤):
   불러 각 worker가 같은 probe에 두 번 답했다("worker 모두 부르기" 권장을 probe에도 적용한 것으로 보인다). harness는
   한 메시지의 두 번째 `probe`를 실행하지 않고 오류 결과를 돌려준다. Orchestrator prompt의 probe 설명에 "probe는
   과제당 한 번 부르면 모든 worker에게 간다"를 더했다.
+
+## 2026-10-15 (KST): GAIA non-web 첫 subtask instruction 3반복, probe 없음
+
+사용자 결정. 기존 non-web 34문제의 세션 subagent 작성·검토 첫 subtask를 고정하고, subtask만 보고 작성한
+clarify·structured·verify와 naive를 각 3회 비교한다. decompose는 작은 subtask에서 개입 여지가 작아
+verify로 교체했다. 작성 revision 1과 verify revision 2는 그대로 보존한다. Probe나 합의 선택은 하지 않는다.
+`haiku-medium` 한 worker가 첫 subtask를 수행한 뒤 동일 대화·workspace에서 공통 완료 지시로 원 task를
+끝까지 푼다. 두 요청을 합친 경로당 $0.20, 전체 408경로 $81.60 상한. 병렬 2경로로 시작하며 첫 429부터
+1경로와 직렬 API 요청으로 줄인다. 기존 전체 orchestrator framework는 변경하지 않는다.
+세부 설계와 실행·채점은 [운영 문서](operations/gaia-instruction-execution.ko.md)에 기록한다.

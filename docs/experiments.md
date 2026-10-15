@@ -64,8 +64,9 @@ Serper는 task당 100 credits이며 probe와 실행·재시도를 합산하고 c
 | 실험 | 현재 version | 정본 |
 |---|---|---|
 | LongCoT 문제별 instruction 합의 선택 | `instruction-selection-v3` | [operations/instruction-selection.ko.md](operations/instruction-selection.ko.md) |
-| MoNaCo 문제별 instruction 합의 선택 | `monaco-instruction-selection-v7` | [operations/monaco-instruction-selection.ko.md](operations/monaco-instruction-selection.ko.md) |
 | LongCoT 첫 segment self-consistency | `self-consistency-v1` | [operations/self-consistency.ko.md](operations/self-consistency.ko.md) |
+| MoNaCo 문제별 instruction 합의 선택 | `monaco-instruction-selection-v7` | [operations/monaco-instruction-selection.ko.md](operations/monaco-instruction-selection.ko.md) |
+| GAIA non-web 첫 subtask instruction 비교(probe 없음, 3반복) | `gaia-instruction-execution-v1` | [operations/gaia-instruction-execution.ko.md](operations/gaia-instruction-execution.ko.md) |
 
 ## 과거 이름 대응
 

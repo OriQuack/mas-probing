@@ -1,5 +1,7 @@
 # 보고서 안내
 
+최신 별도 GAIA 실험은 [첫 subtask instruction 3반복, probe 없음](2026-10-15-gaia-instruction-execution.ko.md)입니다. Non-web 34문제 × 4조건 × 3반복(408경로), haiku-medium의 같은 대화로 끝까지 해결했습니다. Naive 76.5%, verify 81.4%(+4.9%p, CI −3.9~+13.7%p)로 이득은 확인되지 않았습니다. 전체 비용 $1.81, 실행 오류·429 없음. 아래 orchestrator 전체 시스템 비교와는 별도 설정입니다.
+
 최신 GAIA 결과는 [GAIA (non-web) Probing](2026-10-15-gaia-nonweb-v23-34tasks.ko.md)(136 run)입니다. 직전 표적 재실행은 [evaluator 제거 v22의 v21 오답 11문제 재실행](2026-10-15-gaia-nonweb-v22-failed-tasks.ko.md)(22 run)입니다. 36문제 비교는 [worker 대화 유지·plan probe·refiner 제거](2026-10-15-gaia-nonweb-conversation-probe.ko.md)(v21/r23/e7, 72 run)이고, 오답 분류는 [GAIA non-web 실패 유형](2026-10-15-gaia-nonweb-failure-modes.ko.md)에 있습니다.
 
 이전 `v16/r19/e6`·tools v7의 저비용 실제 진단은 [Evaluator 단독 state 갱신 live 진단](2026-10-12-evaluator-owned-state-live.ko.md)에 있습니다.
@@ -15,6 +17,8 @@
 
 | 보고서 | 읽는 목적 |
 |---|---|
+| [GAIA instruction 사후 oracle](2026-10-15-gaia-instruction-oracle.ko.md) | 문제별 3회 평균 최고 후보는 86.3%(naive 대비 +9.8%p). 잡음 기준선 +6.65%p의 95% 범위 안(p=0.136)이라 실제 headroom은 미확인. 추가 호출 없음 |
+| [GAIA non-web: 첫 subtask instruction 3반복](2026-10-15-gaia-instruction-execution.ko.md) | Probe 없는 별도 실험: 34문제·4조건·3반복, 408경로 모두 정상. Naive 76.5%, clarify·structured 78.4%, verify 81.4%; naive 대비 CI는 모두 0 포함. $1.81, 429 없음 |
 | [GAIA non-web: worker 대화 유지·plan probe·refiner 제거](2026-10-15-gaia-nonweb-conversation-probe.ko.md) | v21/r23/e7(C41) 72 run: 공식 23 vs 22, 보정 26 vs 25, adaptive 비용 1.7배. 단서 붙은 정답 11→3, evaluator의 조건부 답 요구는 두 조건에 남음 |
 | [GAIA (non-web) Probing](2026-10-15-gaia-nonweb-v23-34tasks.ko.md) | 34문제 × 2조건 × 2반복: 정답률 direct 83.8% vs adaptive 73.5%(−10.3%p, CI −20.6~−1.5). probe 뒤 orchestrator가 해석을 미리 좁혀 두 worker의 독립 해석이 사라지는 것이 손실 원인. worker 선택에 probe 응답이 쓰이지 않음 |
 | [GAIA non-web v22: evaluator 제거, v21 오답 11문제 재실행](2026-10-15-gaia-nonweb-v22-failed-tasks.ko.md) | C42(v22/r24) 표적 재실행 22 run: 같은 11문제에서 adaptive 0→4(공식)·5(보정), direct 1→2, adaptive 비용 −40%. 오답으로 고른 표본이라 개선 폭은 미정. 새 실패: 그럴듯한 틀린 해석·수 확정(ec09fa32, cca530fc), finish 옮겨 쓰기 오류 |
