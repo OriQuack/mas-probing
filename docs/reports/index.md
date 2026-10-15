@@ -17,6 +17,7 @@
 
 | 보고서 | 읽는 목적 |
 |---|---|
+| [GAIA Instruction Selection](2026-10-15-gaia-instruction-selection-summary.ko.md) | 발표용: 첫 subtask instruction 4후보 × 3회. 고정 후보는 naive보다 +2~+5 run(CI 0 포함), 사후 최고 +9.8%p(선택 편향). 같은 instruction이 문제에 따라 반대로 작용 |
 | [GAIA instruction 사후 oracle](2026-10-15-gaia-instruction-oracle.ko.md) | 문제별 3회 평균 최고 후보는 86.3%(naive 대비 +9.8%p). 잡음 기준선 +6.65%p의 95% 범위 안(p=0.136)이라 실제 headroom은 미확인. 추가 호출 없음 |
 | [GAIA non-web: 첫 subtask instruction 3반복](2026-10-15-gaia-instruction-execution.ko.md) | Probe 없는 별도 실험: 34문제·4조건·3반복, 408경로 모두 정상. Naive 76.5%, clarify·structured 78.4%, verify 81.4%; naive 대비 CI는 모두 0 포함. $1.81, 429 없음 |
 | [GAIA non-web: worker 대화 유지·plan probe·refiner 제거](2026-10-15-gaia-nonweb-conversation-probe.ko.md) | v21/r23/e7(C41) 72 run: 공식 23 vs 22, 보정 26 vs 25, adaptive 비용 1.7배. 단서 붙은 정답 11→3, evaluator의 조건부 답 요구는 두 조건에 남음 |
