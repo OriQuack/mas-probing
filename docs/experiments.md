@@ -57,6 +57,15 @@ Serper는 task당 100 credits이며 probe와 실행·재시도를 합산하고 c
 이전 v10/r12 및 그 이전 조건·checkpoint는 당시 snapshot으로 재현합니다. 아래 과거 이름 대응은 원본 기록을
 읽기 위한 것이며 현재 runtime preset이 아닙니다. 과거 실행·snapshot·cache는 수정하지 않습니다.
 
+### orchestrator 밖 실험 (`src/perturbation_consistency/`)
+
+위 조건·버전과 별개다. 현재 version은 각 모듈의 `VERSION`이며 설계의 정본은 운영 문서다.
+
+| 실험 | 현재 version | 정본 |
+|---|---|---|
+| LongCoT 문제별 instruction 합의 선택 | `instruction-selection-v3` | [operations/instruction-selection.ko.md](operations/instruction-selection.ko.md) |
+| MoNaCo 문제별 instruction 합의 선택 | `monaco-instruction-selection-v7` | [operations/monaco-instruction-selection.ko.md](operations/monaco-instruction-selection.ko.md) |
+
 ## 과거 이름 대응
 
 | 과거 이름 | 지금 찾을 곳 / 의미 |

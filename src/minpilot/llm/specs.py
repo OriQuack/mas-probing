@@ -106,6 +106,10 @@ SPECS: dict[str, ModelSpec] = {
         key="luna-medium", model="openai/gpt-6-luna-20260922", provider="openai", max_tokens=MAX_TOKENS_REASONING,
         reasoning={"effort": "medium"}, preserve_reasoning=True, price_prompt=1e-7, price_completion=5e-7,
         image_tokens="patch:1.2", note="GPT-6 Luna at effort medium; otherwise as luna-high."),
+    "luna-low": ModelSpec(
+        key="luna-low", model="openai/gpt-6-luna-20260922", provider="openai", max_tokens=MAX_TOKENS_REASONING,
+        reasoning={"effort": "low"}, preserve_reasoning=True, price_prompt=1e-7, price_completion=5e-7,
+        image_tokens="patch:1.2", note="GPT-6 Luna at effort low: MoNaCo judge and answer clusterer (decision C40)."),
     "haiku-medium": ModelSpec(
         key="haiku-medium", model="anthropic/claude-haiku-5.5-20261007", provider="anthropic",
         max_tokens=MAX_TOKENS_REASONING, reasoning={"effort": "medium"}, preserve_reasoning=True,

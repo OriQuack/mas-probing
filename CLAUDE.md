@@ -3,6 +3,7 @@
 Read [README.md](README.md) first. Current design: [docs/framework.md](docs/framework.md).
 Experiment definitions and version vocabulary: [docs/experiments.md](docs/experiments.md).
 Latest findings: [docs/reports/index.md](docs/reports/index.md).
+Write presentation reports following [docs/reports/writing-guide.ko.md](docs/reports/writing-guide.ko.md).
 
 ## Scope and code
 

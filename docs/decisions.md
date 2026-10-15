@@ -157,6 +157,155 @@ Checkpoint format 4이며 과거 checkpoint 변환은 하지 않는다. Tools v7
 수정은 보류하고 reader·시간 기준·must_finish는 변경하지 않는다. 검증은 오프라인으로 한정하며 모델의
 행동 개선을 입증하는 변경으로 보고하지 않는다.
 
+## 2026-10-13 (KST): 문제별 instruction 합의 선택 실험
+
+사용자 확정 설계: 기존 segment-routing의 41개 대상에서 naive와 문제별 생성한 개념·유사 문제,
+의미 명료화, 국소 검산 지시를 비교한다. Sonnet-high는 전체 문제문만 보고 후보를 생성하고,
+worker 3명이 후보별 3회씩 첫 묶음을 푼다. 선택은 답 9개의 최대 동치 묶음 비율이며 최고 동점은
+문제 ID와 seed 0에 따른 균등 무작위다. 교차 worker 일치율은 보조 분석이다.
+
+사용자 후속 결정에 따라 각 후보의 전체 worker probe 답 9개 최빈값에서 haiku가 뒤 node를 3회
+이어 풀며 해당 지시를 유지한다(`instruction-selection-v2`). 출발 답 동점은 worker 등록 순서와
+sample 순서에서 가장 먼저 나온 답을 사용한다. 여러 worker의 답 결합 효과도 실험에 포함된다.
+첫 틀린 요청 node에서 종료한다. 모든 후보를 실행해 naive·무작위·축별 고정·사후 최고와 비교한다.
+사후 최고는 문제마다 3회 평균 점수가 가장 높은 후보 하나다. 후보 생성 실패와 누락 실행은 제외하지 않는다.
+이는 probe 답 확보와 지시 선택의 합친 효과를 보는 탐색 실험이며 독립 지시 전이 검증은 아니다.
+
+별도 `perturbation_consistency.instruction_selection` 모듈과 `scripts/run_instruction_selection.py`로 구현한다.
+기존 orchestrator prompt 버전·실험 원본은 유지하고 새 실험 version, 후보 해시, 코드 snapshot을 기록한다.
+이번 범위는 구현·오프라인 검증·dry-run까지이며 유료 실행 상한은 실행 시 필수 지정이다.
+운영 절차는 [instruction 선택 실험](operations/instruction-selection.ko.md)을 따른다.
+
+후속 사용자 요청으로 후보 생성도 현재 Codex 세션에서 직접 수행할 수 있는 session 모드를 추가했다
+(`instruction-selection-v3`). 41문제의 첫 묶음 전문과 뒤 node 발췌문을 근거로 축별 지시 123개를
+작성·자기 검토하고, 작성 주체·입력 범위·검토 기록·추가 API 비용 0을 기록해 가져온다.
+별도 생성 모델을 호출한 결과나 독립 reviewer 검증으로 표시하지 않는다.
+이후 probe·continuation은 기존 batch transport를 우선 사용할 수 있도록 준비한다.
+
+외부 LLM 검토 피드백을 원문과 대조한 뒤 후보 r2에서 5개 지시만 수정했다: easy_1 clarify의
+끝 두 자리 명시, hard_19 local_check의 임계값 방향 선가정 제거, medium_2 clarify·local_check의
+급수 표기 점검 중립화, easy_2 local_check의 명시·정당화된 균등성 허용이다. 나머지 118개는 동일하다.
+기존 고정본은 보존하고 `outputs/experiments/2026-10-13_instruction-selection-session-r2`를 준비했다.
+medium_2 node_3의 원문 분모가 n=1에서 0이라는 표기 이슈는 별도 기록하며 원문 수정·문제 제외는 하지 않는다.
+사용자가 선택한 실행 방식은 probe batch / continuation sync이며, 이 후보 수정 단계에서는 유료 호출하지 않았다.
+
+### 2026-10-13: instruction-selection probe 수집 복구
+
+기존 로컬 수집기 종료 후 원격 19개 batch를 GET으로 확인했다. 모두 in_progress이며 실패 기록은 없다. 종료 원인은 미확인이다. 동결된 실행 코드는 변경하지 않고 별도 GET 전용 collector를 Slurm CPU 작업 6132로 실행한다. 새 요청은 제출하지 않는다. 기존 미완료 128개의 random custom_id 대응 관계는 trace에 남아 있지 않으므로 추정하지 않고 원격 원본을 보존한다. 추가 1,220개는 영구 저장된 매핑으로 수집한다. 공동 sanity review 후 rollout gate를 유지한다. 상세: `outputs/experiments/2026-10-13_instruction-selection-session-r2/probe_remote_recovery/recovery_report.ko.md`.
+
+### 2026-10-14: 매핑 유실 probe 128개 재제출
+
+사용자의 명시적 승인으로 기존 미완료 128개 슬롯(Haiku 43, Flash-Lite 85)을 동일한 동결 prompt/worker 설정으로 재제출했다. 제출 전에 deterministic custom_id 및 전체 요청 매핑을 `probe_replacements/requests.jsonl`에 저장했다. 기존 매핑 유실 batch 16개는 원본 보존 및 분석 제외, 해당 슬롯에는 replacement 응답만 사용한다. 추가 호출의 보수적 최대 예약액을 포함하면 총 $62.8568로, 기존의 넉넉한 예산 지시와 추가 실행 승인에 따라 probe cap을 $70으로 조정했다. 예산 변경 및 제외 batch 목록은 `probe_replacements/authorization.json`에 저장했다. GET 전용 collector는 새 source를 지원하도록 갱신하고 Slurm으로 재시작한다. 공동 sanity check 전 rollout 금지를 유지한다.
+
+## 2026-10-14 (KST): MoNaCo oracle 설정 문제별 instruction 합의 선택 (C40)
+
+> 현재 설계(v7)의 정본은 [운영 문서](operations/monaco-instruction-selection.ko.md)다. 이 절은 결정과 이유의 시간순
+> 기록이라 앞 문단의 설정(규칙 정규화 합의, judge `luna` effort none 등)은 뒤 문단에서 바뀌었다.
+
+사용자 결정. LongCoT `instruction-selection-v3`의 후보 4개·worker 3명×3회·최대 동치 묶음/9 선택·seed 동점 규칙을
+MoNaCo로 옮긴다(`monaco-instruction-selection-v1`). 질문과 oracle 문서만 주고 문제 전체를 한 번에 푼다.
+gold decomposition과 node 분할은 쓰지 않는다. Oracle 문서는 공개된 gpt-4o oracle 실행의 `input_documents`다.
+대상은 시간 비의존·문서 4만 글자 이하 pool 540개에서 seed 0으로 20문제다. 평가는 probe와 분리해 haiku-medium이
+후보마다 3회 새로 실행한다. 같은 표본으로 선택·평가하면 점수가 낙관적으로 나오기 때문이다. 채점은 공개 judge
+prompt 두 종류를 그대로 쓰고 judge는 비용을 낮추려고 `luna`(effort none)로 한다. 공개 채점의 두 결함
+(셈 gold 0/1의 Yes/No 표기, `###` 앞 빈 항목 계산)은 따르지 않는다. 답 동치는 숫자의 부호·소수점을 유지하고
+구두점을 일괄 삭제하지 않는 정규화 집합 비교다. 기존 LongCoT 코드는 수정하지 않고 importlib로 재사용한다.
+운영 절차는 [MoNaCo instruction 선택](operations/monaco-instruction-selection.ko.md).
+
+같은 날 사용자 지시로 seed 20문제와 겹치지 않는 2문제(805, 1250) end-to-end 점검을 sync로 실행했다. 후보는
+이 세션이 질문만 보고 작성·자기 검토했다(session 모드). 단계 누적 상한은 judge 검증 $0.2, probe $3, 실행 $1,
+judge $0.5, 호출당 $0.15였고 기록 비용은 약 $0.27이다. HTTP 429 실패 slot이 선택을 바꾼 것, 답 형식 차이로
+합의가 깎인 것, 근거 요구 instruction의 답 보류·과소 집계를 확인했다. 결과는
+[2문제 점검 보고서](reports/2026-10-14-monaco-instruction-selection-e2e.ko.md). 20문제 본 실행은 하지 않았다.
+
+점검 후 사용자 결정으로 `monaco-instruction-selection-v2`로 바꿨다. (1) 답 동치는 규칙 정규화 대신 문제당
+`luna`(effort none) 한 번 호출로 그 문제의 probe 답 36개를 묶는다. 입력은 질문과 서로 다른 `ANSWER:` 줄 원문만이며
+순서는 seed로 섞고 worker·후보는 표시하지 않는다. 규칙 정규화 합의는 진단용으로만 남긴다. (2) client 재시도 후에도
+실패한 호출(`error`)은 재실행 때 다시 하며 slot당 최대 3번이다. 기록은 덧붙이기만 하고 slot의 마지막 기록을 쓴다.
+(3) 429를 줄이려고 sync 동시 실행 기본값을 12에서 4로 낮췄다. Worker prompt와 정규화는 바꾸지 않았다.
+같은 날 사용자 지시로 묶기를 공개 답 쌍으로 검증했다(기록 비용 $0.011).
+[묶기 검증 보고서](reports/2026-10-14-monaco-answer-clustering-validation.ko.md).
+이어 사용자 결정으로 judge와 묶기 모델을 `luna-low`(effort low, 새 spec)로 바꿨다(`monaco-instruction-selection-v3`).
+v3로 seed 20문제·이전 점검과 겹치지 않는 중간 난이도 2문제(1707, 910; 공개 GPT-4o·Llama oracle 평균 점수
+0.4–0.8, 최고 0.6 이상) end-to-end 점검을 sync로 실행했다. 후보는 sonnet-high가 생성했다. 기록 비용 $0.61.
+[중간 난이도 2문제 점검 보고서](reports/2026-10-14-monaco-instruction-selection-e2e-hard.ko.md).
+점검 결과에 따라 사용자 결정으로 `monaco-instruction-selection-v4`로 바꿨다. (1) 답 파싱은 마지막 `ANSWER:`
+뒤 JSON 값을 읽는다(여러 줄 허용, 값 하나는 한 항목 목록). (2) 목록 답에서 완전 일치 합의가 2/9 동점으로
+무너져 합의를 항목 단위로 잰다. luna-low가 문제당 한 번 probe 답의 항목을 같은 대상끼리 묶고, 후보 점수는
+가장 중심인 답의 9개 slot(자신 포함) 평균 항목 F1이다. 항목 하나짜리 답에서는 최대 묶음/9와 같다.
+(3) probe 36개 답의 항목 다수결 답을 비교 정책으로 넣었다가 실행 전에 사용자 결정으로 뺐다. instruction 4개와
+worker 3종을 섞은 앙상블이라 instruction 하나의 효과를 재는 이 실험의 질문에 답하지 않는다.
+같은 날 사용자 지시로 v4 20문제 본 실행을 sync로 실행했다(기록 비용 $3.51). 단계 누적 상한은 judge 검증 $0.2(첫 시도
+$0.05는 동시 예약액보다 작아 재실행), 생성 $1.5, probe $4, 묶기 $0.2, 실행 $0.6, judge $0.3이다. 미리 정한 규칙을 바꾸지
+않았고, 행 안 목록 답 허용과 빈 답 처리는 사후 분석으로만 보고했다.
+[20문제 본 실행 보고서](reports/2026-10-14-monaco-instruction-selection.ko.md).
+본 실행에서 목록 judge prompt가 응답 전체의 답 수를 세게 되어 있어, luna-low가 실행 응답의 근거·제외 절 항목까지 셌다
+(같은 최종 답이 0.31–0.67로 갈림). 사용자 결정으로 `monaco-instruction-selection-v5`에서 judge를 `luna-high`로 바꾸고,
+judge에는 파싱한 최종 답을 `ANSWER:` 한 줄로 넘긴다(파싱 실패만 원문). 공개 프로토콜은 원문을 넘기지만 공개 답은 자유
+문장이고 우리 답은 JSON 목록이라 최종 답만으로 채점할 수 있다. 같은 실행 240회를 재채점했다
+(`scripts/rejudge_monaco_instruction_selection.py`, $0.07). 분석에 사후 최고의 무작위 섞기 기준선(`hindsight_null`)을
+더했다. 사후 최고 − naive를 0과 비교하면 선택 편향 때문에 headroom을 과대평가한다.
+사용자 요청으로 probe 답 720개도 같은 judge로 채점했다(`scripts/judge_monaco_probes.py`, 분석 전용, $0.21). gold를 읽으므로
+선택에는 쓰지 않고, 합의가 probe 정답을 못 가리키는지와 probe 정답이 실행으로 안 이어지는지를 나누는 데만 쓴다.
+사용자 결정으로 `monaco-instruction-selection-v6`에서 목록 점수의 recall을 1로 제한한다(겹친 수를 gold 값 개수 이하로).
+judge가 gold보다 많은 겹친 항목을 내면 점수가 1을 넘었다(원래 judge 실행 2건, probe 2건; 재채점 실행 0건). 기록된
+judgement는 그대로 두고 영향은 저장된 judge 응답으로 다시 계산해 보고서에 적었다.
+**v5와 v6는 하나로 합쳐 분석한다.** v6의 변경은 recall 상한이라는 작은 버그 수정이고 결과에 주는 영향은 무시할 수
+있다(재채점 실행 0건, probe 채점 결과 0.001). 따라서 v5 재채점 20문제와 v6 추가 문제를 같은 실험의 문제로 합쳐 보고,
+v5 쪽은 다시 실행하거나 재채점하지 않는다. 사용자 결정(2026-10-14).
+같은 날 사용자 지시로 v6 30문제를 추가로 전체 실행한다(sync, `2026-10-14_monaco-instruction-selection-extra30`).
+대상은 pool 540개에서 이미 쓰거나 점검한 126문제(본 실행 20, 묶기 검증 100, 점검 805·1250·486·415·910·1707)를 뺀
+414개 중 seed 1로 30개다(정렬한 목록에서 `random.Random(1).sample`). gold는 보지 않고 골랐다. 단계 누적 상한은 judge
+검증 $0.5, 생성 $2, probe $8, 묶기 $0.5, 실행 $1.5, judge $0.5, probe 채점 $0.6이다. 처음 20문제에서 고른 가설
+(항상 clarify, probe 점수로 고르기)은 이 30문제에서 따로 확인하고, 합친 50문제 결과는 별도로 보고한다.
+실행 비용 $4.48(probe 채점 포함). 두 가설 모두 재현되지 않았다(clarify −0.027, probe 점수로 고르기 +0.008).
+[추가 30문제·50문제 합산 보고서](reports/2026-10-14-monaco-instruction-selection-extra30.ko.md).
+사용자 결정(2026-10-14)으로 `monaco-instruction-selection-v7`에서 답 형식과 대상을 바꾼다. 목적은 oracle 설정의
+instruction headroom 확인이며 대상 선정에 gold 기반 정보를 써도 된다. (1) 답 형식은 JSON 목록 대신 자유 서술 뒤 마지막
+`Answers:` 줄이다(공개 실행 출력과 같은 꼴). JSON 형식은 v1의 규칙 비교 합의를 위해 넣은 것이었고, yes/no 질문에 항목
+이름(1809)·개수 질문에 목록(559, 1700)을 내게 하는 부작용이 있었다. judge에는 답 줄만 넘긴다. (2) 합의용 항목은 문제당
+`luna-low` 한 번으로 답 줄을 나누고, 항목이 줄의 그대로인 연속 구간이며 나머지가 구분자뿐인지 코드로 확인한 뒤 기존 항목
+묶기를 쓴다. 확인에 끝내 실패한 줄은 실패 slot이다. (3) 대상은 pool 540문제 전체(이전에 쓴 문제 포함)에서 공개
+GPT-4o·Llama-3.1-405B oracle 점수 평균이 0이나 1인 문제를 빼고 층화한 50문제다. 목록 5구간 × 6(gold 값 100개 초과
+제외), 단일 답은 한 실행만 맞힘·부분 점수 × 10. 앞의 50문제에서 공개 점수 평균과 haiku naive 점수의 Spearman 상관은
+0.76이었고, 후보 간 점수 차이는 0.4–0.8 구간에서 가장 컸다(0.22, 0.8 이상 0.08). (4) 후보는 수학용 세 축 대신
+문서 QA 기법에 근거한 decompose(Least-to-Most), clarify(Metacognitive Prompting, 해석만), structured(Tab-CoT)다.
+v6 후보 50문제 분석에서 local_check는 recall을 깎았고(빈 답 아닌 목록 실행 recall 0.557, naive 0.626), 생성기가
+질문만 보고 넣은 해석(282 "empire", 443 "received")이 항목을 뺐다. 지시는 질문만 본 작성·검토 subagent가 쓰고,
+사용자가 데이터셋 수준 규칙(amendment 2: 용어는 보통 뜻으로, 범주·조건 묶음으로 행을 거르는 표 열 제거, 맥락이 보여 주는
+조건은 충족)으로 50문제에 같이 고쳤다. 이 규칙은 이전 결과를 보고 정했고 적용한 세션은 층 표를 봤다(문제별 결과로 고친 것
+아님). 작성 기록은 `outputs/analysis/2026-10-14_monaco-method-instruction-candidates/`. 생성 모드(sonnet-high)는 없애고
+`import-candidates`만 둔다. 실행 횟수(3회)는 바꾸지 않았다. v6 이전 결과와 합치지 않으며, 합산 분석 스크립트는 v5·v6
+후보 이름으로 고정했다(기존 합산 결과를 그대로 재현함을 확인). 이번 범위는 구현과 오프라인 검증이며 유료 실행은 하지
+않았다.
+같은 날 사용자 지시로 v7을 sync(동시 2, 429가 나면 1, 그래도 나면 2시간 쉼)로 실행한다. batch는 쓰지 않는다. 먼저 50문제 중
+459(목록)·1018(단일) 2문제로 전 단계를 돌려 확인하고, 통과하면 50문제 전 단계를 돌린다. 첫 sanity 디렉터리
+(`2026-10-14_monaco-instruction-selection-v7-sanity`, judge 검증 2·probe 10회 기록)는 재시도 규칙을 바꾸려고 멈췄고 그대로
+둔다. 사용자 결정으로 재시도 규칙을 바꿨다: probe는 오류·길이 초과·답 줄 없음을 한 번 다시 하고, judge·나누기·묶기는 실패한
+호출과 형식이 틀린 응답을 3번까지 다시 한다(4번 시도). 실행은 오류만 다시 한다. 단계 누적 상한(본 실행)은 judge 검증 $0.5,
+probe $25, 나누기 $2, 묶기 $1, 실행 $4, judge $1.5이고 호출당 $0.05–0.15다.
+결과(2026-10-14 실행 완료, $9.54): 합의 선택 0.657, naive 0.655(+0.002, CI −0.030–+0.041). 사후 최고 +0.054는 잡음 기준선 +0.047과 구분되지 않는다. 목록 문제에서 합의율은 점수를 예측하지 못했고, 손실 대부분은 목록 수집·수 세기와 문서 밖 gold였다. [v7 보고서](reports/2026-10-15-monaco-instruction-selection-v7.ko.md).
+
+### 2026-10-14: probe collector Slurm checkpoint 및 최대 5회 재큐잉
+
+사용자 요청으로 사용자 서비스를 중지하고 Slurm 작업 6142로 수집을 전환했다. 6시간 allocation 종료 120초 전 B:USR1을 받아 collector에 USR1을 전달하고 checkpoint 저장·정지 후 scontrol requeue를 실행한다. SLURM_RESTART_COUNT < 5인 경우만 재큐잉한다(초기 실행 + 최대 5회). checkpoint는 batch ID, 영구 request map 경로, 수집 건수 및 재시작 횟수를 저장한다. 재실행은 기존 journal을 읽고 GET으로만 수집하며 이미 저장된 슬롯을 건너뛴다. GET timeout을 연결 5초/읽기 20초로 제한해 신호 후 정지 시간을 확보했다. 오프라인 신호/checkpoint 테스트와 별도 모델 호출 없는 Slurm 재큐잉 권한 테스트를 수행했다. 공동 sanity review 전 rollout gate는 유지한다.
+
+### 2026-10-14: Gemini 서버 실패 407개 및 길이 제한 24개 일괄 재시도
+
+사용자 명시 요청으로 flash-lite-high 431개를 256/175개 두 batch로 한 번씩 재제출했다. 기존 saved body와 provider pin을 그대로 재사용하여 토큰 상한 32768과 reasoning high도 유지한다. 길이 제한도 재시도하므로 최초 결과와 재시도 결과를 구분해 보고한다. 기존 results.jsonl과 trace는 덮어쓰지 않으며 retry 요청/결과는 probe_retry_431/에 보존한다. 분석용 effective_results.jsonl은 재시도 대상 슬롯의 기존 실패를 제외하고 재시도 결과를 성공 여부와 무관하게 채택한다. 재시도 완료 전에는 해당 슬롯을 미완료로 둔다. select/rollout은 기존 results.jsonl을 직접 읽으면 안 되고 공동 sanity review에서 effective_results 입력 연결을 확인한 후 진행해야 한다. 추가 최악 예약액은 $35.6011, 모든 기존 요청과 재시도를 포함한 보수적 최대 예약액은 $98.4579로, 추가 실행 승인에 따라 probe cap을 $110으로 기록했다. 기존 실패 batch의 실제 과금 여부는 여전히 미확인이다. Slurm 작업 6142를 checkpoint 후 재큐잉해 새 수집 코드를 로드한다. GET-only 및 최대 5회 재큐잉 제한을 유지한다.
+
+### 2026-10-14: Haiku 재제출 43개 즉시 sync 및 406개 조건부 예약
+
+사용자 승인으로 Haiku 재제출 43개는 기존 batch를 분석에서 무시하고 동일 prompt/model 설정의 sync로 전환한다(Slurm 6155, 동시 4개). 나머지 406개는 오늘 21:25 KST 이후 원격 batch 상태를 확인한다(Slurm 6156). 그때도 처리 중이면 종료 상태까지 조회만 반복하며, batch status expired 또는 completed의 개별 error.type=expired인 슬롯만 sync로 실행한다. 성공한 batch 응답과 다른 종류 오류는 재실행하지 않는다. sync 활성화 슬롯의 분석에는 sync 결과만 사용하며 원래 batch/trace는 보존한다. 추가 sync 예산 상한은 두 작업 합계 $11(43개 $2, 406개 $9)로, 이전 보수적 예약 상한 $98.4579와 합쳐 기존 probe $110 cap 안에 둔다. sync client 기본 transient 재시도 2회와 기존 validation을 사용한다. 이미 시작됐지만 결과가 없는 sync 슬롯은 재실행하지 않고 별도 검토한다. 원래 결과·retry journal을 보존하며 effective_results.jsonl은 공용 파일 lock으로 재생성한다. frozen 실험 코드는 변경하지 않는다. 예약·개별 만료 판별·동일 본문·중복 방지·sync 우선 반영은 오프라인 검증했다. 공동 sanity review 전 rollout gate를 유지한다.
+
+### 2026-10-14: probe 실행 sanity 점검 및 90개 단일 재시도
+
+사용자가 sanity check와 문제 슬롯 재시도를 명시 승인했다. effective 1476개 전체에서 누락/중복/예상 외 슬롯, 동결 해시, 실제 prompt-message 대응, worker 설정/슬롯 대응, 원본 출력 재파싱과 164개 묶음의 9표/support 일치를 검사했으며 구조 오류는 0건이다. endpoint 비교 경고 64건을 정답 없이 검토했다. 부연설명/표기/기호치환 차이는 재실행하지 않고 유지한다. 요청한 node의 encoded answer 대신 중간 기하 비율을 node 줄에 쓴 2건만 형식 문제로 포함했다. length 87개, no_answer 1개와 합계 90개(Haiku36, Gemini54)를 동결된 동일 body로 1회 sync 재시도한다(Slurm6159, 동시4, round budget$9). 최초 실패·원본 trace·effective snapshot은 보존하고 새 시도는 성공 여부와 무관하게 최상위 유효 결과로 반영한다. 이전 보수적 예약+sync cap+이번 cap 합계가 $120 이내이므로 추가 승인에 따른 probe 총상한을 $120으로 기록한다. 기존 batch 수집 작업6142는 필요한 probe 수집 완료로 종료했다. 재시도 후 post_retry_sanity를 자동 저장하며 공동 검토 전 continuation gate를 유지한다. 상세: probe_sanity_review/baseline_audit.json 및 probe_sanity_retry/authorization.json.
+
+### 2026-10-15: 최종 probe snapshot에서 sync continuation 시작
+
+최종 sanity 보고를 사용자와 확인한 뒤 기존 실행 승인에 따라 continuation을 시작했다(Slurm6162, Haiku sync, 동시4, 총492 rollout, 단계$60/rollout$3). 길이 제한40개는 실패 표로 유지하며 후보별 분모9를 바꾸지 않는다. 원래 runner는 results.jsonl을 읽으므로 raw 실패 기록과 혼동하지 않도록 새 파생 실험 `2026-10-15_instruction-selection-session-r2-continuation`에 effective_results를 불변 results.jsonl snapshot으로 복사하고 그 해시도 manifest frozen_hashes에 추가했다. 원래 기록은 수정하지 않았다. 기존 동결 구현으로 41개 선택과 164개 후보 시작값을 계산하고 최종1476개로 전수 재계산하여 일치를 검증했다. 각 후보의 전체9개 최빈값에서 시작해 같은 지시를 유지하며 첫 요청 node 오답에서 종료한다. 원래 probe 비용과 재시도 이력은 부모 실험에 남아 있으며 파생 실험 분석에서 별도 합산해야 한다. Slurm 종료120초 전 완료 결과와 trace 위치를 checkpoint한 뒤 최대5회 재큐잉한다. 미완료 rollout은 기존 runner 정책대로 처음부터 재실행하고 이전 비용노출도 예산에 포함한다.
+
 ## 2026-10-15 (KST): worker 대화 유지, probe는 이해·plan만, refiner 제거 (C41, v20/r23/e7)
 
 사용자 결정. GAIA non-web 비교(2026-10-13 보고서)에서 공식 점수 차이는 adaptive 답에 붙은 단서에서 나왔다.
@@ -182,6 +331,10 @@ v21: sanity 6 run(`2026-10-15_gaia-nonweb-conversation-sanity`)에서 orchestrat
 질문을 덧붙이지 않는다. Direct 실행 지시와 evaluator 기준은 바꾸지 않는다. Checkpoint format 5는 worker별 대화·toolbox
 상태를 저장하고 fingerprint에 포함한다. 과거 checkpoint는 변환하지 않는다. 오프라인 검사는 계약 동작만 확인한다.
 
+
+### 2026-10-15: continuation 종료 후 무인 monitor 및 간단 분석
+
+사용자가 부재 중에도 continuation 종료 후 간단 분석을 진행하도록 명시 승인했다. 읽기 전용 Slurm monitor6164를 60초 간격으로 구성했고 최대5회 재큐잉한다. 분석6165는 continuation6162의 afterany dependency로 등록했다. 종료 후 동결 해시/선택 provenance/시작값/누락·중복을 확인하고 기존 고정 분석 함수를 실행한다. 분석은 문제 단위 가중치와 paired bootstrap CI를 유지하며, 결과·node순서 plot 및 간단 한국어 보고서를 analysis/brief.ko.md에 저장한다. 작업 실패로 미완료이면 보고서를 잠정으로 명시한다. 부모 probe 비용에서 batch journal과 terminal archive를 batch ID로 중복 제거하고 sync 비용을 별도로 합산한다; 미제공 청구는 0이 아닌 미확인으로 보고한다. Monitor/분석은 추가 모델 호출을 하지 않는다. 오프라인으로 결과 해석 분기·미완료 표시·비용 중복 방지·미확인 과금 보존을 검증했다.
 
 Haiku 장문 요금 예약(C41 보완, 2026-10-15): 대화 유지 뒤 첫 72-run 배치(`2026-10-15_gaia-nonweb-conversation-comparison`)에서
 haiku 요청이 116,816 입력 토큰에 도달했고, 이 크기에서는 입력·출력 모두 5배 단가가 청구됐다(92,588 토큰까지는 기본 단가).
