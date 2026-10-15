@@ -10,8 +10,11 @@ Per request:
 - a `started` record before sending, then `ok` or `error` with latency, usage, cost, provider, generation id;
 - the response is validated: it must name the pinned provider and report its cost, and the cost must be within
   the reservation; otherwise `InfraError` (the response is still recorded: it was paid for);
-- transient failures (timeout, connection, 429, 5xx) are retried up to `retries` times with backoff, each attempt
-  its own record and budget unit; HTTP 401/402/404 are `InfraError` (key, credits, no matching endpoint).
+- transient failures (timeout, connection, 5xx) are retried up to `retries` times with backoff, each attempt
+  its own record and budget unit, with unknown billing; HTTP 401/402/404 are `InfraError` (key, credits, no matching
+  endpoint);
+- HTTP 429 (rate limit) is not billed by OpenRouter: it settles at $0 (not unknown) and is retried up to
+  `RATE_LIMIT_RETRIES` times with a longer backoff, separately from the transient retries.
 
 The transport is injectable (`transport(body, timeout) -> response JSON`), so tests run the same code offline.
 """
@@ -31,6 +34,8 @@ from minpilot.runtime.trace import InfraError, Trace
 
 BASE_URL = "https://openrouter.ai/api/v1"
 RETRY_BACKOFF_S = (5.0, 20.0)
+RATE_LIMIT_BACKOFF_S = (15.0, 30.0, 60.0, 120.0, 240.0)
+RATE_LIMIT_RETRIES = len(RATE_LIMIT_BACKOFF_S)
 
 Transport = Callable[[dict, float | None], dict]
 
@@ -43,6 +48,10 @@ class HTTPError(Exception):
 
 class TransientError(Exception):
     pass
+
+
+class RateLimited(TransientError):
+    """HTTP 429: the provider refused the request before running it (not billed)."""
 
 
 @dataclass
@@ -87,7 +96,9 @@ def http_transport(api_key: str, base_url: str = BASE_URL) -> Transport:
                               headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"})
         except (requests.Timeout, requests.ConnectionError) as e:
             raise TransientError(repr(e)) from e
-        if r.status_code == 429 or r.status_code >= 500:
+        if r.status_code == 429:
+            raise RateLimited(f"HTTP 429: {r.text[:300]}")
+        if r.status_code >= 500:
             raise TransientError(f"HTTP {r.status_code}: {r.text[:300]}")
         if r.status_code >= 400:
             raise HTTPError(r.status_code, r.text)
@@ -95,7 +106,9 @@ def http_transport(api_key: str, base_url: str = BASE_URL) -> Transport:
         if "error" in data and not data.get("choices"):
             err = data["error"] or {}
             code = int(err.get("code") or 0)
-            if code == 429 or code >= 500:
+            if code == 429:
+                raise RateLimited(f"error 429: {err.get('message')}")
+            if code >= 500:
                 raise TransientError(f"error {code}: {err.get('message')}")
             raise HTTPError(code or 400, json.dumps(err)[:300])
         return data
@@ -144,7 +157,8 @@ class LLMClient:
         body = self.build_body(messages, tools, response_format, tool_choice)
         reserve = reserve_usd(self.spec, body)
         hashes = self.trace.message_hashes(messages)
-        for attempt in range(self.retries + 1):
+        attempt = transient = limited = 0
+        while True:
             remaining = self.trace.before_llm(reserve)
             timeout = self.timeout_s if remaining is None else max(1.0, min(self.timeout_s, remaining))
             call_id = self.trace.next_id()
@@ -155,14 +169,25 @@ class LLMClient:
                     "effort": (self.spec.reasoning or {}).get("effort")}
             self.trace.llm({**base, "status": "started"})
             t0 = time.monotonic()
+            attempt += 1
             try:
                 data = self.transport(body, timeout)
+            except RateLimited as e:
+                self.trace.settle_llm(reserve, 0.0)  # refused before running: not billed
+                self.trace.llm({**base, "status": "error", "error": str(e)[:500], "rate_limited": True,
+                                "latency_s": round(time.monotonic() - t0, 3)})
+                if limited < RATE_LIMIT_RETRIES:
+                    self.sleep(RATE_LIMIT_BACKOFF_S[limited])
+                    limited += 1
+                    continue
+                raise
             except TransientError as e:
                 self.trace.settle_llm(reserve, 0.0, unknown=True)  # billing unknown: counted, recorded as $0
                 self.trace.llm({**base, "status": "error", "error": str(e)[:500], "transient": True,
                                 "latency_s": round(time.monotonic() - t0, 3)})
-                if attempt < self.retries:
-                    self.sleep(RETRY_BACKOFF_S[min(attempt, len(RETRY_BACKOFF_S) - 1)])
+                if transient < self.retries:
+                    self.sleep(RETRY_BACKOFF_S[min(transient, len(RETRY_BACKOFF_S) - 1)])
+                    transient += 1
                     continue
                 raise
             except HTTPError as e:

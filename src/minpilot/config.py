@@ -6,7 +6,7 @@ from pathlib import Path
 
 import yaml
 
-from minpilot.prompts import REFINER_PROMPTS_VERSION
+from minpilot.prompts import PROBE_PROMPTS_VERSION
 from minpilot.runtime.trace import Limits
 from minpilot.tools.toolbox import TOOL_NAMES
 
@@ -45,11 +45,11 @@ class PoolConfig:
 @dataclass(frozen=True)
 class ConditionConfig:
     name: str = "direct_execution"
-    prompts: str = REFINER_PROMPTS_VERSION
+    prompts: str = PROBE_PROMPTS_VERSION
     budget: Limits = field(default_factory=lambda: Limits(max_llm_calls=60, max_cost_usd=1.0))
 
     def __post_init__(self):
-        if self.name not in CONDITIONS or self.prompts != REFINER_PROMPTS_VERSION:
+        if self.name not in CONDITIONS or self.prompts != PROBE_PROMPTS_VERSION:
             raise ValueError("unsupported condition/prompt version; use historical code snapshot")
 
     def to_dict(self):
@@ -61,8 +61,6 @@ class RunConfig:
     pool: PoolConfig
     condition: ConditionConfig = field(default_factory=ConditionConfig)
     orchestrator_model: str = "luna-high"
-    evaluator_model: str = "luna-high"
-    refiner_model: str = "luna-high"
     max_delegations: int = 12
     budget: Limits = field(default_factory=lambda: Limits(max_llm_calls=400, max_tool_calls=400,
                                                           max_cost_usd=5.0, max_wall_s=3 * 3600))
@@ -70,8 +68,8 @@ class RunConfig:
     label: str = ""
 
     def __post_init__(self):
-        if {self.orchestrator_model, self.evaluator_model, self.refiner_model} != {"luna-high"}:
-            raise ValueError("orchestrator, evaluator and refiner must use luna-high")
+        if self.orchestrator_model != "luna-high":
+            raise ValueError("the orchestrator must use luna-high")
         if self.max_delegations < 0:
             raise ValueError("max_delegations must be nonnegative")
 

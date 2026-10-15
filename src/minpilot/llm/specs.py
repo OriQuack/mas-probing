@@ -36,9 +36,13 @@ class ModelSpec:
     preserve_reasoning: bool = False  # keep `reasoning_details` on assistant messages (Gemini 3 needs them back)
     tools_allowed: bool = True
     # Not part of the identity (they do not change requests): list prices (USD per token) for the cost
-    # reservation, and how the model counts image tokens.
+    # reservation, and how the model counts image tokens. `long_context_tokens`: above this input bound the
+    # reservation uses the long-context prices (`*_long`) for the whole request.
     price_prompt: float = 0.0
     price_completion: float = 0.0
+    long_context_tokens: int | None = None
+    price_prompt_long: float = 0.0
+    price_completion_long: float = 0.0
     image_tokens: str = "fixed:2000"
     note: str = ""
 
@@ -48,7 +52,8 @@ class ModelSpec:
 
     def identity(self) -> dict:
         d = asdict(self)
-        for k in ("note", "price_prompt", "price_completion", "image_tokens"):
+        for k in ("note", "price_prompt", "price_completion", "image_tokens", "long_context_tokens",
+                  "price_prompt_long", "price_completion_long"):
             d.pop(k)
         return {"platform": "openrouter", **d, "routing": self.routing()}
 
@@ -56,14 +61,22 @@ class ModelSpec:
 MAX_TOKENS = 8192
 MAX_TOKENS_REASONING = 32768
 
+# Haiku 5.5 is billed at 5x per token above a long-context threshold (observed 2026-10-15: 92,588 prompt tokens
+# at base price, 116,816 at 5x for input and output). The threshold lies between the two. The input bound counts
+# bytes, about 3 per token; switching on bytes alone would reserve the long price for most mid-sized
+# conversations. The switch therefore estimates tokens as bytes / LONG_CONTEXT_BYTES_PER_TOKEN, below the
+# smallest ratio observed in 470 Haiku calls (1.86). The long-price reservation itself uses the byte bound.
+LONG_CONTEXT_BYTES_PER_TOKEN = 1.8
+HAIKU_LONG_CONTEXT = dict(long_context_tokens=92_000, price_prompt_long=5e-7, price_completion_long=2.5e-6)
+
 SPECS: dict[str, ModelSpec] = {
     "luna-high": ModelSpec(
         key="luna-high", model="openai/gpt-6-luna-20260922", provider="openai", max_tokens=MAX_TOKENS_REASONING,
         reasoning={"effort": "high"}, preserve_reasoning=True, price_prompt=1e-7, price_completion=5e-7,
         image_tokens="patch:1.2",
-        note="GPT-6 Luna at effort high: every role since 2026-10-09 (orchestrator, refiner, workers, page reader; "
-             "decision M1). Tools allowed through OpenRouter (see tools_allowed above). Workers re-send the "
-             "encrypted reasoning of their earlier turns; the orchestrator keeps only its action JSON."),
+        note="GPT-6 Luna at effort high: every role since 2026-10-09 (orchestrator, workers, page reader; "
+             "decision M1). Tools allowed through OpenRouter (see tools_allowed above). Workers and the "
+             "orchestrator re-send the encrypted reasoning of their earlier turns."),
     "luna": ModelSpec(
         key="luna", model="openai/gpt-6-luna-20260922", provider="openai", max_tokens=MAX_TOKENS,
         reasoning={"effort": "none"}, preserve_reasoning=True, price_prompt=1e-7, price_completion=5e-7,
@@ -79,7 +92,7 @@ SPECS: dict[str, ModelSpec] = {
     "haiku-high": ModelSpec(
         key="haiku-high", model="anthropic/claude-haiku-5.5-20261007", provider="anthropic",
         max_tokens=MAX_TOKENS_REASONING, reasoning={"effort": "high"}, preserve_reasoning=True,
-        price_prompt=1e-7, price_completion=5e-7, image_tokens="fixed:10000",
+        price_prompt=1e-7, price_completion=5e-7, image_tokens="fixed:10000", **HAIKU_LONG_CONTEXT,
         note="Claude Haiku 5.5 at effort high: a registered executor/probe candidate of the `multi` pool (heterogeneous probes, "
              "decision C18). Thinking blocks are re-sent in tool loops (reasoning_details). "
              "No sampling parameters (not supported). Image tokens: a generous fixed bound for the reservation."),
@@ -96,7 +109,7 @@ SPECS: dict[str, ModelSpec] = {
     "haiku-medium": ModelSpec(
         key="haiku-medium", model="anthropic/claude-haiku-5.5-20261007", provider="anthropic",
         max_tokens=MAX_TOKENS_REASONING, reasoning={"effort": "medium"}, preserve_reasoning=True,
-        price_prompt=1e-7, price_completion=5e-7, image_tokens="fixed:10000",
+        price_prompt=1e-7, price_completion=5e-7, image_tokens="fixed:10000", **HAIKU_LONG_CONTEXT,
         note="Claude Haiku 5.5 at effort medium; otherwise as haiku-high."),
     "sonnet-medium": ModelSpec(
         key="sonnet-medium", model="anthropic/claude-sonnet-5.5", provider="anthropic", max_tokens=MAX_TOKENS_REASONING,
@@ -196,4 +209,7 @@ def input_token_bound(body: dict, image_scheme: str) -> int:
 
 
 def reserve_usd(spec: ModelSpec, body: dict) -> float:
-    return input_token_bound(body, spec.image_tokens) * spec.price_prompt + spec.max_tokens * spec.price_completion
+    tokens = input_token_bound(body, spec.image_tokens)
+    if spec.long_context_tokens is not None and tokens / LONG_CONTEXT_BYTES_PER_TOKEN > spec.long_context_tokens:
+        return tokens * spec.price_prompt_long + spec.max_tokens * spec.price_completion_long
+    return tokens * spec.price_prompt + spec.max_tokens * spec.price_completion

@@ -4,9 +4,6 @@ from __future__ import annotations
 from .tools import TOOL_LINES
 
 
-CONTEXT_ADDITIONS_HEAD = "Results of checks run before this delegation:"
-
-
 TOOL_LIMIT_REACHED = ("You have reached your tool-call limit for this request. Do not call tools any more; write "
                       "your report now with what you have, and say what is unfinished.")
 
@@ -21,7 +18,7 @@ def worker_system(system_prompt: str, tools: tuple[str, ...]) -> str:
 You carry out work delegated by an orchestrator. Complete the assigned work and report the result with the evidence needed to assess it.
 
 ## Carry out the assignment
-Each request gives the original task, selected context from earlier work, and your instruction for this subtask. Earlier controller discussions and probe conversations are not included. Work within the assigned scope and preserve the original task's target and conditions. Choose your execution methods according to what you find.
+Your first request gives the original task, selected context from earlier work, and your instruction for this assignment. You keep this conversation and your workspace for the whole run: a later request gives newly selected context and the next instruction, and your earlier requests, reports, tool results and created files remain available to you. Earlier requests may include probe requests, in which you explained how you understood an assignment and how you would carry it out; where your understanding or plan differed from what the orchestrator meant, a later instruction says what it meant, and the instruction takes precedence. The orchestrator's conversation and other workers' conversations and files are not included; other workers' findings reach you only through context. Work within the assigned scope and preserve the original task's target and conditions. Choose your execution methods according to what you find.
 
 Report conflicts with the original task or limitations of your tools instead of silently changing the assigned work. Briefly report findings outside your scope when they affect the answer or later work.
 
@@ -33,14 +30,7 @@ Your tools:
 Files are referenced by paths relative to the working directory; task attachments are under attachments/.
 
 ## Report the findings
-Your final message is saved as a report. Begin with `Title: <short descriptive title>` on the first line. The title appears in the artifact catalog so later decisions can find the report; name the result or work checked and its scope.
-
-Connect results to supporting evidence and distinguish what you found from what you assumed or could not verify. Use these four sections; if a section has nothing to report, say so briefly.
-
-Result: the result, or useful partial findings.
-Evidence: what supports each important result (URLs, files, computations, created file paths). For a calculation, report the inputs and formula; for an aggregation, also state the population and inclusion/exclusion criteria used.
-Interpretation: the interpretations and assumptions you applied where the task or instruction left room for judgment.
-Unfinished: claims not verified, remaining work, failures, blockers and conflicts with the original task.
+Your final message is your report to the orchestrator. Report the result and the evidence for it: URLs, files, computations and created file paths; for a calculation, its inputs and formula; for an aggregation, the population and the inclusion and exclusion criteria. Say what you could not verify or finish and what blocked it.
 
 For failed searches, record queries, sources, what you read, why the attempt failed and any clue for a different approach. Distinguish access blocking from a mismatch found after reading. A failed attempt may still produce useful partial evidence; report it without treating the unresolved claim as false."""
 
@@ -57,22 +47,13 @@ def context_block(context: str) -> str:
 """
 
 
-def context_with_additions(context: str, additions: str) -> str:
-    """The context sent to the executor: the orchestrator's context unchanged, then the review's additions under
-    their own heading (F21). Without additions, the context as given."""
-    if not (additions or "").strip():
-        return context
-    base = (context or "").strip()
-    return (f"{base}\n\n" if base else "") + f"{CONTEXT_ADDITIONS_HEAD}\n{additions.strip()}"
-
-
 def worker_request(original_task: str, instruction: str, *, context: str = "", kind: str = "task",
                    tool_limit: int | None = None) -> str:
-    """kind "task": delegated work (execution, pre-execution checks): the request states the tool-call limit of
-    this call and that the worker must not end on a question. kind "probe": review questions, whose instruction
-    states its own rules. `context`: the orchestrator's context for the delegation, between the
-    task and the instruction."""
-    text = f"""Original task:
+    """The first request of a worker's conversation. kind "task": delegated work (execution): the request states
+    the tool-call limit of this call and that the worker must not end on a question. kind "probe": the probe
+    questions, whose instruction states its own rules. `context`: the orchestrator's context for the delegation,
+    between the task and the instruction."""
+    return _request(f"""Original task:
 <<<
 {original_task}
 >>>
@@ -80,7 +61,20 @@ def worker_request(original_task: str, instruction: str, *, context: str = "", k
 {context_block(context)}Your instruction:
 <<<
 {instruction}
->>>"""
+>>>""", kind, tool_limit)
+
+
+def continuation_request(instruction: str, *, context: str = "", kind: str = "task",
+                         tool_limit: int | None = None) -> str:
+    """A later request in the same conversation: the original task is in the first request, so only the new
+    context and instruction follow."""
+    return _request(f"""{context_block(context)}Your instruction:
+<<<
+{instruction}
+>>>""", kind, tool_limit)
+
+
+def _request(text: str, kind: str, tool_limit: int | None) -> str:
     if kind == "probe":
         return text
     if tool_limit is not None:

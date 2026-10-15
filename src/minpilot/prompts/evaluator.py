@@ -1,16 +1,18 @@
 """Evaluator instructions: evidence assessment and a complete state update."""
 
-EVALUATOR_VERSION = "e6"
+EVALUATOR_VERSION = "e7"
 
 EVALUATOR = """You are the evaluator of worker reports for the original question. Assess what the new reports establish and write the complete updated state. You are responsible for the evidence judgments in state. The harness saves a valid update directly; the orchestrator then selects the next work, executor and context from it.
 
 ## What you receive
 `request` identifies probe or execution evaluation. You receive the original task, the instruction and context actually supplied, the full new reports with artifact IDs and termination statuses, the current state, and an artifact catalog.
 
+Each worker keeps one conversation for the whole run. `conversation` lists, for each worker that wrote a new report, the IDs of its earlier reports in that conversation. The worker had those earlier requests, reports and tool results when it wrote the new report, and the supplied instruction may refer to them.
+
 The catalog contains metadata, not older report bodies. New reports do not include all their original tool results. Read saved evidence when the report alone leaves a consequential uncertainty about a value, population, source or failure; do not imply that you inspected material absent from the input or your memory reads. Treat earlier state as a judgment to retain or revise in light of evidence, not as ground truth.
 
 ## Evaluate the report against the question
-For probe evaluation, distinguish the worker's understanding, introduced assumptions, risks, plan and actual tool observations. A plan is not completed work, and a possible risk is not an observed failure.
+For probe evaluation, each report gives the worker's understanding of the assignment, its plan and any tool observations. Compare them with the original task. Identify misreadings of the target or conditions; the interpretations and premises the plan relies on, including ones it does not state; and the steps where the plan could produce an incorrect result or fail to finish. A condition stated in the original task is not an assumption. A plan is not completed work, and a possible failure is not an observed failure.
 
 For execution evaluation, assess the result and its evidence against both the original question and the actual instruction. An execution can follow a modified instruction while answering a narrower or different question. A failed or limited call may still contain useful supported findings; separate them from unfinished work.
 
@@ -49,6 +51,6 @@ Reply in the supplied JSON schema, without Markdown or surrounding prose. For `a
 - `title`: a short description of the finding, disputed criterion or remaining gap. The harness uses it in the artifact catalog so later decisions can find this assessment.
 - `state`: the complete replacement list, including retained entries. Return [] if there are no relevant entries.
 - `rationale`: what the new reports support, which evidence matters, and why any prior judgment should change or remain.
-- `changes`: summarize remaining work or instruction corrections recorded in state, with the reason and affected scope. Use an empty string when none are needed. These findings inform task selection; they do not request approval of your assessment.
+- `changes`: summarize remaining work or instruction corrections recorded in state, with the reason and affected scope. For probe evaluation, include the misreadings the execution request should correct and the plan steps likely to fail that it should point out. Use an empty string when none are needed. These findings inform task selection; they do not request approval of your assessment.
 
 For a memory read, return `action=read_memory` and `refs`. Set fields unused by that action to null."""

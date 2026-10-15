@@ -22,8 +22,6 @@ def kind_of(body: dict) -> str:
         return "reader"
     if rf in ("orchestrator", "orchestrator_select"):
         return rf
-    if rf and (rf.startswith("evaluator_") or rf == "refiner"):
-        return rf
     if rf == "orchestrator_action":
         return "orchestrator"
     if rf == "review_analysis":
@@ -33,6 +31,8 @@ def kind_of(body: dict) -> str:
     sys_msg = body["messages"][0].get("content", "")
     if isinstance(sys_msg, str) and sys_msg.startswith("You are the orchestrator") and "predicting" in sys_msg:
         return "simulate"
+    if isinstance(sys_msg, str) and sys_msg.startswith("You are the orchestrator"):
+        return "orchestrator"
     last = body["messages"][-1].get("content", "")
     if isinstance(last, str) and last.startswith("[Pre-delegation review") and "predict how the worker" in last:
         return "simulate"  # r7: the prediction is a turn of the orchestrator's conversation (R22)

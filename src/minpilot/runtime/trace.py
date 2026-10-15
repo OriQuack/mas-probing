@@ -5,14 +5,14 @@ Records (JSONL files in the run dir):
                      below, usage, cost, provider and latency. Request messages are stored by hash.
 - `messages.jsonl`   each distinct message once (`{"h", "m"}`).
 - `tool_calls.jsonl` one record per tool call (`started`, then the result record), with the stage tags.
-- `events.jsonl`     orchestrator actions, delegations, refinement steps, checkpoints, errors.
+- `events.jsonl`     orchestrator actions, delegations, probe rounds, checkpoints, errors.
 
-Stage tags include orchestrator, probe, evaluator.probe, refiner, execution and
- evaluator.execution. Every record inherits stage/delegation/worker tags. Historical records retain their
-refine.* stages. Unknown paid-request charges are tracked separately from confirmed tool cost.
+Stage tags include orchestrator, probe, execution and reader. Every record inherits stage/delegation/worker
+tags. Historical records retain their evaluator.* and refine.* stages. Unknown paid-request charges are tracked
+separately from confirmed tool cost.
 
-Budgets. A stack of `BudgetScope`s: the run's scope is always active; refinement pushes its own scope, so a
-refinement is capped on its own and still counts toward the run. Every model request reserves its worst-case
+Budgets. A stack of `BudgetScope`s: the run's scope is always active; a probe round pushes its own scope, so a
+probe round is capped on its own and still counts toward the run. Every model request reserves its worst-case
 cost first (`before_llm`), every tool call checks first (`before_tool`), and the request timeout is capped at
 the remaining wall time. Exceeding any active scope raises `BudgetExceeded(scope_name)`.
 

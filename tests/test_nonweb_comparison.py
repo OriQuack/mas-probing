@@ -2,7 +2,7 @@ import importlib.util
 from pathlib import Path
 import json
 from fakes import ScriptedLLM, fake_web
-from test_harness import action, evaluation
+from test_harness import action
 from minpilot.config import RunConfig, load_condition
 from minpilot.harness import Run
 from minpilot.runtime.trace import Limits
@@ -16,13 +16,9 @@ def test_nonweb_pool_and_both_runtime_paths(tmp_path,task):
     assert set(pool.workers)=={'gen_luna','gen_haiku'}
     assert all(w.tools==('read_file','view_image','run_python') for w in pool.workers.values())
     for arm in nonweb.ARMS:
-        script={'orchestrator':[action(),action('finish')], 'worker':['Title: Count\n2'],
-                'evaluator_execution':[evaluation()]}
+        script={'orchestrator':[action(),action('finish')], 'worker':['Count: 2']}
         if arm=='adaptive_probe':
-            script={'orchestrator':[action('probe',wid=None),action(instruction=None,instruction_id='a00004'),action('finish')],
-                    'worker':['Title: Probe\nPlan']*2+['Title: Count\n2'], 'evaluator_probe':[evaluation()],
-                    'refiner':[{'action':'refine','can_refine':True,'instruction':'Count unique orders.',
-                                'context_notes':'','rationale':'Keep scope'}], 'evaluator_execution':[evaluation()]}
+            script={'orchestrator':[action('probe'),action(),action('finish')], 'worker':['plan: read']*2+['Count: 2']}
         llm=ScriptedLLM(script)
         cfg=RunConfig(pool,load_condition(arm),budget=Limits(max_cost_usd=.20))
         run=Run(cfg,task,tmp_path/arm,transport=llm,web=fake_web(tmp_path))
@@ -30,3 +26,8 @@ def test_nonweb_pool_and_both_runtime_paths(tmp_path,task):
         for body in llm.by_kind['worker']:
             names={t['function']['name'] for t in body.get('tools',[])}
             assert names==set(nonweb.LOCAL_TOOLS)
+
+
+def test_tasks_needing_web_facts_are_excluded_from_new_selections():
+    assert nonweb.EXCLUDED_TASKS == {'305ac316-eef6-4446-960a-92d80d542f82', '5a0c1adf-205e-4841-a666-7c3ef95def9d'}
+

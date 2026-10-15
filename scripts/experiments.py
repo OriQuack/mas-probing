@@ -36,7 +36,7 @@ def main() -> int:
         if args.command == "list":
             print(f"{path.parent.name}: {len(find_run_records(path.parent))} runs — {manifest['purpose']}")
             print(f"  execution prompts: {manifest.get('execution_prompt_versions', '?')}; "
-                  f"refiner prompts: {manifest.get('refiner_prompt_versions', '?')}")
+                  f"probe prompts: {manifest.get('probe_prompt_versions', manifest.get('refiner_prompt_versions', '?'))}")
         else:
             inventory = path.parent / "checksums.json"
             if not inventory.exists():

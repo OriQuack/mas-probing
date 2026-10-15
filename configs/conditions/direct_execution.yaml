@@ -1,5 +1,5 @@
 name: direct_execution
-prompts: r22
+prompts: r24
 budget:
   max_llm_calls: 60
   max_cost_usd: 1.0

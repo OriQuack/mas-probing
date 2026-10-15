@@ -97,27 +97,25 @@ def test_reservations_are_atomic_and_invalid_restore_rejected():
 
 def test_harness_forks_and_checkpoint_keep_paid_headroom(tmp_path, task, monkeypatch):
     from fakes import ScriptedLLM
-    from test_harness import action, evaluation
+    from test_harness import action
     from minpilot.config import RunConfig, ConditionConfig, load_pool
     from minpilot.harness import Run
     web, sent = web_with_http(tmp_path, monkeypatch)
     web.paid_search.billed = 99  # prefix already spent before this delegation checkpoint
     def script():
-        return {"orchestrator": [action("probe", wid=None), action("execute", wid="gen_haiku"), action("finish")],
-                "worker": [{"tool_calls": [("web_search", {"query": "probe one source"})]}, "Title: Probe one\nplan: read",
-                           {"tool_calls": [("web_search", {"query": "probe two source"})]}, "Title: Probe two\nplan: read",
-                           {"tool_calls": [("web_search", {"query": "execution source"})]}, "Title: Execution\n2"],
-                "evaluator_probe": [evaluation()],
-                "evaluator_execution": [evaluation()]}
+        return {"orchestrator": [action("probe"), action("execute", wid="worker_2"), action("finish")],
+                "worker": [{"tool_calls": [("web_search", {"query": "probe one source"})]}, "plan: read one",
+                           {"tool_calls": [("web_search", {"query": "probe two source"})]}, "plan: read two",
+                           {"tool_calls": [("web_search", {"query": "execution source"})]}, "Execution: 2"]}
     run = Run(RunConfig(load_pool("multi"), ConditionConfig("adaptive_probe")), task, tmp_path / "run",
               web=web, tool_cfg=web.cfg, transport=ScriptedLLM(script()))
     assert run.run_fresh()["status"] == "ok"
     assert len(sent) == 1 and run.web.paid_search.billed == 100
-    assert "credit limit" in run.memory.read(run.memory.read("a00002")["tool_ids"][0])["content"]
+    assert "credit limit" in run.records.read(run.records.read("a00002")["tool_ids"][0])["content"]
     # Restore starts from the pre-probe 99-credit prefix; cache hits never spend its remaining credit.
     restored_web, restored_sent = web_with_http(tmp_path, monkeypatch)
     restored_script = script()
-    restored_script["orchestrator"] = [action("execute", wid="gen_haiku"), action("finish")]
+    restored_script["orchestrator"] = [action("execute", wid="worker_2"), action("finish")]
     restored = Run.restore(run.run_dir / "checkpoints/a0", tmp_path / "restored", task=task,
         web=restored_web, tool_cfg=web.cfg, transport=ScriptedLLM(restored_script))
     assert restored.web.paid_search.billed == 99

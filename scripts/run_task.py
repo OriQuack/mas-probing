@@ -59,8 +59,6 @@ def main() -> int:
     f.add_argument("--pool", default="multi")
     f.add_argument("--condition", default="direct_execution", choices=["direct_execution", "adaptive_probe"])
     f.add_argument("--orchestrator-model", default="luna-high", choices=["luna-high"])
-    f.add_argument("--refiner-model", default="luna-high", choices=["luna-high"],
-                   help="Instruction rewrite after each valid probe evaluation, before next action selection")
     f.add_argument("--max-delegations", type=int, default=12)
     f.add_argument("--max-cost-usd", type=float, default=5.0)
     f.add_argument("--max-wall-s", type=float, default=3 * 3600)
@@ -105,7 +103,7 @@ def main() -> int:
     if a.mode == "fresh":
         condition = load_condition(a.condition)
         cfg = RunConfig(pool=load_pool(a.pool), condition=condition, orchestrator_model=a.orchestrator_model,
-                        refiner_model=a.refiner_model, max_delegations=a.max_delegations,
+                        max_delegations=a.max_delegations,
                         budget=Limits(max_llm_calls=a.max_llm_calls, max_tool_calls=a.max_tool_calls,
                                       max_cost_usd=a.max_cost_usd, max_wall_s=a.max_wall_s),
                         checkpoint=not a.no_checkpoint, label=a.label or condition.name)

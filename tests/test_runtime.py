@@ -80,6 +80,19 @@ def test_transient_errors_retried_and_recorded(tmp_path):
     assert c.trace.run_scope.llm_calls == 2
 
 
+def test_rate_limits_are_unbilled_and_retried_separately(tmp_path):
+    from minpilot.llm.client import RateLimited, RATE_LIMIT_RETRIES
+    llm = ScriptedLLM({"worker": [RateLimited("HTTP 429")] * RATE_LIMIT_RETRIES + [TransientError("HTTP 503"), "ok"]})
+    c = client(tmp_path, "luna", llm)
+    assert c.chat([{"role": "user", "content": "x"}]).content == "ok"
+    recs = [json.loads(l) for l in (tmp_path / "tr" / "llm_calls.jsonl").read_text().splitlines()]
+    assert sum(r.get("rate_limited", False) for r in recs) == RATE_LIMIT_RETRIES
+    assert c.trace.run_scope.counters()["unknown_cost_calls"] == 1  # only the 503
+    llm = ScriptedLLM({"worker": [RateLimited("HTTP 429")] * (RATE_LIMIT_RETRIES + 1)})
+    with pytest.raises(RateLimited):
+        client(tmp_path / "again", "luna", llm).chat([{"role": "user", "content": "x"}])
+
+
 def test_cost_cap_refuses_before_sending(tmp_path):
     llm = ScriptedLLM({"worker": ["x"]})
     with pytest.raises(BudgetExceeded):
@@ -472,7 +485,7 @@ def test_restore_batches_plan_arms_and_rotate_conditions(tmp_path):
     for i in range(2):
         ck = tmp_path / f"run{i}" / "checkpoints" / "d0"
         ck.mkdir(parents=True)
-        (ck / "state.json").write_text(json.dumps({"format": 4, "task_id": f"t{i}", "config": {"pool": {"name": "redundant"}}}))
+        (ck / "state.json").write_text(json.dumps({"format": 6, "task_id": f"t{i}", "config": {"pool": {"name": "redundant"}}}))
         cks.append(str(ck))
     (tmp_path / "cks.txt").write_text("\n".join(cks))
 

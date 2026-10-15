@@ -6,18 +6,19 @@ Latest findings: [docs/reports/index.md](docs/reports/index.md).
 
 ## Scope and code
 
-- Keep the framework small and portable: one orchestrator selecting among registered workers, stateless workers,
-  state updates owned solely by the evaluator and a wording-only refiner (v19/r22/e6). Do not introduce OWL's planner/coordinator/answerer split,
+- Keep the framework small and portable: one orchestrator selecting among registered workers, one conversation
+  and one workspace per worker for the run, and one orchestrator conversation that reads reports and acts through
+  `probe`/`execute`/`finish` tool calls; no evaluator, no refiner (v24/r24, C42). Do not introduce OWL's planner/coordinator/answerer split,
   structured `TaskResult`, OWL prompts/tool names, or automatic dependency passing.
 - Read the original study design before changing experiment logic:
   `../pilot/docs/design/2026-10-05-GAIA-Probe-Query-Pilot-Study.md`.
 - Record choices not fixed by the framework in [docs/decisions.md](docs/decisions.md).
   Historical decision IDs live in [docs/history/decisions-before-cleanup.md](docs/history/decisions-before-cleanup.md).
 - Keep complete prompt bodies as readable multiline strings in `src/minpilot/prompts/` role modules.
-  Share short policies/helpers where useful; avoid splitting prose across template files. JSON response
-  contracts stay in `schemas.py`. See the package README. Runtime supports the current prompt set only.
+  Share short policies/helpers where useful; avoid splitting prose across template files. The orchestrator's
+  action tool schemas stay in `schemas.py`. See the package README. Runtime supports the current prompt set only.
 - Bump `PROMPTS_VERSION` when orchestrator/worker text changes (restore requires an exact version).
-  Bump `REFINER_PROMPTS_VERSION` when review/probe/analysis/verification/rewrite text changes.
+  Bump `PROBE_PROMPTS_VERSION` when probe text changes.
   Layout-only changes that preserve rendered text need no prompt version bump.
 - Tool behavior changes require a `ToolConfig.tools_version` bump and a separate cache.
 - Use semantic names for experiment purposes and conditions. Do not add new stage/phase abbreviations.
@@ -33,10 +34,9 @@ fixed repetition count, total spend and condition order. Historical presets/chec
   data restrictions and blocklist on every path that sends web content to a model.
 - `data/splits/eval_v1.csv` is evaluation-only. Do not inspect, run or tune on it before evaluation.
   Preselected splits must not be redrawn.
-- Refinement sees the task, draft, context, worker profiles and the orchestrator conversation up to delegation;
-  never the continuation, gold or failure traces. Post-hoc edits use `--source post_hoc` and are not probe claims.
-- Probe/check conversations and workspaces are isolated. Only the final instruction and explicit context
-  additions reach execution, except an explicitly configured connected-probe variant.
+- A worker's probe and execution requests share that worker's conversation and workspace. Another worker's
+  findings reach it only through reports the orchestrator selects as context; the orchestrator's conversation,
+  gold answers and failure traces never reach workers.
 - Compare conditions restored from the same checkpoint. A restored baseline is optional: the recording run's
   continuation after the checkpoint can serve as the baseline when restores follow it in the same tool and
   search environment. Restore a baseline when checkpoints are reused later or that environment changed.

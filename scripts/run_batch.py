@@ -103,8 +103,7 @@ def main() -> int:
         purpose=purpose,
         run_roots=["runs"], created_at=stamp, conditions=conditions, planned_run_count=len(plan),
         execution_prompt_versions=[prompts.PROMPTS_VERSION],
-        refiner_prompt_versions=[prompts.REFINER_PROMPTS_VERSION],
-        evaluator_prompt_versions=[prompts.EVALUATOR_VERSION],
+        probe_prompt_versions=[prompts.PROBE_PROMPTS_VERSION],
         arguments=vars(a), condition_configs={name: load_condition(name).to_dict()
                                           for name in (a.conditions or [a.condition])})
     manifest_path = session / "manifest.json"

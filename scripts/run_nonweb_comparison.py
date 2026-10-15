@@ -30,6 +30,9 @@ from minpilot.tools.web import WebTools
 ARMS = ('direct_execution', 'adaptive_probe')
 WEB = re.compile(r'web|browser|search|wikipedia|google maps|street view|youtube', re.I)
 LOCAL_TOOLS = ('read_file', 'view_image', 'run_python')
+# Tasks that need facts the local tools cannot reach (web lookups), excluded from new experiments by user decision
+# after the v21/v22 runs (C42 addendum). Earlier 36-task experiments keep them.
+EXCLUDED_TASKS = {'305ac316-eef6-4446-960a-92d80d542f82', '5a0c1adf-205e-4841-a666-7c3ef95def9d'}
 RUN_CAP = .20
 TOTAL_CAP = 5.
 
@@ -54,7 +57,7 @@ def write_csv(path, rows):
         writer.writeheader(); writer.writerows(rows)
 
 
-def prepare(root):
+def prepare(root, reps=1, parallel=2):
     import pyarrow.parquet as pq
     if root.exists():
         raise ValueError('use a new experiment directory')
@@ -65,38 +68,40 @@ def prepare(root):
         filters=[('task_id', 'in', [r['task_id'] for r in exploration])]).to_pylist()
     tools = {r['task_id']: r['Tools'] for r in records}
     chosen = [r for r in exploration if scope[r['task_id']]['included'].lower() in ('true', '1')
-              and tools[r['task_id']] is not None and not WEB.search(tools[r['task_id']])]
-    assert len(chosen) == 36 and len({r['task_id'] for r in chosen}) == 36
+              and tools[r['task_id']] is not None and not WEB.search(tools[r['task_id']])
+              and r['task_id'] not in EXCLUDED_TASKS]
+    assert len(chosen) == 34 and len({r['task_id'] for r in chosen}) == 34
     root.mkdir(parents=True)
     (root / 'logs').mkdir(); (root / 'analysis').mkdir()
     write_csv(root / 'tasks.csv', chosen)
     plan = []
-    for i, task in enumerate(chosen):
-        order = ARMS if i % 2 == 0 else ARMS[::-1]
-        for arm in order:
-            plan.append(dict(task_id=task['task_id'], label=arm+'_r0', mode='fresh', pool='multi_local',
-                             condition=arm, checkpoint='', override_source=''))
+    for rep in range(reps):  # repetition-major, so a stopped session leaves whole repetitions
+        for i, task in enumerate(chosen):
+            order = ARMS if (i + rep) % 2 == 0 else ARMS[::-1]
+            for arm in order:
+                plan.append(dict(task_id=task['task_id'], label=f'{arm}_r{rep}', mode='fresh', pool='multi_local',
+                                 condition=arm, checkpoint='', override_source=''))
     write_csv(root / 'planned.csv', plan)
     manifest = dict(schema_version=1, purpose='Non-web exploratory GAIA: direct execution versus adaptive probe',
-        created_at=dt.datetime.now(dt.timezone.utc).isoformat(), run_roots=['runs'], planned_run_count=72,
+        created_at=dt.datetime.now(dt.timezone.utc).isoformat(), run_roots=['runs'], planned_run_count=len(plan),
         conditions=list(ARMS), execution_prompt_versions=[prompts.PROMPTS_VERSION],
-        refiner_prompt_versions=[prompts.REFINER_PROMPTS_VERSION], evaluator_prompt_versions=[prompts.EVALUATOR_VERSION],
+        probe_prompt_versions=[prompts.PROBE_PROMPTS_VERSION],
         code_hash=code_hash(), runner_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
-        selection='exploration_v1 intersect existing AV scope; exclude any Tools web/search/Wikipedia/Maps/YouTube mention including optional; exclude null Tools',
+        selection='exploration_v1 intersect existing AV scope; exclude any Tools web/search/Wikipedia/Maps/YouTube mention including optional; exclude null Tools; exclude EXCLUDED_TASKS (need web facts)',
         task_csv_sha256=hashlib.sha256((root/'tasks.csv').read_bytes()).hexdigest(),
         pool=local_pool().to_dict(), per_run_cost_usd=RUN_CAP, session_cost_usd=TOTAL_CAP,
-        max_wall_s=10800, max_delegations=12, parallel_pairs=2, repetitions=1,
-        order='task pairs, alternating which condition runs first; no outcome-dependent edits or retries',
+        max_wall_s=10800, max_delegations=12, parallel_pairs=parallel, repetitions=reps,
+        order='repetition-major task pairs, alternating which condition runs first by task and repetition; no outcome-dependent edits or retries',
         budget_policy='Reserve $0.40 per task pair before launch; release only after both completed with known cost; stop admission on missing/unknown billing or infrastructure error',
         scoring='official scorer and extraction v1 after execution; missing/non-ok count as failures; paired by task_id',
         condition_configs={a:load_condition(a).to_dict() for a in ARMS})
     (root/'manifest.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2))
     subprocess.run(['tar','czf',str(root/'code_snapshot.tar.gz'),'--exclude=__pycache__',
                     'src','configs','scripts','pyproject.toml'],cwd=REPO,check=True)
-    print(json.dumps({'prepared':str(root),'tasks':36,'runs':72,'landlock_abi':landlock_abi()}))
+    print(json.dumps({'prepared':str(root),'tasks':len(chosen),'runs':len(plan),'landlock_abi':landlock_abi()}))
 
 
-def worker(root, task_id, arm):
+def worker(root, task_id, arm, label=None):
     from dotenv import load_dotenv
     import pyarrow.parquet as pq
     load_dotenv(REPO/'.env')
@@ -105,7 +110,7 @@ def worker(root, task_id, arm):
                       filters=[('task_id','=',task_id)]).to_pylist()[0]
     task = GaiaTask(task_id,int(r['Level']),r['Question'],r['file_name'] or None,
                     GAIA_ROOT/'validation'/r['file_name'] if r['file_name'] else None)
-    cfg = RunConfig(local_pool(),load_condition(arm),label=arm+'_r0',
+    cfg = RunConfig(local_pool(),load_condition(arm),label=label or arm+'_r0',
                     budget=Limits(max_llm_calls=400,max_tool_calls=400,max_cost_usd=RUN_CAP,max_wall_s=10800))
     run_dir = new_run_dir(task_id,cfg.label,root/'runs')
     tc = ToolConfig(reader_chain=(),cache_path=root/'local_cache.sqlite')
@@ -148,7 +153,7 @@ def execute(root):
             with (root/'logs'/f'{tag}.out').open('w') as out,(root/'logs'/f'{tag}.err').open('w') as err:
                 try:
                     rc=subprocess.run([sys.executable,'-u',__file__,'worker','--experiment',str(root),
-                        '--task-id',item['task_id'],'--arm',item['condition']],stdout=out,stderr=err,
+                        '--task-id',item['task_id'],'--arm',item['condition'],'--label',item['label']],stdout=out,stderr=err,
                         cwd=REPO,timeout=11400).returncode
                 except subprocess.TimeoutExpired:rc='killed_timeout'
             rec={**item,'exit':rc}
@@ -166,7 +171,8 @@ def execute(root):
             state['spent']+=cost
             if not uncertain:state['reserved']-=2*RUN_CAP
             (root/'budget.json').write_text(json.dumps(state,indent=2))
-    with ThreadPoolExecutor(max_workers=2) as pool:list(pool.map(pair,[plan[i:i+2] for i in range(0,len(plan),2)]))
+    with ThreadPoolExecutor(max_workers=int(m.get('parallel_pairs',2))) as pool:
+        list(pool.map(pair,[plan[i:i+2] for i in range(0,len(plan),2)]))
     print(json.dumps({'finished':state}),flush=True)
 
 
@@ -180,12 +186,12 @@ def score(root):
         columns=['task_id','Final answer'],filters=[('task_id','in',[r['task_id'] for r in tasks])]).to_pylist()}
     runs={}
     for path in find_run_records(root):
-        r=json.loads(path.read_text());key=(r['task_id'],r['condition'])
+        r=json.loads(path.read_text());key=(r['task_id'],r['condition'],r['label'])
         if key in runs:raise ValueError('duplicate run')
         runs[key]=r
     rows=[]
     for item in read_csv(root/'planned.csv'):
-        r=runs.get((item['task_id'],item['condition']),{});c=r.get('counters',{})
+        r=runs.get((item['task_id'],item['condition'],item['label']),{});c=r.get('counters',{})
         answer=extract_final_answer(r.get('final_answer'))
         rows.append({**item,'status':r.get('status','missing'),'correct':r.get('status')=='ok' and question_scorer(answer,truth[item['task_id']]),
             'answer':answer,'cost_usd':c.get('cost_usd',0),'unknown_cost_calls':c.get('unknown_cost_calls',0),
@@ -198,9 +204,10 @@ def score(root):
             statuses={s:sum(r['status']==s for r in rr) for s in sorted({r['status'] for r in rr})},
             cost_usd=sum(r['cost_usd'] for r in rr),unknown_cost_calls=sum(r['unknown_cost_calls'] for r in rr),
             n_probes=sum(r['n_probes'] for r in rr),n_delegations=sum(r['n_delegations'] for r in rr))
-    lookup={(r['task_id'],r['condition']):r for r in rows}
-    summary['paired']={str(a)+','+str(b):sum(lookup[(t['task_id'],ARMS[0])]['correct']==a and
-        lookup[(t['task_id'],ARMS[1])]['correct']==b for t in tasks) for a in (False,True) for b in (False,True)}
+    lookup={(r['task_id'],r['condition'],r['label'].rsplit('_r',1)[1]):r for r in rows}
+    pairs=sorted({(t,rep) for t,_,rep in lookup if (t,ARMS[0],rep) in lookup and (t,ARMS[1],rep) in lookup})
+    summary['paired']={str(a)+','+str(b):sum(lookup[(t,ARMS[0],rep)]['correct']==a and
+        lookup[(t,ARMS[1],rep)]['correct']==b for t,rep in pairs) for a in (False,True) for b in (False,True)}
     (root/'analysis/summary.json').write_text(json.dumps(summary,indent=2))
     print(json.dumps(summary,indent=2))
 
@@ -208,6 +215,8 @@ def score(root):
 if __name__=='__main__':
     ap=argparse.ArgumentParser();ap.add_argument('mode',choices=['prepare','execute','worker','score'])
     ap.add_argument('--experiment',type=Path,required=True);ap.add_argument('--task-id');ap.add_argument('--arm',choices=ARMS)
+    ap.add_argument('--label');ap.add_argument('--reps',type=int,default=1);ap.add_argument('--parallel',type=int,default=2)
     a=ap.parse_args();root=a.experiment.resolve()
-    if a.mode=='worker':worker(root,a.task_id,a.arm)
+    if a.mode=='worker':worker(root,a.task_id,a.arm,a.label)
+    elif a.mode=='prepare':prepare(root,a.reps,a.parallel)
     else:globals()[a.mode](root)

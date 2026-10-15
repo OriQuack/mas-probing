@@ -1,6 +1,6 @@
 # Current prompts
 
-본문은 역할별 Python multiline 문자열, JSON 응답 계약은 `schemas.py`에 둡니다.
+본문은 역할별 Python multiline 문자열, orchestrator 행동 tool schema는 `schemas.py`에 둡니다.
 
 수정할 때는 기존 역할 소개, 절 구성, 설명 순서, 판단 원칙과 보고 형식을 기본값으로 유지합니다.
 실제 입력·도구·출력 계약의 변경이나 구체적인 모호함으로 설명할 수 있는 부분만 바꿉니다.
@@ -9,22 +9,18 @@ skill은 필요한 수정의 방법을 찾는 데 사용하며, 기존 구성을
 
 | 역할 | 모듈 | 입력과 출력 |
 |---|---|---|
-| Orchestrator | `orchestrator.py` | 원 질문·현재 state·목록·평가·worker capability·예산 → probe / execute / finish / read_memory 선택 |
-| Probe | `probe.py` | 원 질문·같은 초안/context → Title, understanding / plan / assumptions / risks |
-| Evaluator | `evaluator.py` | probe 또는 실행의 새 보고 전문·실제 instruction/context·종료 상태 → 전체 state 갱신·이유·남은 작업 |
-| Refiner | `refiner.py` | 원 질문·초안·probe context·최신 state·평가·workers·artifact 목록 → 수정/유지 지시와 context 선택 참고 |
-| Worker | `worker.py` | 원 질문·최종 instruction·실제 context → Title, Result / Evidence / Interpretation / Unfinished |
+| Orchestrator | `orchestrator.py` | run 동안 대화 하나: 원 질문·worker(alias·도구·한도)·예산·answer format, 이후 tool 결과로 보고 원문 → tool call `probe` / `execute` / `finish` |
+| Probe | `probe.py` | 같은 assignment/context(첫 request는 원 질문 포함) → understanding / plan |
+| Worker | `worker.py` | 같은 대화의 새 request: instruction·실제 context(첫 request는 원 질문 포함) → 자유 형식 보고(결과·근거·확인 못 한 것) |
+| (미사용) Evaluator | `evaluator.py` | C42부터 runtime에서 쓰지 않는 e7 본문. 참고용으로 남김 |
 | Page reader | `reader.py` | 기존 페이지 판독 계약 유지 |
 
-실행은 `v19`, probe/refiner는 `r22`, evaluator는 `e6`입니다. Controller는 JSON `read_memory`를 판단당
-최대 3라운드 사용합니다. 보고와 도구 결과는 모두 저장된 ID로 읽고 인용합니다.
-보고의 `tool_ids`에 연결된 도구 결과 ID가 있으며, 같은 ID를 state 근거와 context 선택에도 씁니다.
-외부 도구는 worker에게만 있습니다. Refiner는 probe 수집·analysis·verification을 수행하지 않습니다.
-수정에 새 판단이 필요하면 선택된 초안을 유지하고 이유를 기록합니다.
+실행은 `v24`, probe는 `r24`입니다. Orchestrator는 보고 원문만 보며 도구 결과 원문은 저장만 합니다.
+다른 worker의 보고는 보고 ID(`artifact_ids`)로 골라 context로 전달합니다. 외부 도구는 worker에게만 있습니다.
 
 ```bash
 python scripts/show_prompts.py --component all
-python scripts/show_prompts.py --component evaluator
+python scripts/show_prompts.py --component orchestrator
 ```
 
 규칙과 실행 데이터는 system/user 메시지로 나눕니다. 원 질문 범위, 관측/가정/조건부 결과, 집계 기준,
@@ -99,3 +95,31 @@ Probe 초안과 refiner 원문을 instruction artifact로 보존한다. 같은 �
 설명하고, 목표 결과·범위가 같은 probe 작업은 저장된 instruction ID로 실행해 기록의 연결을 유지한다.
 모델 입력의 `latest_probe`에서 최상위와 중복되는 `instructions`·`evaluation`만 제외하며 trace와
 checkpoint의 기존 기록은 유지한다. Evaluator·refiner·reader 본문과 tools v7은 유지한다.
+
+`v20/r23/e7`(C41)은 worker가 run 동안 대화 하나와 workspace 하나를 유지하고 refiner를 없앤다.
+Probe는 understanding·plan 두 항목만 묻고, 도구 최대 3회는 plan 단계 확인에 쓴다. Evaluator는 probe 평가에서
+plan의 오독·암묵 전제·실패 위험 단계를 찾고, 원 질문이 정한 조건은 가정이 아님을 명시한다. Orchestrator는 probe 뒤
+고른 worker 대화의 다음 메시지로 교정과 주의점을 전한다. Worker·probe prompt는 대화와 workspace가 이어진다는 점과
+다른 worker의 결과는 context로만 온다는 점을 설명한다. 역할 소개·절 구성·보고 형식·state 네 필드·finish 답 계약은 유지한다.
+
+`v21`은 orchestrator의 probe 설명에 한 문장을 더한다. Probe request가 이미 이해·plan을 물으므로 assignment는 실행용처럼
+쓰고 모호함·가정·위험 질문을 덧붙이지 않는다. 나머지 본문은 `v20`과 같다.
+
+`v22/r24`(C42)는 evaluator를 runtime에서 빼고 orchestrator가 run 동안 대화 하나를 유지하게 한다. 행동은 tool call
+`probe`·`execute`·`finish`이고, 보고 원문이 보고 ID·worker alias·request 종류·status와 함께 tool 결과로 돌아온다.
+Evaluator의 판단 기준 중 orchestrator 결정에 필요한 것을 "Read the reports against the original task"와
+"Read the probe responses" 절로 옮겼다. Probe 응답에서 이해의 갈림(지시가 모호함)과 plan의 갈림(유효한 다른 접근인지,
+결과를 못 내는 접근인지)을 나눠 보고, 실행 지시는 worker의 이해·plan이 뜻한 바와 다르면 뜻한 바를 밝힌다.
+Finish의 답은 항상 answer format의 값 하나이며 해석이 갈리면 원 질문에 가장 잘 맞는 해석을 고른다.
+Worker 보고는 자유 형식(`Title:`·4섹션 제거)이고, probe는 `understanding`·`plan` label을 유지하되 understanding을
+"무엇을 묻고 어떤 조건이 적용된다고 이해했는지"로 바꾸고 확인 중 드러난 답은 그 단계의 `observed:` 줄에 적게 했다.
+세 prompt 전체를 기존 구성·어조를 유지한 채 다듬었다. `REFINER_PROMPTS_VERSION`은 `PROBE_PROMPTS_VERSION`으로 바꿨다.
+
+`v23`은 `probe`·`execute` tool에도 `rationale`을 필수 인자로 둔다. 지금까지 보고가 확인한 것, 남은 것, 이 지시(와 worker)를
+고른 이유를 적는다. v22에서는 모델이 tool call과 함께 text를 쓰지 않아 행동 선택 이유가 기록되지 않았다.
+같은 `v23`에서 한 메시지에 여러 `probe`·`execute` call을 허용한다. 순서대로 실행되고 각 call에 결과가 돌아오며, 같은 메시지의
+execute는 서로의 보고를 보지 않는다. `finish`는 단독 call일 때만 실행한다.
+Orchestrator는 실행을 맡길 때 등록된 worker 모두에게 같은 메시지에서 `execute`를 부르도록 권장받는다(독립 수행 후 비교).
+
+`v24`는 orchestrator의 probe 설명에 "call `probe` once per assignment; a single call already reaches every worker"를 더한다.
+harness도 한 메시지의 두 번째 probe를 실행하지 않는다.

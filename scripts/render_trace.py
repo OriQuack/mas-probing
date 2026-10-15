@@ -4,7 +4,7 @@
   python scripts/render_trace.py RUN_DIR [RUN_DIR ...] [--out-dir DIR] [--max-chars 20000]
 
 For each run: the run header (task, condition, status, final answer, cost), then every orchestrator action,
-checkpoint, refinement step and worker call, with each model request's new input messages (system prompts,
+checkpoint, probe round and worker call, with each model request's new input messages (system prompts,
 instructions, tool results) and its output (text and tool calls). Image data is replaced by a placeholder.
 Page-reader calls inside `read_url` (tools v3) are shown short: the start and end of the request (the end holds
 the question) and the reader's answer; the full page text is in messages.jsonl (hash given).
@@ -77,8 +77,9 @@ def render(run_dir: Path, max_chars: int) -> str:
         out.append(f"- restored from: {info['restored_from']} (delegation {info.get('restored_delegation')}); "
                    f"override: {info.get('override')} ({info.get('override_source')})")
     cfg = info.get("config") or {}
-    out.append(f"- pool: {(cfg.get('pool') or {}).get('name')}; orchestrator: {cfg.get('orchestrator_model')}; "
-               f"refiner model: {cfg.get('refiner_model')}")
+    out.append(f"- pool: {(cfg.get('pool') or {}).get('name')}; orchestrator: {cfg.get('orchestrator_model')}"
+               + (f"; refiner model: {cfg['refiner_model']}" if cfg.get("refiner_model") else "")
+               + (f"; worker aliases: {info['worker_aliases']}" if info.get("worker_aliases") else ""))
     out.append(f"- status: {info.get('status')}; delegations: {info.get('n_delegations')}; "
                f"forced finish: {info.get('forced_finish')}")
     c = info.get("counters") or {}
@@ -102,27 +103,34 @@ def render(run_dir: Path, max_chars: int) -> str:
                                f"{r['invalid_before']})")
                 if r.get("rationale"):
                     out.append(f"rationale: {_clip(r['rationale'], max_chars)}")
+                if r.get("note"):
+                    out.append(f"text with the tool call: {_clip(r['note'], max_chars)}")
                 if r.get("action") in ("probe", "execute"):
-                    out.append(f"role: {r.get('worker_id')}")
+                    out.append(f"role: {r.get('worker_id')}" + (f" (shown to the orchestrator as {r['worker_alias']})"
+                                                                if r.get("worker_alias") else ""))
                     if r.get("context"):
                         out.append(f"context:\n<<<\n{r.get('context')}\n>>>")
-                    out.append(f"instruction ID: {r.get('selected_instruction_id')}\ninstruction:\n<<<\n{r.get('delivered_instruction', r.get('instruction'))}\n>>>")
+                    out.append(f"instruction ID: {r.get('instruction_artifact_id', r.get('selected_instruction_id'))}\n"
+                               f"instruction:\n<<<\n{r.get('delivered_instruction', r.get('instruction'))}\n>>>")
                 else:
                     out.append(f"answer: {r.get('answer')!r}")
             elif ev == "delegation":
                 out.append(f"## [event] delegation {r.get('delegation')} -> {r.get('worker')} (role {r.get('role')}); "
                            f"refiner {r.get('refiner')}: {r.get('refine_status')}, changed={r.get('changed')}, "
                            f"connected={r.get('connected')}")
-                out.append(f"instruction ID: {r.get('instruction_id')}; draft ID: {r.get('draft_instruction_id')}")
-                if r.get("final"):
-                    out.append(f"FINAL instruction sent to the worker:\n<<<\n{r.get('final')}\n>>>")
+                out.append(f"instruction ID: {r.get('instruction_id')}; draft ID: {r.get('draft_instruction_id')}; "
+                           f"earlier reports in this worker's conversation: {r.get('conversation_report_ids')}")
+                if r.get("final") or r.get("instruction"):
+                    out.append(f"FINAL instruction sent to the worker:\n<<<\n{r.get('final') or r.get('instruction')}\n>>>")
                 if r.get("selection_reason"):
                     out.append(f"selection: {r['selection_reason']}\nActual context:\n{r.get('context', '')}")
+                elif r.get("context"):
+                    out.append(f"Actual context:\n{r['context']}")
                 if r.get("context_additions"):
                     out.append(f"context additions sent after the context:\n<<<\n{r.get('context_additions')}\n>>>")
             elif ev in ("report", "refine_worker_call"):
                 out.append(f"## [event] {ev} {_where(r)}: status={r.get('status')}, tool calls={r.get('n_tool_calls')}")
-            elif ev in ("artifact", "tool_artifact", "state_replace", "context_selection", "probe_refinement", "evaluation_decision", "read_memory", "decision"):
+            elif ev in ("artifact", "tool_artifact", "state_replace", "context_selection", "probe_refinement", "probe_round", "evaluation_decision", "read_memory", "decision"):
                 out.append(f"## [event] {ev} {_where(r)}")
                 rest = {k: v for k, v in r.items() if k not in ("ts", "event")}
                 out.append(_clip(json.dumps(rest, ensure_ascii=False, indent=2, default=str), max_chars))

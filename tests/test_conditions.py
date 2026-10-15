@@ -1,27 +1,23 @@
-import json
 import pytest
 from minpilot.config import load_condition, load_pool, load_refiner
-from test_harness import action, evaluation, make_run
+from test_harness import action, make_run
 
 
 @pytest.mark.parametrize("condition", ["direct_execution", "adaptive_probe"])
-@pytest.mark.parametrize("wid", ["gen_luna", "gen_haiku"])
-def test_all_registered_workers_are_executors(tmp_path, task, condition, wid):
-    script = {"orchestrator": [action(wid=wid), action("finish")],
-              "worker": ["Title: Execution\nResult: 2"], "evaluator_execution": [evaluation()]}
+@pytest.mark.parametrize("alias,wid", [("worker_1", "gen_luna"), ("worker_2", "gen_haiku")])
+def test_all_registered_workers_are_executors(tmp_path, task, condition, alias, wid):
+    script = {"orchestrator": [action(wid=alias), action("finish")], "worker": ["Execution: 2"]}
     if condition == "adaptive_probe":
-        script.update(worker=["Title: Luna probe\nunderstanding: count\nplan: read\nassumptions:\nrisks:",
-                              "Title: Haiku probe\nunderstanding: count\nplan: read\nassumptions:\nrisks:",
-                              "Title: Execution\nResult: 2"],
-                      evaluator_probe=[evaluation()], orchestrator=[action("probe", wid=None), action(wid=wid), action("finish")])
+        script.update(worker=["understanding: count\nplan: read", "understanding: count\nplan: read", "Execution: 2"],
+                      orchestrator=[action("probe"), action(wid=alias), action("finish")])
     run, llm = make_run(tmp_path, task, script, condition)
     info = run.run_fresh()
     assert info["status"] == "ok", info
-    assert info["delegations"][0]["worker"] == wid
-    payload = json.loads(llm.by_kind["orchestrator"][0]["messages"][1]["content"])
-    assert {w["id"] for w in payload["workers"]} == {"gen_luna", "gen_haiku"}
-    assert len([a for a in run.memory.artifacts if a["stage"] == "probe"]) == (2 if condition == "adaptive_probe" else 0)
-    assert len(llm.by_kind["refiner"]) == (2 if condition == "adaptive_probe" else 0)
+    assert info["delegations"][0]["worker"] == wid and info["worker_aliases"][wid] == alias
+    opening = llm.by_kind["orchestrator"][0]["messages"][1]["content"]
+    assert "- worker_1:" in opening and "- worker_2:" in opening and wid not in opening
+    assert len([a for a in run.records.artifacts if a["stage"] == "probe"]) == (2 if condition == "adaptive_probe" else 0)
+    assert set(llm.by_kind) == {"orchestrator", "worker"}
 
 
 def test_legacy_presets_rejected():

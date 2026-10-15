@@ -1,4 +1,13 @@
-> 2026-10-12 KST 현재 계약: 실행 v17 / probe·refiner r20 / evaluator e6 / tools v7.
+> 2026-10-15 KST 현재 계약: 실행 v24 / probe r24 / tools v7 / checkpoint format 6 (C42, v23·v24 보완).
+> Orchestrator가 run 동안 대화 하나를 유지하고 tool call(`probe`·`execute`·`finish`)로 행동한다. Evaluator·state는
+> runtime에서 빠졌다(`prompts/evaluator.py`는 미사용 파일로 남김). Worker의 대화·workspace 유지(C41)는 그대로다.
+> 아래 C41의 evaluator·state·catalog 관련 부분과 2026-10-12 계약의 state 흐름은 C42로 대체한다.
+>
+> 2026-10-15 KST 이전 계약: 실행 v21 / probe r23 / evaluator e7 / tools v7 / checkpoint format 5 (C41).
+> Worker는 run 동안 대화 하나와 workspace 하나를 유지하고 refiner는 없다. 아래 2026-10-12 계약 중 refiner·probe 격리·
+> 저장된 지시 ID에 관한 부분은 C41로 대체한다.
+>
+> 2026-10-12 KST 계약: 실행 v17 / probe·refiner r20 / evaluator e6 / tools v7.
 > `adaptive_probe`가 이전 `multi_worker_probe`를 대체한다. Orchestrator는 매번 probe/execute/finish/read_memory를
 > 고르며 probe 뒤 자동 실행과 별도 executor 선택 호출은 없다. 최대 12회는 execute 횟수다.
 > Probe 라운드와 refinement는 각각 $1/LLM 60회 보조 상한이며, 소진 시 자동 executor 배정하지 않는다.
@@ -147,3 +156,87 @@ Checkpoint format 4이며 과거 checkpoint 변환은 하지 않는다. Tools v7
 올리며 evaluator e6·tools v7·checkpoint format 4는 유지한다. Evaluator 판단 기준과 refiner 경계의 추가
 수정은 보류하고 reader·시간 기준·must_finish는 변경하지 않는다. 검증은 오프라인으로 한정하며 모델의
 행동 개선을 입증하는 변경으로 보고하지 않는다.
+
+## 2026-10-15 (KST): worker 대화 유지, probe는 이해·plan만, refiner 제거 (C41, v20/r23/e7)
+
+사용자 결정. GAIA non-web 비교(2026-10-13 보고서)에서 공식 점수 차이는 adaptive 답에 붙은 단서에서 나왔다.
+사용자 진단은 probe가 worker에게 assumptions·risks를 억지로 묻고, 그 답이 evaluator의 미검증 state와 refiner의
+단서 요구를 거쳐 답까지 간다는 것이다. 가정·잘못된 이해·실패 위험은 원 질문을 아는 controller가 판단하고,
+교정은 지시문 rewrite가 아니라 대화로 전한다. 전부 한 번에 바꾸고 기여도는 이후 ablation으로 나눈다.
+
+| ID | 선택 | 이유 / 대안 | 위치 |
+|---|---|---|---|
+| C41a | 두 조건 모두 worker마다 run 하나에 대화 하나. Probe·execute request가 같은 대화에 순서대로 쌓인다. 첫 request만 원 질문을 담는다 | 사용자 결정(이후 execute·probe도 같은 대화). direct만 stateless로 두면 조건 차이에 대화 유지 효과가 섞임 | agents/worker, harness |
+| C41b | Workspace는 `work/<worker_id>/`. probe scratch 복사와 web fork 제거. 다른 worker의 결과는 artifact context로만 전달 | 대화가 언급하는 파일이 실행에도 있어야 함. 공용 폴더 합치기는 이름 충돌 | harness |
+| C41c | Request가 예외로 끝나면 대화는 그 request 이전으로 남고 실패 보고만 저장. Context window 초과도 같은 경로이며 대화를 자르지 않음. `workers[].conversation`에 이전 보고 ID와 최근 입력 토큰 수 | 사용자 결정(자르지 않고 실패로 기록) | agents/worker, harness |
+| C41d | Probe는 understanding·plan 두 항목. 도구 최대 3회는 plan 단계 확인용 | 억지 가정·위험 목록 제거. 도구 횟수는 사용자 지시로 유지 | prompts/probe |
+| C41e | Evaluator probe 평가가 plan의 오독·암묵 전제·실패 위험 단계를 찾고, 원 질문이 정한 조건은 가정이 아님을 명시. 실행·state 기준은 유지 | 판단을 controller로 이동 | prompts/evaluator |
+| C41f | Refiner·`instruction.refined`·`instruction_id`·`instructions` 입력 제거. Orchestrator의 instruction은 `instruction` artifact로 저장하고, probe 뒤 execute의 instruction은 그 worker 대화의 다음 메시지로 교정·주의점을 전한다 | 사용자 결정(refiner 폐기) | harness, prompts/orchestrator, schemas |
+| C41g | State·artifact 구조 유지. 걷어낸 것은 지시문 ID, 같은 worker 보고의 재선택 안내, probe 격리뿐 | Controller는 판단마다 새로 시작하므로 state가 유일한 기억. worker 간 전달과 근거 인용은 artifact로만 가능. 사용자 결정 | memory, prompts |
+
+유지: finish 답 계약, "adaptive면 첫 행동 probe" 문장, 예산·한도, worker 도구·보고 4섹션, tools v7.
+`REFINER_PROMPTS_VERSION` 이름은 probe 문구 버전으로 유지한다(r23).
+v21: sanity 6 run(`2026-10-15_gaia-nonweb-conversation-sanity`)에서 orchestrator가 probe 초안에 "예상되는 모호함을
+설명하라", "유일하게 정해지는지 설명하라"를 직접 넣었다. Plan만 묻는다는 결정과 어긋나므로 orchestrator의 probe
+설명에 한 문장을 더한다: probe request가 이미 이해·plan을 묻으니 assignment는 실행용처럼 쓰고 모호함·가정·위험
+질문을 덧붙이지 않는다. Direct 실행 지시와 evaluator 기준은 바꾸지 않는다. Checkpoint format 5는 worker별 대화·toolbox
+상태를 저장하고 fingerprint에 포함한다. 과거 checkpoint는 변환하지 않는다. 오프라인 검사는 계약 동작만 확인한다.
+
+
+Haiku 장문 요금 예약(C41 보완, 2026-10-15): 대화 유지 뒤 첫 72-run 배치(`2026-10-15_gaia-nonweb-conversation-comparison`)에서
+haiku 요청이 116,816 입력 토큰에 도달했고, 이 크기에서는 입력·출력 모두 5배 단가가 청구됐다(92,588 토큰까지는 기본 단가).
+비용이 예약 상한을 넘어 client가 `error_infra`로 끝냈고 runner의 안전 규칙이 남은 36 run을 건너뛰었다. 이 배치는
+중단 기록으로 보존하고 같은 72 run을 새 디렉터리(`2026-10-15_gaia-nonweb-conversation-comparison-rerun`)에서 다시 실행한다.
+`llm/specs.py`의 haiku 예약은 추정 토큰(byte bound / 1.8)이 92,000을 넘으면 장문 단가(입력 5e-7, 출력 2.5e-6)를 쓴다.
+1.8은 haiku 호출 470개에서 관측한 최소 byte/token 비율 1.86보다 작다. 장문 예약 자체는 byte bound를 쓴다.
+요청·모델 identity·도구는 바꾸지 않는다.
+
+## 2026-10-15 (KST): evaluator 제거, orchestrator 대화 하나와 tool call (C42, v22/r24)
+
+사용자 결정. v21 오답 21개를 trace로 읽은 결과([실패 유형 보고서](reports/2026-10-15-gaia-nonweb-failure-modes.ko.md)),
+최종 답은 대부분 evaluator 판단이 정했다. Evaluator는 지금 도구로 채울 수 없는 출처·증명을 요구했고, 해석을 판단하는
+방향이 run마다 달랐다. 사용자 진단: subtask를 만든 orchestrator가 그 의도를 가장 잘 아는데, evaluator가 중간에 끼어
+context가 끊긴다. 자연스러운 interaction을 유지하고 인위적인 장치는 뺀다.
+
+| ID | 선택 | 이유 / 대안 | 위치 |
+|---|---|---|---|
+| C42a | Evaluator·state·`read_memory`·catalog·`state_rows`를 runtime에서 제거. `prompts/evaluator.py`는 import하지 않는 파일로 남김 | 사용자 결정(삭제 말고 빼기) | harness, records |
+| C42b | Orchestrator는 run 동안 대화 하나. 첫 user 메시지에 원 질문·worker·예산·answer format. 행동은 tool call `probe`·`execute`·`finish`이고, 결과로 보고 원문(보고 ID·worker·request 종류·status)과 남은 예산이 돌아온다 | 사용자 결정(tool calling, 기존 행동 이름 그대로) | agents/orchestrator, prompts/schemas |
+| C42c | 메시지 하나에 tool call은 첫 번째만 실행, 나머지는 "Not run". 잘못된 인자는 오류를 tool 결과로 돌려주고 연속 2회면 run error. Tool call 없는 답은 한 번 다시 요청. 실행 한도 도달 시 `finish`만 제공하고 `tool_choice=required` | 기존 repair 1회와 같은 취지. 강제 finish는 특정 함수 지정 대신 도구를 하나로 줄여 client 변경 없음 | agents/orchestrator, harness |
+| C42d | Orchestrator에게 worker를 `worker_1`, `worker_2`(pool 순서)로 보이고 model·가격·대화 토큰 수는 보이지 않음. 내부 기록은 실제 ID, 대응표는 run.json `worker_aliases` | 사용자 결정(익명화, 가격·토큰 제거) | harness |
+| C42e | Orchestrator는 보고 원문만 본다. 도구 결과 원문은 저장만 함. 다른 worker 결과는 `artifact_ids`로 보고 원문을 context로 전달하고, instruction에 그 보고가 무엇이고 어떻게 쓸지 적는다 | 사용자 결정 | records, prompts/orchestrator |
+| C42f | Worker 실행 보고는 자유 형식(`Title:`·4섹션 제거). Probe는 `understanding`·`plan` label 유지, `Title:` 제거, understanding은 "무엇을 묻고 어떤 조건이 적용된다고 이해했는지". 확인 중 드러난 답은 그 단계의 `observed:` 줄에 | 사용자 결정 | prompts/worker, prompts/probe |
+| C42g | Orchestrator prompt: probe 응답에서 이해가 갈리면 지시가 모호했다는 뜻이니 뜻한 바를 밝히고, plan이 갈리면 유효한 다른 접근인지 결과를 못 내는 접근인지 따로 확인. plan의 전제(명시하지 않은 것 포함) 판단. 실행 지시는 "이해·plan이 뜻한 바와 다르면 뜻한 바를 말한다". Evaluator의 실행 평가 기준 중 필요한 것을 "Read the reports" 절로 옮김 | 사용자 결정. 판단을 지시한 주체에게 | prompts/orchestrator |
+| C42h | Finish: `answer`는 항상 answer format의 값 하나. 해석이 갈리면 원 질문에 가장 잘 맞는 해석, 근거 한계와 고른 해석은 `rationale`에 | 사용자 결정(답 정책). 실패 분석의 더 강한 해석 원칙은 넣지 않음 | prompts/orchestrator |
+| C42i | `memory.py`→`records.py`(`Records`), `controller.py` 삭제, 빈 `refine/` 삭제, `REFINER_PROMPTS_VERSION`→`PROBE_PROMPTS_VERSION`(run.json `probe_prompts_version`), `RunConfig.evaluator_model` 삭제 | 사용자 요청(파일 구조 정리). 과거 manifest의 `refiner_prompt_versions`는 script가 fallback으로 읽음 | src, scripts |
+
+유지: worker 대화·workspace(C41a–c), probe 도구 3회, worker 도구, 예산·한도, 조건 이름, answer format, adaptive는
+probe로 시작(문구는 "`probe` tool이 있으면 probe로 시작"), tools v7. Orchestrator의 instruction은 계속 `instruction`
+record로 저장한다. Checkpoint format 6은 orchestrator 대화와 alias 대응표를 저장하고 fingerprint에 포함한다.
+대화를 자르지 않는 규칙(C41c)은 orchestrator 대화에도 적용한다. Prompt 전체를 기존 구성·어조를 유지한 채 다듬었다
+(사용자 지시: 모호한 표현을 구체적으로, 같은 대상에 같은 단어). 오프라인 검사는 계약 동작만 확인한다.
+
+C42 보완(2026-10-15, 사용자 결정, v22 표적 재실행 뒤):
+- v23: `probe`·`execute` tool에 `rationale`을 필수 인자로 추가한다. v22 22 run의 orchestrator 메시지 85개 중 tool call과 함께
+  text를 쓴 것이 0개라 행동 선택 이유가 남지 않았다. `rationale`은 행동·delegation 기록과 trace에 저장한다.
+- 305ac316(Polish Raymond → Magda M.), 5a0c1adf(Malko Competition)는 웹 조회가 필요한 사실 문제라 새 non-web 실험에서 뺀다
+  (`run_nonweb_comparison.py`의 `EXCLUDED_TASKS`, 34문제). 같은 유형인 cf106601은 사용자가 지정하지 않아 유지한다. 이미 끝난
+  36문제 실험 기록은 바꾸지 않는다.
+- v23(같은 날, 사용자 결정 A): 한 메시지의 여러 `probe`·`execute` call을 순서대로 모두 실행한다(C42c의 "첫 call만 실행"을
+  대체). v22에서 85개 메시지 중 6개가 두 worker에게 같은 실행을 동시에 보내 독립 확인을 하려 했고, 첫 call만 실행돼
+  다음 메시지에서 다시 호출했다. 같은 메시지의 execute는 서로의 보고를 보지 않으며 call마다 실행 1회로 센다. 한도를
+  넘는 call과 다른 call과 함께 온 `finish`는 오류 결과로 돌려주고 실행하지 않는다. Checkpoint는 행동마다 남은 행동 목록
+  (`pending_actions`)을 저장하고, instruction record는 그 행동을 실행할 때 저장한다.
+- v23(같은 날, 사용자 결정): orchestrator prompt가 실행을 맡길 때 등록된 worker 모두에게 같은 메시지에서 `execute`를
+  부르도록 권장한다. 각 worker는 독립적으로 수행하고 orchestrator는 보고를 비교한다. 한 worker만 부르는 경우는 그 worker
+  자신의 이전 보고에 관한 작업(예: 계산 단계 수정)이거나 남은 실행 횟수가 worker 수보다 적을 때다. Probe 뒤에는 각
+  worker가 자기 plan대로 수행한다. 실행 횟수 한도(12)는 call마다 센다.
+- Rate limit 처리(같은 날): HTTP 429는 OpenRouter가 과금하지 않으므로 client가 $0 확정으로 정산하고(과금 불명으로 세지
+  않음), 일반 일시 오류와 별도로 최대 5회(15·30·60·120·240초 대기) 재시도한다. v22 표적 재실행에서 429 재시도가 과금 불명
+  호출로 세여 runner가 남은 run을 건너뛴 일 때문이다. `run_nonweb_comparison.py`는 `--reps`(반복 수, 반복 단위로 순서
+  배치)와 `--parallel`(동시 실행 쌍 수)을 받는다. 34문제 × 2조건 × 2반복(136 run)은 rate limit을 피하려고 한 번에 한
+  run씩 실행한다(`2026-10-15_gaia-nonweb-v23-34tasks-2reps`).
+- v24(같은 날, 사용자 결정): v23 34문제 × 2반복에서 adaptive 68 run 중 30 run이 같은 `probe`를 한 메시지에 두 번
+  불러 각 worker가 같은 probe에 두 번 답했다("worker 모두 부르기" 권장을 probe에도 적용한 것으로 보인다). harness는
+  한 메시지의 두 번째 `probe`를 실행하지 않고 오류 결과를 돌려준다. Orchestrator prompt의 probe 설명에 "probe는
+  과제당 한 번 부르면 모든 worker에게 간다"를 더했다.
