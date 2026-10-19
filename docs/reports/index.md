@@ -1,5 +1,7 @@
 # 보고서 안내
 
+Pilot 전체의 정리는 [Pilot Studies 정리 (2026-10-19)](2026-10-19-pilot-wrap-up.ko.md)입니다. LongCoT 41문제·MoNaCo 50문제·GAIA non-web 34문제의 다섯 실험(subagent selection, instruction selection ×3, probing)을 한 틀로 모으고 Key Lessons·Insights·다음 실험을 적었습니다. Key Lessons는 [README](../../README.md)에도 있습니다.
+
 최신 별도 GAIA 실험은 [첫 subtask instruction 3반복, probe 없음](2026-10-15-gaia-instruction-execution.ko.md)입니다. Non-web 34문제 × 4조건 × 3반복(408경로), haiku-medium의 같은 대화로 끝까지 해결했습니다. Naive 76.5%, verify 81.4%(+4.9%p, CI −3.9~+13.7%p)로 이득은 확인되지 않았습니다. 전체 비용 $1.81, 실행 오류·429 없음. 아래 orchestrator 전체 시스템 비교와는 별도 설정입니다.
 
 최신 GAIA 결과는 [GAIA (non-web) Probing](2026-10-15-gaia-nonweb-v23-34tasks.ko.md)(136 run)입니다. 직전 표적 재실행은 [evaluator 제거 v22의 v21 오답 11문제 재실행](2026-10-15-gaia-nonweb-v22-failed-tasks.ko.md)(22 run)입니다. 36문제 비교는 [worker 대화 유지·plan probe·refiner 제거](2026-10-15-gaia-nonweb-conversation-probe.ko.md)(v21/r23/e7, 72 run)이고, 오답 분류는 [GAIA non-web 실패 유형](2026-10-15-gaia-nonweb-failure-modes.ko.md)에 있습니다.
@@ -17,6 +19,7 @@
 
 | 보고서 | 읽는 목적 |
 |---|---|
+| [Pilot Studies 정리](2026-10-19-pilot-wrap-up.ko.md) | 발표용: 다섯 실험의 Motivation·Setup·Observation·Conclusion·한계를 한 문서에. Key lesson은 diversification(추가 호출은 결과가 서로 달라야 이득). instruction·probing은 해석을 한 방향으로 모았고, subagent 차이가 답을 더 다양하게 했다 |
 | [GAIA Instruction Selection](2026-10-15-gaia-instruction-selection-summary.ko.md) | 발표용: 첫 subtask instruction 4후보 × 3회. 고정 후보는 naive보다 +2~+5 run(CI 0 포함), 사후 최고 +9.8%p(선택 편향). 같은 instruction이 문제에 따라 반대로 작용 |
 | [GAIA instruction 사후 oracle](2026-10-15-gaia-instruction-oracle.ko.md) | 문제별 3회 평균 최고 후보는 86.3%(naive 대비 +9.8%p). 잡음 기준선 +6.65%p의 95% 범위 안(p=0.136)이라 실제 headroom은 미확인. 추가 호출 없음 |
 | [GAIA non-web: 첫 subtask instruction 3반복](2026-10-15-gaia-instruction-execution.ko.md) | Probe 없는 별도 실험: 34문제·4조건·3반복, 408경로 모두 정상. Naive 76.5%, clarify·structured 78.4%, verify 81.4%; naive 대비 CI는 모두 0 포함. $1.81, 429 없음 |
